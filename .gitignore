@@ -1,0 +1,41 @@
+# Cache and build directories
+.cache/
+*.pyc
+__pycache__/
+
+# Ansible artifacts
+ansible/artifacts/
+*.retry
+
+# Vault and secrets
+*.vault
+secrets.yml
+!secrets.yml.example
+
+# Kubeconfig files
+*.conf
+kubeconfig*
+
+# Terraform state
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Virtual environments
+.venv/
+venv/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

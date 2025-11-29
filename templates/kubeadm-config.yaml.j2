@@ -1,0 +1,39 @@
+---
+# VMStation kubeadm Configuration Template
+# This template configures a single control-plane Kubernetes cluster
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: "{{ ansible_default_ipv4.address }}"
+  bindPort: 6443
+nodeRegistration:
+  criSocket: "unix:///var/run/containerd/containerd.sock"
+  kubeletExtraArgs:
+    node-ip: "{{ ansible_default_ipv4.address }}"
+---
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: ClusterConfiguration
+kubernetesVersion: "v{{ kubernetes_version | default('1.29.15') }}"
+controlPlaneEndpoint: "192.168.4.63:6443"
+networking:
+  podSubnet: "{{ pod_network_cidr | default('10.244.0.0/16') }}"
+  serviceSubnet: "10.96.0.0/12"
+apiServer:
+  advertiseAddress: "192.168.4.63"
+  bindPort: 6443
+  extraArgs:
+    authorization-mode: "{{ kubernetes_authorization_mode | default('Node,RBAC') }}"
+etcd:
+  local:
+    dataDir: "/var/lib/etcd"
+dns:
+  type: CoreDNS
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: systemd
+containerRuntimeEndpoint: "unix:///var/run/containerd/containerd.sock"
+---
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+kind: KubeProxyConfiguration
+mode: "iptables"

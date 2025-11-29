@@ -1,0 +1,162 @@
+# VMStation Ansible Configuration Variables Template
+# Copy this file to all.yml and customize for your environment.
+# IMPORTANT: Never commit `ansible/group_vars/all.yml` with real credentials.
+#
+# === AUTOMATED AGENTS: CREDENTIAL NOTICE ===
+# This template mirrors the structure of the real `ansible/group_vars/all.yml` used at runtime.
+# All sensitive credentials are intentionally omitted from this template but are present in the
+# real `all.yml` on-disk. If a task or agent complains about missing credentials, assume those
+# secrets live in `ansible/group_vars/all.yml` (not the template) and will be available to
+# runtime executions. For vault-encrypted secrets, see `ansible/group_vars/secrets.yml.example`.
+# === END CREDENTIAL NOTICE ===
+
+# === Infrastructure Mode ===
+# Set to 'kubernetes' for new k8s-based setup or 'podman' for legacy
+infrastructure_mode: kubernetes
+
+# === Kubernetes Configuration ===
+kubernetes_version: "1.29"
+pod_network_cidr: "10.244.0.0/16"
+service_network_cidr: "10.96.0.0/12"
+cert_manager_version: "v1.13.3"
+helm_version: "3.13.3"
+
+# === Cluster Bootstrap Configuration ===
+# Control plane endpoint for kubeadm
+control_plane_endpoint: "192.168.4.63:6443"
+
+# Container runtime settings
+container_runtime: containerd
+cri_socket: "unix:///var/run/containerd/containerd.sock"
+
+# kubeadm configuration
+kubeadm_config_path: "/etc/kubernetes/kubeadm-config.yaml"
+kubeconfig_path: "/etc/kubernetes/admin.conf"
+join_command_file: "/tmp/kubeadm-join-command.sh"
+
+# Cluster bootstrap behavior
+cluster_bootstrap_mode: false  # Set to true when using cluster-bootstrap.yml
+
+# === Kubernetes Authorization Configuration ===
+# Controls the authorization mode for the Kubernetes API server
+# Options:
+#   'Node,RBAC' - Default secure mode with Node and RBAC authorization (recommended)
+#   'AlwaysAllow' - Allows all API requests (less secure, use only for troubleshooting)
+#   'RBAC' - Only RBAC authorization
+kubernetes_authorization_mode: "Node,RBAC"
+
+# Enable automatic fallback to AlwaysAllow mode if Node,RBAC fails during init
+# This can help with initial cluster setup issues but should be disabled for production
+kubernetes_authorization_fallback: true
+
+# === Monitoring Configuration (Kubernetes NodePort) ===
+monitoring_namespace: monitoring
+grafana_nodeport: 30300
+prometheus_nodeport: 30090
+loki_nodeport: 31100
+alertmanager_nodeport: 30903
+
+# === Monitoring Scheduling Configuration ===
+# Controls how monitoring pods are scheduled on Kubernetes nodes
+# Options:
+#   'strict' - Use hostname-based node selector (original behavior, may cause Pending pods)
+#   'flexible' - Use role-based label with tolerations (requires labeling nodes)
+#   'unrestricted' - No node selectors, allows scheduling on any available node
+monitoring_scheduling_mode: flexible
+
+# === Legacy Podman Configuration (Deprecated) ===
+# These are kept for backward compatibility during migration
+monit_root: /srv/monitoring_data
+grafana_port: 3000
+prometheus_port: 9090
+loki_port: 3100
+enable_podman_exporters: false  # Disabled in favor of Kubernetes
+podman_system_metrics_host_port: 19882
+
+# === Registry Configuration ===
+local_registry_host: 192.168.4.63
+local_registry_port: 5000
+
+# === Prometheus Configuration ===
+prometheus_scrape_interval: 15s
+prometheus_scrape_timeout: 10s
+prometheus_retention: 30d
+
+# === Storage Configuration ===
+storage_class: local-path
+prometheus_storage_size: 10Gi
+grafana_storage_size: 5Gi
+loki_storage_size: 10Gi
+alertmanager_storage_size: 2Gi
+
+# === Jellyfin Configuration ===
+# Enable/disable Jellyfin deployment
+jellyfin_enabled: true
+
+# Target node for Jellyfin scheduling
+jellyfin_node_name: storagenodet3500
+
+# Use persistent volumes (PV/PVC) for Jellyfin storage
+# Set to false for minimal deployment using direct hostPath volumes
+jellyfin_use_persistent_volumes: false
+
+# Path to the Jellyfin manifest file
+# Default: kubernetes/jellyfin-minimal.yml (relative to ansible/plays/ directory)
+# Advanced: Use absolute path if you need to reference a different location
+# WARNING: When using {{ playbook_dir }}, remember that jellyfin.yml runs from plays/ directory
+#          so use "{{ playbook_dir }}/../roles/jellyfin/files/ansible/plays/kubernetes/jellyfin-minimal.yml"
+jellyfin_manifest_path: kubernetes/jellyfin-minimal.yml
+
+# Timeout for Jellyfin pod readiness check (seconds)
+jellyfin_readiness_timeout: 300
+
+# === Jellyfin Media Configuration ===
+# Path to existing media directory on storage nodes
+# Default: /srv/media (legacy NFS export location)
+# Alternative: /mnt/media (if using mounted storage)
+jellyfin_media_path: /srv/media
+
+# Skip mount verification for media directory (useful if directory is guaranteed to exist)
+# Set to true to bypass pre-deployment checks that could cause deployment failures
+jellyfin_skip_mount_verification: false
+
+# === Jellyfin Storage Configuration ===
+# Path for Jellyfin configuration storage on storage nodes
+jellyfin_config_path: /var/lib/jellyfin
+
+# === Node-Specific Storage Paths ===
+# Storage paths for different node types during Kubernetes migration
+storage_paths:
+  monitoring_nodes: /srv/monitoring_data  # Existing monitoring data directory
+  compute_nodes: /mnt/storage/kubernetes  # New directory within mounted storage
+  storage_nodes: /var/lib/kubernetes      # Use root filesystem storage
+
+# === TLS Configuration ===
+enable_tls: true
+ca_common_name: "VMStation Root CA"
+
+# VMStation TLS control (derived from enable_tls by default)
+# Set enable_tls: false in all.yml to skip creating TLS certs and installing cert-manager
+vmstation_manage_cert_manager: "{{ enable_tls | default(true) }}"
+vmstation_create_tls_certs: "{{ enable_tls | default(true) }}"
+# When true, the play will attempt to delete existing VMStation TLS resources/secrets at start
+vmstation_cleanup_tls_on_deploy: true
+
+# === Quay Integration (Optional) ===
+enable_quay_metrics: false
+# quay_username: "your_username"  # Add to secrets.yml via ansible-vault
+# quay_password: "your_password"  # Add to secrets.yml via ansible-vault
+
+# === Security Configuration ===
+# grafana_admin_pass: "secure_password"     # Add to secrets.yml via ansible-vault
+# samba_password: "secure_password"         # Add to secrets.yml via ansible-vault
+# vault_homelab_sudo_password: "sudo_password" # Add to secrets.yml via ansible-vault
+
+# === Advanced Configuration ===
+# ansible_become_pass: "{{ vault_homelab_sudo_password }}"  # Uses vaulted password for RHEL nodes
+
+# === Container Registry Configuration ===
+container_registries:
+  - url: "quay.io"
+    insecure: false
+  - url: "{{ local_registry_host }}:{{ local_registry_port }}"

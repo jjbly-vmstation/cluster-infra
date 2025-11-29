@@ -1,0 +1,46 @@
+---
+# ansible/playbooks/run-preflight-rhel10.yml
+# Run preflight checks and configuration for RHEL10 nodes
+# This playbook prepares RHEL10 nodes for Kubespray deployment
+
+- name: RHEL10 Preflight Checks and Configuration
+  hosts: "{{ target_hosts | default('compute_nodes') }}"
+  gather_facts: true
+  become: false
+
+  vars:
+    # Override these variables as needed
+    preflight_check_only: false
+
+  pre_tasks:
+    - name: Verify target hosts are RHEL-based
+      ansible.builtin.assert:
+        that:
+          - ansible_os_family == "RedHat"
+        fail_msg: >-
+          Target host {{ inventory_hostname }} is not a RedHat-based system
+        success_msg: >-
+          Target host {{ inventory_hostname }} is
+          {{ ansible_distribution }} {{ ansible_distribution_version }}
+
+    - name: Display preflight mode
+      ansible.builtin.debug:
+        msg: |
+          Running preflight on: {{ inventory_hostname }}
+          Check-only mode: {{ preflight_check_only }}
+          Node role: {{ node_role | default('undefined') }}
+
+  roles:
+    - role: preflight-rhel10
+
+  post_tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg: |
+          ✅ Preflight completed successfully for {{ inventory_hostname }}
+
+          Next steps:
+          1. Review the output above for any warnings
+          2. If SELinux mode was changed, consider rebooting
+          3. Proceed with Kubespray deployment using scripts/run-kubespray.sh
+          4. Or continue with RKE2 deployment using ./deploy.sh rke2

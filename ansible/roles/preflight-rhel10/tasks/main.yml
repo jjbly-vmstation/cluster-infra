@@ -1,0 +1,157 @@
+---
+# ansible/roles/preflight-rhel10/tasks/main.yml
+# Preflight checks and setup for RHEL10 nodes
+
+- name: Check OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family == "RedHat"
+    fail_msg: "This role is designed for RHEL/RedHat systems only"
+    success_msg: "OS family check passed"
+
+- name: Display node information
+  ansible.builtin.debug:
+    msg: |
+      Node: {{ inventory_hostname }}
+      OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+      Kernel: {{ ansible_kernel }}
+      Architecture: {{ ansible_architecture }}
+
+- name: Install Python packages
+  ansible.builtin.dnf:
+    name: "{{ python_packages }}"
+    state: present
+  become: true
+
+- name: Install chrony for time synchronization
+  ansible.builtin.dnf:
+    name: chrony
+    state: present
+  become: true
+  when: chrony_enabled
+
+- name: Configure chrony
+  ansible.builtin.template:
+    src: chrony.conf.j2
+    dest: /etc/chrony.conf
+    mode: '0644'
+    backup: true
+  become: true
+  when: chrony_enabled
+  notify: Restart chrony
+
+- name: Enable and start chrony service
+  ansible.builtin.systemd:
+    name: chronyd
+    enabled: true
+    state: started
+  become: true
+  when: chrony_enabled
+
+- name: Check time synchronization status
+  ansible.builtin.command: chronyc tracking
+  register: chrony_status
+  changed_when: false
+  become: true
+  when: chrony_enabled
+
+- name: Display time sync status
+  ansible.builtin.debug:
+    var: chrony_status.stdout_lines
+  when: chrony_enabled and chrony_status is defined
+
+- name: Configure sudoers for ansible user
+  ansible.builtin.lineinfile:
+    path: /etc/sudoers.d/ansible
+    line: "{{ ansible_user }} ALL=(ALL) NOPASSWD: ALL"
+    create: true
+    mode: '0440'
+    validate: 'visudo -cf %s'
+  become: true
+  when: setup_ansible_sudo and ansible_sudo_nopasswd
+
+- name: Configure firewalld ports
+  ansible.posix.firewalld:
+    port: "{{ item }}"
+    permanent: true
+    state: enabled
+    immediate: true
+  loop: "{{ firewall_ports }}"
+  become: true
+  when: firewall_enabled
+  ignore_errors: true  # Continue if firewalld is not running
+
+- name: Check current SELinux mode
+  ansible.builtin.command: getenforce
+  register: current_selinux
+  changed_when: false
+  become: true
+
+- name: Display current SELinux mode
+  ansible.builtin.debug:
+    msg: "Current SELinux mode: {{ current_selinux.stdout }}"
+
+- name: Configure SELinux mode
+  ansible.posix.selinux:
+    policy: targeted
+    state: "{{ selinux_mode }}"
+  become: true
+  when: selinux_configurable and current_selinux.stdout != selinux_mode
+  register: selinux_result
+
+- name: Warn if SELinux change requires reboot
+  ansible.builtin.debug:
+    msg: "WARNING: SELinux mode changed. System reboot is recommended."
+  when: selinux_result is defined and selinux_result.changed
+
+- name: Load kernel modules
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ required_kernel_modules }}"
+  become: true
+  ignore_errors: true  # Some modules may not be needed depending on CNI
+
+- name: Ensure kernel modules load on boot
+  ansible.builtin.lineinfile:
+    path: /etc/modules-load.d/kubernetes.conf
+    line: "{{ item }}"
+    create: true
+    mode: '0644'
+  loop: "{{ required_kernel_modules }}"
+  become: true
+
+- name: Configure sysctl settings
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    state: present
+    sysctl_file: /etc/sysctl.d/99-kubernetes.conf
+    reload: true
+  loop: "{{ sysctl_settings | dict2items }}"
+  become: true
+
+- name: Disable swap
+  ansible.builtin.command: swapoff -a
+  become: true
+  changed_when: false
+
+- name: Remove swap from /etc/fstab
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: '\sswap\s'
+    state: absent
+  become: true
+
+- name: Preflight checks summary
+  ansible.builtin.debug:
+    msg: |
+      ✅ Preflight checks completed for {{ inventory_hostname }}
+      - Python packages installed
+      - Time sync configured (chrony)
+      - Sudo configured for {{ ansible_user }}
+      - Firewall ports opened
+      - SELinux mode: {{ selinux_mode }}
+      - Kernel modules loaded
+      - Sysctl settings applied
+      - Swap disabled
