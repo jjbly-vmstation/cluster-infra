@@ -1,0 +1,52 @@
+---
+# ansible/roles/preflight-rhel10/defaults/main.yml
+# Default variables for RHEL10 preflight checks and setup
+
+# Python configuration
+python_packages:
+  - python3
+  - python3-pip
+  - python3-setuptools
+
+# Time synchronization
+chrony_enabled: true
+chrony_servers:
+  - 0.pool.ntp.org
+  - 1.pool.ntp.org
+  - 2.pool.ntp.org
+  - 3.pool.ntp.org
+
+# Firewall configuration
+firewall_enabled: true
+firewall_ports:
+  - 6443/tcp  # Kubernetes API
+  - 2379-2380/tcp  # etcd
+  - 10250/tcp  # Kubelet
+  - 10251/tcp  # kube-scheduler
+  - 10252/tcp  # kube-controller-manager
+  - 30000-32767/tcp  # NodePort Services
+  - 9100/tcp  # Node Exporter
+  - 9290/tcp  # IPMI Exporter
+
+# SELinux configuration
+selinux_mode: permissive  # Options: enforcing, permissive, disabled
+selinux_configurable: true
+
+# Ansible user sudo configuration
+setup_ansible_sudo: true
+ansible_sudo_nopasswd: true
+
+# System requirements
+required_kernel_modules:
+  - br_netfilter
+  - ip_vs
+  - ip_vs_rr
+  - ip_vs_wrr
+  - ip_vs_sh
+  - overlay
+
+sysctl_settings:
+  net.bridge.bridge-nf-call-iptables: 1
+  net.bridge.bridge-nf-call-ip6tables: 1
+  net.ipv4.ip_forward: 1
+  net.ipv4.conf.all.forwarding: 1

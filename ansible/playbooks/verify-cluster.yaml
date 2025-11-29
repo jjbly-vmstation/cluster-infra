@@ -1,0 +1,138 @@
+---
+# =============================================================================
+# VMStation Cluster Verification
+# Verify cluster health and readiness
+# Used by test scripts for validation
+# =============================================================================
+
+- name: "Cluster Verification"
+  hosts: monitoring_nodes
+  gather_facts: false
+  become: true
+  tasks:
+    - name: "Display verification banner"
+      ansible.builtin.debug:
+        msg: |
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          Cluster Verification
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    # Verify control plane is accessible
+    - name: "Check API server is accessible"
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 6443
+        timeout: 30
+      register: api_server_check
+
+    - name: "Get node status"
+      ansible.builtin.shell: kubectl get nodes -o wide
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: nodes_status
+
+    - name: "Display node status"
+      ansible.builtin.debug:
+        msg: "{{ nodes_status.stdout_lines }}"
+
+    # Verify all nodes are Ready
+    - name: "Count Ready nodes"
+      ansible.builtin.shell: kubectl get nodes -o json | jq -r '.items[] | select(.status.conditions[] | select(.type=="Ready" and .status=="True")) | .metadata.name' | wc -l
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ready_nodes
+
+    - name: "Verify expected node count"
+      ansible.builtin.assert:
+        that:
+          - ready_nodes.stdout | int >= 2
+        fail_msg: "Expected at least 2 ready nodes, got {{ ready_nodes.stdout }}"
+        success_msg: "{{ ready_nodes.stdout }} nodes are Ready"
+
+    # Verify system pods
+    - name: "Get system pods"
+      ansible.builtin.shell: kubectl get pods -n kube-system -o wide
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: system_pods
+
+    - name: "Display system pods"
+      ansible.builtin.debug:
+        msg: "{{ system_pods.stdout_lines }}"
+
+    # Verify CoreDNS
+    - name: "Check CoreDNS pods"
+      ansible.builtin.shell: kubectl get pods -n kube-system -l k8s-app=kube-dns -o jsonpath='{.items[*].status.phase}' | grep -c Running || echo 0
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: coredns_running
+
+    - name: "Verify CoreDNS is running"
+      ansible.builtin.assert:
+        that:
+          - coredns_running.stdout | int >= 1
+        fail_msg: "CoreDNS pods not running"
+        success_msg: "{{ coredns_running.stdout }} CoreDNS pods are Running"
+
+    # Verify Flannel
+    - name: "Check Flannel pods"
+      ansible.builtin.shell: kubectl get pods -n kube-flannel -l app=flannel -o jsonpath='{.items[*].status.phase}' | grep -c Running || echo 0
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: flannel_running
+      failed_when: false
+
+    - name: "Display Flannel status"
+      ansible.builtin.debug:
+        msg: "{{ flannel_running.stdout }} Flannel pods are Running"
+
+    # Test basic cluster functionality
+    - name: "Create test namespace"
+      ansible.builtin.shell: kubectl create namespace vmstation-test --dry-run=client -o yaml | kubectl apply -f -
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: test_namespace
+
+    - name: "Create test pod"
+      ansible.builtin.shell: |
+        kubectl run test-pod \
+          --image=nginx:alpine \
+          --namespace=vmstation-test \
+          --restart=Never \
+          --dry-run=client -o yaml | kubectl apply -f -
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: test_pod
+
+    - name: "Wait for test pod to be running"
+      ansible.builtin.shell: kubectl wait --for=condition=ready pod/test-pod -n vmstation-test --timeout=60s
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: test_pod_ready
+      failed_when: false
+
+    - name: "Cleanup test resources"
+      ansible.builtin.shell: kubectl delete namespace vmstation-test --ignore-not-found=true
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      failed_when: false
+
+    - name: "Display verification result"
+      ansible.builtin.debug:
+        msg: |
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          ✅ Cluster Verification Complete
+          
+          Status:
+          - Ready Nodes: {{ ready_nodes.stdout }}
+          - CoreDNS: {{ coredns_running.stdout }} pods
+          - Flannel: {{ flannel_running.stdout }} pods
+          - Test Pod: {{ 'Success' if test_pod_ready.rc == 0 else 'Failed' }}
+          
+          Cluster is {{ 'HEALTHY' if test_pod_ready.rc == 0 else 'DEGRADED' }}
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    - name: "Fail if cluster is not healthy"
+      fail:
+        msg: "Cluster verification failed - cluster is not healthy"
+      when: test_pod_ready.rc != 0

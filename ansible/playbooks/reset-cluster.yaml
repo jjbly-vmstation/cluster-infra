@@ -1,0 +1,109 @@
+---
+# =============================================================================
+# VMStation Kubernetes Cluster Reset
+# Comprehensive cluster cleanup - removes all K8s config/network
+# Idempotent - safe to run multiple times
+# =============================================================================
+
+- name: "Cluster Reset - Debian Nodes"
+  hosts: monitoring_nodes:storage_nodes
+  gather_facts: false
+  become: true
+  tasks:
+    - name: "Display reset banner"
+      ansible.builtin.debug:
+        msg: |
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          Resetting Kubernetes Cluster
+          Target: {{ inventory_hostname }}
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    # Reset kubeadm
+    - name: "Reset kubeadm (if initialized)"
+      ansible.builtin.shell: kubeadm reset -f
+      failed_when: false
+
+    # Stop services
+    - name: "Stop kubelet service"
+      ansible.builtin.systemd:
+        name: kubelet
+        state: stopped
+      failed_when: false
+
+    - name: "Stop containerd service"
+      ansible.builtin.systemd:
+        name: containerd
+        state: stopped
+      failed_when: false
+
+    # Kill hanging processes
+    - name: "Kill any hanging kubeadm processes"
+      ansible.builtin.shell: |
+        pkill -9 -f kubeadm || true
+        pkill -9 -f kubelet || true
+        pkill -9 -f kube-proxy || true
+        pkill -9 -f kube-apiserver || true
+        pkill -9 -f kube-controller || true
+        pkill -9 -f kube-scheduler || true
+        pkill -9 -f etcd || true
+      failed_when: false
+
+    # Remove Kubernetes directories
+    - name: "Remove Kubernetes configuration"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/kubernetes
+        - /var/lib/kubelet
+        - /var/lib/etcd
+        - /etc/cni/net.d
+        - /opt/cni/bin
+        - /root/.kube
+
+    # Remove CNI interfaces
+    - name: "Remove CNI network interfaces"
+      ansible.builtin.shell: |
+        ip link delete cni0 2>/dev/null || true
+        ip link delete flannel.1 2>/dev/null || true
+        ip link delete docker0 2>/dev/null || true
+      failed_when: false
+
+    # Clean iptables rules
+    - name: "Flush iptables rules"
+      ansible.builtin.shell: |
+        iptables -F || true
+        iptables -t nat -F || true
+        iptables -t mangle -F || true
+        iptables -X || true
+      failed_when: false
+
+    # Restart containerd
+    - name: "Restart containerd service"
+      ansible.builtin.systemd:
+        name: containerd
+        state: restarted
+        enabled: true
+      failed_when: false
+
+    - name: "Display reset complete message"
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} reset complete"
+
+- name: "Reset Complete Summary"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: "Display summary"
+      ansible.builtin.debug:
+        msg: |
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          ✅ Cluster Reset Complete
+          
+          All Kubernetes configuration removed
+          Cluster ready for fresh deployment
+          
+          Next steps:
+          ./deploy.sh debian    # Redeploy Debian cluster
+          ./deploy.sh all       # Redeploy both clusters
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
