@@ -18,6 +18,14 @@ LOG_DIR="$ARTIFACTS_DIR/ansible-run-logs"
 BACKUP_DIR="$REPO_ROOT/.git/ops-backups/$TIMESTAMP"
 KUBECONFIG_PATH="/tmp/admin.conf"
 
+# Configurable user for compute nodes (can be set via environment variable)
+COMPUTE_NODE_USER="${COMPUTE_NODE_USER:-jashandeepjustinbains}"
+
+# Wake-on-LAN MAC addresses (can be overridden via environment variables)
+# Format: space-separated MAC addresses
+WOL_STORAGE_MAC="${WOL_STORAGE_MAC:-b8:ac:6f:7e:6c:9d}"
+WOL_COMPUTE_MAC="${WOL_COMPUTE_MAC:-d0:94:66:30:d6:63}"
+
 # ============================================================================
 # Logging Functions
 # ============================================================================
@@ -384,13 +392,13 @@ remediate_preflight() {
     # Check and install Python if missing
     ansible compute_nodes -i "$KUBESPRAY_INVENTORY" -m raw \
         -a "command -v python3 || (yum install -y python3 || dnf install -y python3)" \
-        --private-key "$SSH_KEY_PATH" -u jashandeepjustinbains --become \
+        --private-key "$SSH_KEY_PATH" -u "$COMPUTE_NODE_USER" --become \
         >> "$LOG_DIR/preflight-remediation.log" 2>&1 || true
     
     # Disable swap if enabled
     ansible compute_nodes -i "$KUBESPRAY_INVENTORY" -m shell \
         -a "swapoff -a && sed -i '/swap/d' /etc/fstab" \
-        --private-key "$SSH_KEY_PATH" -u jashandeepjustinbains --become \
+        --private-key "$SSH_KEY_PATH" -u "$COMPUTE_NODE_USER" --become \
         >> "$LOG_DIR/preflight-remediation.log" 2>&1 || true
     
     log_info "Remediation attempts completed"
@@ -597,12 +605,12 @@ wake_unreachable_nodes() {
     
     log_info "Attempting to wake potentially sleeping nodes..."
     
-    # Wake storage node
-    wakeonlan b8:ac:6f:7e:6c:9d >> "$LOG_DIR/wol.log" 2>&1 || \
+    # Wake storage node using configurable MAC address
+    wakeonlan "$WOL_STORAGE_MAC" >> "$LOG_DIR/wol.log" 2>&1 || \
         log_warn "wakeonlan not available, skipping WoL"
     
-    # Wake compute node
-    wakeonlan d0:94:66:30:d6:63 >> "$LOG_DIR/wol.log" 2>&1 || true
+    # Wake compute node using configurable MAC address
+    wakeonlan "$WOL_COMPUTE_MAC" >> "$LOG_DIR/wol.log" 2>&1 || true
     
     log_info "Waiting 90 seconds for nodes to wake..."
     sleep 90

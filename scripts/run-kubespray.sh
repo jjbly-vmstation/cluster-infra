@@ -51,20 +51,18 @@ if [ ! -f "$VENV_DIR/bin/activate" ]; then
     log_err "Virtualenv activation script not found at $VENV_DIR/bin/activate"
 fi
 
-#. "$VENV_DIR/bin/activate"
-# Prefer to run pip directly from the venv to avoid relying on shell state
-
+# Use the venv's pip directly for package installation to avoid shell state issues
 "$VENV_DIR/bin/pip" install -U pip setuptools wheel
 if [ -f "$KUBESPRAY_DIR/requirements.txt" ]; then
     log_info "Installing Kubespray requirements into virtualenv..."
     "$VENV_DIR/bin/pip" install -r "$KUBESPRAY_DIR/requirements.txt"
 fi
 
-# Activate venv for subsequent commands in this script
+# Activate venv for subsequent commands in this script (e.g., ansible-playbook)
+# shellcheck disable=SC1091
 . "$VENV_DIR/bin/activate"
 
-# Note: requirements were installed earlier using the venv's pip. The venv is
-# now activated so subsequent commands can rely on the environment.
+# Note: The venv is now activated so subsequent commands can rely on the environment.
 
 # Create inventory template directory if not exists
 INVENTORY_TEMPLATE_DIR="$KUBESPRAY_DIR/inventory/mycluster"

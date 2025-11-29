@@ -29,7 +29,12 @@ firewall_ports:
   - 9290/tcp  # IPMI Exporter
 
 # SELinux configuration
-selinux_mode: permissive  # Options: enforcing, permissive, disabled
+# SECURITY NOTE: Default is 'permissive' for initial deployment compatibility.
+# For production environments, consider 'enforcing' mode for enhanced security.
+# - enforcing: SELinux security policy is enforced (most secure)
+# - permissive: SELinux prints warnings but doesn't enforce (default for labs)
+# - disabled: SELinux is fully disabled (not recommended)
+selinux_mode: permissive
 selinux_configurable: true
 
 # Ansible user sudo configuration
