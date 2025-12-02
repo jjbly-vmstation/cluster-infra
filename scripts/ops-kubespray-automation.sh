@@ -10,7 +10,8 @@ set -euo pipefail
 REPO_ROOT="${REPO_ROOT:-/github/workspace}"
 KUBESPRAY_DIR="${KUBESPRAY_DIR:-$REPO_ROOT/.cache/kubespray}"
 KUBESPRAY_INVENTORY="${KUBESPRAY_INVENTORY:-$KUBESPRAY_DIR/inventory/mycluster/inventory.ini}"
-MAIN_INVENTORY="${MAIN_INVENTORY:-$REPO_ROOT/ansible/inventory/hosts.yml}"
+# Updated to use canonical inventory location
+MAIN_INVENTORY="${MAIN_INVENTORY:-$REPO_ROOT/inventory/production/hosts.yml}"
 SSH_KEY_PATH="${SSH_KEY_PATH:-/tmp/id_vmstation_ops}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 ARTIFACTS_DIR="$REPO_ROOT/ansible/artifacts/run-$TIMESTAMP"
@@ -262,6 +263,7 @@ backup_files() {
     log_info "=========================================="
     
     local files=(
+        "$REPO_ROOT/inventory/production/hosts.yml"
         "$REPO_ROOT/inventory.ini"
         "$REPO_ROOT/ansible/inventory/hosts.yml"
         "$REPO_ROOT/deploy.sh"
@@ -308,12 +310,24 @@ normalize_inventory() {
         # Create inventory directory
         mkdir -p "$(dirname "$KUBESPRAY_INVENTORY")"
         
-        # Copy and normalize from main inventory.ini
-        if [[ -f "$REPO_ROOT/inventory.ini" ]]; then
+        # Copy and normalize from canonical inventory (try YAML first, fallback to INI)
+        if [[ -f "$MAIN_INVENTORY" ]]; then
+            # Use ansible-inventory to convert YAML to INI format for Kubespray
+            if command -v ansible-inventory &> /dev/null; then
+                # Generate INI format inventory
+                ansible-inventory -i "$MAIN_INVENTORY" --list --export > "$KUBESPRAY_INVENTORY" 2>/dev/null || \
+                    cp "$MAIN_INVENTORY" "$KUBESPRAY_INVENTORY"
+                log_info "Created Kubespray inventory from canonical inventory"
+            else
+                cp "$MAIN_INVENTORY" "$KUBESPRAY_INVENTORY"
+                log_info "Copied canonical inventory to Kubespray location"
+            fi
+        elif [[ -f "$REPO_ROOT/inventory.ini" ]]; then
+            # Fallback to deprecated inventory.ini if canonical not found
             cp "$REPO_ROOT/inventory.ini" "$KUBESPRAY_INVENTORY"
-            log_info "Copied inventory.ini to Kubespray location"
+            log_warn "Using deprecated inventory.ini (please migrate to inventory/production/hosts.yml)"
         else
-            log_error "Main inventory.ini not found"
+            log_error "No inventory found (checked: $MAIN_INVENTORY and $REPO_ROOT/inventory.ini)"
             return 1
         fi
     fi

@@ -154,9 +154,20 @@ Edit files in `production/host_vars/` to change host-specific settings:
 
 - **calico_rr**: Calico route reflectors (empty for this cluster)
 
-### Legacy Groups
+### Legacy Groups (Backward Compatibility)
 
-The old inventory used custom groups (monitoring_nodes, storage_nodes, compute_nodes). These have been replaced with Kubespray-standard groups above, but host-specific roles are preserved in `host_vars/`.
+For backward compatibility with existing playbooks, the following legacy groups are maintained:
+
+- **monitoring_nodes**: Control plane/monitoring node
+  - `masternode` - Same as kube_control_plane
+
+- **storage_nodes**: Storage node
+  - `storagenodet3500` - Subset of kube_node for storage
+
+- **compute_nodes**: Compute node
+  - `homelab` - Subset of kube_node for general compute
+
+These groups map to the same hosts as the Kubespray groups but provide role-specific grouping used by existing playbooks. Host-specific roles and configuration are preserved in `host_vars/`.
 
 ## 🔧 Variables
 
