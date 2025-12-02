@@ -8,12 +8,30 @@ This repository contains Ansible playbooks, roles, and scripts for deploying and
 
 ```
 cluster-infra/
+├── inventory/                       # 🎯 Canonical inventory (single source of truth)
+│   ├── README.md                    # Inventory documentation
+│   ├── production/
+│   │   ├── hosts.yml                # Main inventory (Kubespray-compatible)
+│   │   ├── group_vars/              # Global and group variables
+│   │   │   ├── all.yml
+│   │   │   ├── k8s_cluster/
+│   │   │   ├── etcd.yml
+│   │   │   └── kube_control_plane.yml
+│   │   └── host_vars/               # Host-specific variables
+│   │       ├── masternode.yml
+│   │       ├── storagenodet3500.yml
+│   │       └── homelab.yml
+│   ├── staging/                     # Staging environment (future)
+│   └── scripts/                     # Inventory management scripts
+│       ├── validate-inventory.sh
+│       ├── sync-inventory.sh
+│       └── check-inventory-drift.sh
 ├── ansible/
-│   ├── ansible.cfg              # Ansible configuration
-│   ├── inventory/
-│   │   ├── hosts.yml            # Main inventory file
-│   │   └── group_vars/          # Group variables
-│   │       ├── all.yml.template # Variables template
+│   ├── ansible.cfg                  # Ansible configuration
+│   ├── inventory/                   # Legacy inventory (deprecated)
+│   │   ├── hosts.yml                # Use inventory/production/hosts.yml instead
+│   │   └── group_vars/
+│   │       ├── all.yml.template     # Variables template
 │   │       └── secrets.yml.example
 │   ├── playbooks/
 │   │   ├── deploy-cluster.yaml      # Kubernetes deployment
@@ -32,7 +50,7 @@ cluster-infra/
 │   └── kubeadm-config.yaml.j2       # Kubeadm configuration
 ├── terraform/
 │   └── malware-lab/                 # Malware analysis lab IaC
-├── inventory.ini                    # Kubespray-compatible inventory
+├── inventory.ini                    # ⚠️ DEPRECATED - Use inventory/production/hosts.yml
 ├── IMPROVEMENTS_AND_STANDARDS.md    # Best practices guide
 └── README.md
 ```
@@ -61,15 +79,24 @@ cluster-infra/
 
 ### 1. Configure Inventory
 
-Edit the inventory file to match your infrastructure:
+The canonical inventory is located at `inventory/production/hosts.yml`. For most users, the default configuration is ready to use.
 
 ```bash
-# Copy the template
-cp ansible/inventory/group_vars/all.yml.template ansible/inventory/group_vars/all.yml
+# View the canonical inventory
+ansible-inventory -i inventory/production/hosts.yml --graph
 
-# Edit with your values
-vim ansible/inventory/hosts.yml
+# Validate inventory structure
+./inventory/scripts/validate-inventory.sh
+
+# (Optional) Edit hosts or variables if needed
+vim inventory/production/hosts.yml
+vim inventory/production/group_vars/all.yml
+
+# Copy ansible variables template
+cp ansible/inventory/group_vars/all.yml.template ansible/inventory/group_vars/all.yml
 ```
+
+See [`inventory/README.md`](inventory/README.md) for detailed inventory documentation.
 
 ### 2. Run Preflight Checks (RHEL nodes)
 

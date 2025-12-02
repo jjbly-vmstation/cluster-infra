@@ -1,0 +1,27 @@
+---
+# Kubernetes addons configuration
+# Controls which addons are deployed with Kubespray
+
+# Dashboard
+dashboard_enabled: false
+
+# Helm
+helm_enabled: true
+
+# Metrics Server
+metrics_server_enabled: true
+
+# Ingress Controller
+ingress_nginx_enabled: false
+
+# Cert Manager
+cert_manager_enabled: false
+
+# Registry
+registry_enabled: false
+
+# Local Path Provisioner
+local_path_provisioner_enabled: false
+
+# MetalLB
+metallb_enabled: false
