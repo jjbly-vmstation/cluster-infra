@@ -1,0 +1,25 @@
+---
+# Storage node configuration
+# Dell T3500 workstation - storage and media server
+
+# Node labels
+node_labels:
+  node-role.kubernetes.io/storage: ""
+  vmstation.io/media-server: "true"
+  vmstation.io/role: storage
+  node.kubernetes.io/instance-type: storage
+  jellyfin.vmstation.io/preferred: "true"
+
+# Storage-specific settings
+local_storage_path: /srv/storage
+media_storage_path: /srv/media
+jellyfin_config_path: /var/lib/jellyfin
+
+# Wake-on-LAN configuration
+wol_mac: "b8:ac:6f:7e:6c:9d"
+
+# Role designation
+node_role: worker
+
+# Jellyfin scheduling
+schedule_jellyfin: true

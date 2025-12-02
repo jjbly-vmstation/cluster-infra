@@ -81,15 +81,24 @@ cluster-infra/
 
 ### 1. Configure Inventory
 
-Edit the inventory file to match your infrastructure:
+The canonical inventory is located at `inventory/production/hosts.yml`. For most users, the default configuration is ready to use.
 
 ```bash
-# Copy the template
-cp ansible/inventory/group_vars/all.yml.template ansible/inventory/group_vars/all.yml
+# View the canonical inventory
+ansible-inventory -i inventory/production/hosts.yml --graph
 
-# Edit with your values
-vim ansible/inventory/hosts.yml
+# Validate inventory structure
+./inventory/scripts/validate-inventory.sh
+
+# (Optional) Edit hosts or variables if needed
+vim inventory/production/hosts.yml
+vim inventory/production/group_vars/all.yml
+
+# Copy ansible variables template
+cp ansible/inventory/group_vars/all.yml.template ansible/inventory/group_vars/all.yml
 ```
+
+See [`inventory/README.md`](inventory/README.md) for detailed inventory documentation.
 
 ### 2. Run Preflight Checks (RHEL nodes)
 
