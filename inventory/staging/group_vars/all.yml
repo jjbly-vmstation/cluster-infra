@@ -1,19 +1,31 @@
 ---
-# Staging environment global configuration
-# Placeholder for future staging deployment
+# Global variables for all nodes in staging cluster
 
-cluster_name: vmstation-staging
-deployment_type: staging
+# Kubernetes configuration
+kubernetes_version: "1.29"
+kube_version: "v1.29.0"
 
-# Network configuration (adjust for staging)
+# Network configuration
 pod_network_cidr: "10.245.0.0/16"
 service_network_cidr: "10.97.0.0/12"
-cluster_cidr: "10.245.0.0/16"
-
-# Domain settings
-dns_domain: staging.cluster.local
+kube_service_addresses: "10.97.0.0/12"
+kube_pods_subnet: "10.245.0.0/16"
 
 # Container runtime
 container_runtime: containerd
+container_manager: containerd
+cri_socket: "unix:///var/run/containerd/containerd.sock"
 
-# TODO: Configure staging-specific settings when environment is ready
+# CNI configuration
+kube_network_plugin: calico
+
+# System configuration
+disable_swap: true
+setup_firewall: false
+
+# Download settings
+download_run_once: true
+download_localhost: false
+
+# Cluster name
+cluster_name: vmstation-staging

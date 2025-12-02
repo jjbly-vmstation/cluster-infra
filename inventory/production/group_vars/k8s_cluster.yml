@@ -1,0 +1,50 @@
+---
+# Kubernetes cluster-specific configuration for production
+
+# Cluster configuration
+kube_proxy_mode: iptables
+kube_proxy_strict_arp: false
+
+# API server configuration
+kube_apiserver_bind_address: "0.0.0.0"
+kube_apiserver_insecure_bind_address: ""
+
+# Certificate configuration
+certificates_duration: 3650
+certificates_key_size: 2048
+
+# Feature gates
+kube_feature_gates: []
+
+# Audit log
+kubernetes_audit: false
+
+# Encryption at rest
+kube_encrypt_secret_data: false
+
+# OIDC authentication (disabled by default)
+kube_oidc_auth: false
+
+# Admission plugins
+kube_apiserver_enable_admission_plugins:
+  - NodeRestriction
+  # Note: PodSecurityPolicy is deprecated in K8s v1.21+, removed in v1.25+
+  # Consider using Pod Security Standards for K8s v1.23+
+
+# Security
+kube_read_only_port: 0
+kubelet_rotate_certificates: true
+kubelet_rotate_server_certificates: true
+
+# DNS configuration
+dns_mode: coredns
+enable_nodelocaldns: true
+
+# Ingress controller (optional)
+ingress_nginx_enabled: false
+
+# Metrics server
+metrics_server_enabled: true
+
+# Container runtime settings
+containerd_use_systemd_cgroup: true

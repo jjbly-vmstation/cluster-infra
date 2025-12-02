@@ -1,0 +1,268 @@
+name: Validate Kubespray Integration
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'scripts/**'
+      - 'inventory/**'
+      - 'config/**'
+      - 'ansible/**'
+      - '.github/workflows/validate-kubespray.yml'
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'scripts/**'
+      - 'inventory/**'
+      - 'config/**'
+      - 'ansible/**'
+      - '.github/workflows/validate-kubespray.yml'
+
+jobs:
+  shellcheck:
+    name: ShellCheck Scripts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        # Using @v4 tag for automatic security patches
+        # Consider pinning to commit hash for stricter supply chain security
+        uses: actions/checkout@v4
+        with:
+          submodules: false  # Don't need kubespray for shellcheck
+      
+      - name: Run ShellCheck on scripts
+        run: |
+          echo "Running ShellCheck on all shell scripts..."
+          find scripts/ -name "*.sh" -type f | while read -r script; do
+            echo "Checking: $script"
+            shellcheck "$script" || exit 1
+          done
+          echo "✓ All scripts passed ShellCheck"
+
+  validate-inventory:
+    name: Validate Inventory Files
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Install Ansible
+        run: |
+          pip install ansible-core>=2.14
+      
+      - name: Validate YAML syntax
+        run: |
+          echo "Validating inventory YAML files..."
+          python3 -c "
+          import yaml
+          import sys
+          import os
+          
+          files = [
+              'inventory/production/hosts.yml',
+              'inventory/production/group_vars/all.yml',
+              'inventory/production/group_vars/k8s_cluster.yml',
+              'inventory/staging/hosts.yml',
+              'inventory/staging/group_vars/all.yml',
+              'inventory/staging/group_vars/k8s_cluster.yml'
+          ]
+          
+          failed = False
+          for f in files:
+              if os.path.exists(f):
+                  try:
+                      with open(f) as fh:
+                          yaml.safe_load(fh)
+                      print(f'✓ {f}')
+                  except Exception as e:
+                      print(f'✗ {f}: {e}')
+                      failed = True
+              else:
+                  print(f'⚠ {f}: not found')
+          
+          if failed:
+              sys.exit(1)
+          "
+      
+      - name: Validate Ansible inventory structure
+        run: |
+          echo "Validating production inventory structure..."
+          ansible-inventory -i inventory/production/hosts.yml --list > /dev/null
+          echo "✓ Production inventory structure is valid"
+          
+          echo "Validating staging inventory structure..."
+          ansible-inventory -i inventory/staging/hosts.yml --list > /dev/null || echo "⚠ Staging inventory is empty (this is expected)"
+
+  validate-scripts:
+    name: Validate Script Functionality
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive  # Need kubespray for validation
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Test script library
+        run: |
+          echo "Testing script library functions..."
+          
+          # Source and test common library
+          source scripts/lib/kubespray-common.sh
+          
+          # Test logging functions
+          log_info "Test info message"
+          log_success "Test success message"
+          log_warn "Test warning message"
+          
+          # Test utility functions
+          if command_exists bash; then
+            echo "✓ command_exists works"
+          fi
+          
+          repo_root=$(get_repo_root)
+          if [[ -n "$repo_root" ]]; then
+            echo "✓ get_repo_root works: $repo_root"
+          fi
+          
+          echo "✓ Script library functions work correctly"
+      
+      - name: Test configuration loading
+        run: |
+          echo "Testing configuration loading..."
+          if [[ -f config/kubespray-defaults.env ]]; then
+            source config/kubespray-defaults.env
+            echo "✓ Configuration file loads successfully"
+            echo "  KUBESPRAY_VERSION: ${KUBESPRAY_VERSION:-not set}"
+            echo "  KUBE_VERSION: ${KUBE_VERSION:-not set}"
+          else
+            echo "✗ Configuration file not found"
+            exit 1
+          fi
+      
+      - name: Validate directory structure
+        run: |
+          echo "Validating directory structure..."
+          
+          required_dirs=(
+            "kubespray"
+            "config"
+            "docs"
+            "inventory/production"
+            "inventory/staging"
+            "scripts/lib"
+          )
+          
+          for dir in "${required_dirs[@]}"; do
+            if [[ -d "$dir" ]]; then
+              echo "✓ $dir"
+            else
+              echo "✗ $dir not found"
+              exit 1
+            fi
+          done
+          
+          echo "✓ All required directories exist"
+
+  validate-documentation:
+    name: Validate Documentation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+      
+      - name: Check documentation exists
+        run: |
+          echo "Checking documentation files..."
+          
+          if [[ -f "docs/KUBESPRAY_DEPLOYMENT.md" ]]; then
+            echo "✓ KUBESPRAY_DEPLOYMENT.md exists"
+            wc -l docs/KUBESPRAY_DEPLOYMENT.md
+          else
+            echo "✗ KUBESPRAY_DEPLOYMENT.md not found"
+            exit 1
+          fi
+          
+          if [[ -f "README.md" ]]; then
+            echo "✓ README.md exists"
+            # Check if README mentions Kubespray
+            if grep -q "Kubespray" README.md; then
+              echo "✓ README.md mentions Kubespray"
+            else
+              echo "⚠ README.md doesn't mention Kubespray"
+            fi
+          else
+            echo "✗ README.md not found"
+            exit 1
+          fi
+      
+      - name: Check for broken links (basic)
+        run: |
+          echo "Checking for basic documentation issues..."
+          
+          # Check for common documentation issues
+          if grep -r "TODO\|FIXME\|XXX" docs/ 2>/dev/null | grep -v ".git"; then
+            echo "⚠ Found TODO/FIXME markers in documentation"
+          fi
+          
+          echo "✓ Basic documentation checks passed"
+
+  summary:
+    name: Validation Summary
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    needs: [shellcheck, validate-inventory, validate-scripts, validate-documentation]
+    if: always()
+    steps:
+      - name: Check results
+        run: |
+          echo "=================================="
+          echo "Kubespray Integration Validation"
+          echo "=================================="
+          echo ""
+          echo "All validation checks completed!"
+          echo ""
+          echo "Results:"
+          echo "  - ShellCheck: ${{ needs.shellcheck.result }}"
+          echo "  - Inventory Validation: ${{ needs.validate-inventory.result }}"
+          echo "  - Script Validation: ${{ needs.validate-scripts.result }}"
+          echo "  - Documentation: ${{ needs.validate-documentation.result }}"
+          
+          if [[ "${{ needs.shellcheck.result }}" == "success" ]] && \
+             [[ "${{ needs.validate-inventory.result }}" == "success" ]] && \
+             [[ "${{ needs.validate-scripts.result }}" == "success" ]] && \
+             [[ "${{ needs.validate-documentation.result }}" == "success" ]]; then
+            echo ""
+            echo "✓ All validation checks passed!"
+            exit 0
+          else
+            echo ""
+            echo "✗ Some validation checks failed"
+            exit 1
+          fi

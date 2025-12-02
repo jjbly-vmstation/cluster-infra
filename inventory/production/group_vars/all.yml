@@ -1,36 +1,43 @@
 ---
-# Global cluster configuration
-# This file contains variables that apply to all hosts in the inventory
+# Global variables for all nodes in production cluster
 
-# Cluster identity
-cluster_name: vmstation
-deployment_type: production
-
-# Ansible connection settings
-ansible_python_interpreter: /usr/bin/python3
-ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
+# Kubernetes configuration
+kubernetes_version: "1.29"
+kube_version: "v1.29.0"
 
 # Network configuration
 pod_network_cidr: "10.244.0.0/16"
 service_network_cidr: "10.96.0.0/12"
-cluster_cidr: "10.244.0.0/16"
+kube_service_addresses: "10.96.0.0/12"
+kube_pods_subnet: "10.244.0.0/16"
 
-# Domain settings
-dns_domain: cluster.local
+# Control plane endpoint
+control_plane_endpoint: "192.168.4.63:6443"
+kube_apiserver_ip: "192.168.4.63"
+
+# Container runtime
+container_runtime: containerd
+container_manager: containerd
+cri_socket: "unix:///var/run/containerd/containerd.sock"
+
+# CNI configuration
+# Use Calico for production (Kubespray default, more features)
+kube_network_plugin: calico
 
 # System configuration
 disable_swap: true
 setup_firewall: false
 
-# Container runtime
-container_runtime: containerd
-cri_socket: "unix:///var/run/containerd/containerd.sock"
+# Download settings
+download_run_once: true
+download_localhost: false
 
-# Kubernetes version
-kubernetes_version: "1.29"
+# Cluster name
+cluster_name: vmstation-prod
 
-# CNI plugin
-cni_plugin: flannel
+# Node labels and taints
+node_labels: {}
+node_taints: []
 
-# Cluster endpoint
-control_plane_endpoint: "192.168.4.63:6443"
+# Kubelet configuration
+kubelet_max_pods: 110
