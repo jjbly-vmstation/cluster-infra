@@ -11,7 +11,7 @@ REPO_ROOT="${REPO_ROOT:-/github/workspace}"
 KUBESPRAY_DIR="${KUBESPRAY_DIR:-$REPO_ROOT/.cache/kubespray}"
 KUBESPRAY_INVENTORY="${KUBESPRAY_INVENTORY:-$KUBESPRAY_DIR/inventory/mycluster/inventory.ini}"
 # Updated to use canonical inventory location
-MAIN_INVENTORY="${MAIN_INVENTORY:-$REPO_ROOT/inventory/production/hosts.yml}"
+MAIN_INVENTORY="/srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml}"
 SSH_KEY_PATH="${SSH_KEY_PATH:-/tmp/id_vmstation_ops}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 ARTIFACTS_DIR="$REPO_ROOT/ansible/artifacts/run-$TIMESTAMP"
@@ -263,9 +263,9 @@ backup_files() {
     log_info "=========================================="
     
     local files=(
-        "$REPO_ROOT/inventory/production/hosts.yml"
+        "/srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml"
         "$REPO_ROOT/inventory.ini"
-        "$REPO_ROOT/ansible/inventory/hosts.yml"
+        "/srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml"
         "$REPO_ROOT/deploy.sh"
         "$REPO_ROOT/ansible/playbooks/setup-autosleep.yaml"
         "$REPO_ROOT/ansible/playbooks/run-preflight-rhel10.yml"
@@ -319,7 +319,7 @@ normalize_inventory() {
         elif [[ -f "$REPO_ROOT/inventory.ini" ]]; then
             # Fallback to deprecated inventory.ini if canonical not found
             cp "$REPO_ROOT/inventory.ini" "$KUBESPRAY_INVENTORY"
-            log_warn "Using deprecated inventory.ini (please migrate to inventory/production/hosts.yml)"
+            log_warn "Using deprecated inventory.ini (please migrate to /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml)"
         else
             log_error "No inventory found (checked: $MAIN_INVENTORY and $REPO_ROOT/inventory.ini)"
             return 1

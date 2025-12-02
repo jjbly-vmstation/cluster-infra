@@ -46,14 +46,14 @@ ansible_sudo_nopasswd: true
 ### Run preflight on compute_nodes group
 
 ```bash
-ansible-playbook -i ansible/inventory/hosts.yml \
+ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml \
   ansible/playbooks/run-preflight-rhel10.yml
 ```
 
 ### Run preflight on specific host
 
 ```bash
-ansible-playbook -i ansible/inventory/hosts.yml \
+ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml \
   -l homelab \
   ansible/playbooks/run-preflight-rhel10.yml
 ```
@@ -61,7 +61,7 @@ ansible-playbook -i ansible/inventory/hosts.yml \
 ### Override SELinux mode
 
 ```bash
-ansible-playbook -i ansible/inventory/hosts.yml \
+ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml \
   -e 'selinux_mode=enforcing' \
   ansible/playbooks/run-preflight-rhel10.yml
 ```
@@ -79,12 +79,12 @@ After running this role:
 
 1. **If SELinux mode was changed**: Reboot is recommended
    ```bash
-   ansible compute_nodes -i ansible/inventory/hosts.yml -m reboot -b
+   ansible compute_nodes -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml -m reboot -b
    ```
 
 2. **Verify time sync**:
    ```bash
-   ansible compute_nodes -i ansible/inventory/hosts.yml -m shell -a "chronyc tracking"
+   ansible compute_nodes -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml -m shell -a "chronyc tracking"
    ```
 
 3. **Proceed with deployment**:
@@ -102,7 +102,7 @@ This role integrates with the existing VMStation deployment workflow:
 ./deploy.sh debian                         # Deploy Debian cluster
 
 # Run preflight before RKE2 or Kubespray deployment
-ansible-playbook -i ansible/inventory/hosts.yml \
+ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml \
   ansible/playbooks/run-preflight-rhel10.yml
 
 # Then deploy with RKE2 (existing flow)

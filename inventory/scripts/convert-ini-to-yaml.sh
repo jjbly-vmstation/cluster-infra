@@ -14,12 +14,12 @@ if [[ $# -lt 1 ]]; then
     echo "Usage: $0 <input.ini> [output.yml]"
     echo ""
     echo "Example:"
-    echo "  $0 inventory.ini production/hosts.yml"
+    echo "  $0 inventory.ini /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml"
     exit 1
 fi
 
 INPUT_FILE="$1"
-OUTPUT_FILE="${2:-hosts.yml}"
+OUTPUT_FILE="/srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml}"
 
 # Check if input file exists
 if [[ ! -f "$INPUT_FILE" ]]; then

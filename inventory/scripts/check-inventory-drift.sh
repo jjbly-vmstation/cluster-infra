@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INVENTORY_DIR="$(dirname "$SCRIPT_DIR")"
-CANONICAL="${INVENTORY_DIR}/production/hosts.yml"
+CANONICAL="/srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml"
 
 echo "=== VMStation Inventory Drift Detection ==="
 echo "Canonical inventory: ${CANONICAL}"
@@ -36,7 +36,7 @@ drift_detected=0
 check_repo() {
     local repo_name="$1"
     local repo_path="${WORKSPACE_BASE}/${repo_name}"
-    local inventory="${repo_path}/ansible/inventory/hosts.yml"
+    local inventory="/srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml"
     
     if [[ ! -d "$repo_path" ]]; then
         echo "⊘ ${repo_name}: Repository not found"

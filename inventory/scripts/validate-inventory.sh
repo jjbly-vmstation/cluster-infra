@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INVENTORY_DIR="$(dirname "$SCRIPT_DIR")"
-INVENTORY_FILE="${INVENTORY_DIR}/production/hosts.yml"
+INVENTORY_FILE="/srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml"
 
 echo "=== VMStation Inventory Validation ==="
 echo "Inventory: ${INVENTORY_FILE}"

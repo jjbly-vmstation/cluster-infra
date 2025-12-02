@@ -67,7 +67,7 @@ fi
 log_success "Kubespray environment ready"
 
 # Use VMStation production inventory
-PRODUCTION_INVENTORY="$REPO_ROOT/inventory/production/hosts.yml"
+PRODUCTION_INVENTORY="/srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml"
 
 log_success "✅ Kubespray setup complete!"
 echo ""
@@ -84,12 +84,12 @@ echo ""
 echo "3. Run preflight checks (RHEL10 nodes):"
 echo "   cd ansible"
 echo "   ansible-playbook playbooks/run-preflight-rhel10.yml \\"
-echo "     -i ../inventory/production/hosts.yml -l compute_nodes"
+echo "     -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml -l compute_nodes"
 echo ""
 echo "4. Deploy cluster with Kubespray:"
 echo "   source scripts/activate-kubespray-env.sh"
 echo "   cd kubespray"
-echo "   ansible-playbook -i ../inventory/production/hosts.yml cluster.yml"
+echo "   ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml cluster.yml"
 echo ""
 echo "5. Access your cluster:"
 echo "   export KUBECONFIG=\$HOME/.kube/config"

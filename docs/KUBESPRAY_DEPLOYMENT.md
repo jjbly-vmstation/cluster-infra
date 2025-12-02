@@ -101,7 +101,7 @@ This script will:
 Edit the production inventory:
 
 ```bash
-vim inventory/production/hosts.yml
+vim /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml
 vim inventory/production/group_vars/all.yml
 vim inventory/production/group_vars/k8s_cluster.yml
 ```
@@ -119,7 +119,7 @@ For RHEL/AlmaLinux nodes, run preflight checks:
 ```bash
 cd ansible
 ansible-playbook playbooks/run-preflight-rhel10.yml \
-  -i ../inventory/production/hosts.yml \
+  -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml \
   -l compute_nodes
 ```
 
@@ -133,7 +133,7 @@ source scripts/activate-kubespray-env.sh
 cd kubespray
 
 # Run deployment
-ansible-playbook -i ../inventory/production/hosts.yml cluster.yml
+ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml cluster.yml
 ```
 
 ## Inventory Management
@@ -143,12 +143,12 @@ ansible-playbook -i ../inventory/production/hosts.yml cluster.yml
 ```
 inventory/
 ├── production/
-│   ├── hosts.yml              # Main inventory (single source of truth)
+│   ├── /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml              # Main inventory (single source of truth)
 │   └── group_vars/
 │       ├── all.yml            # Global variables
 │       └── k8s_cluster.yml    # Cluster-specific variables
 └── staging/
-    ├── hosts.yml
+    ├── /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml
     └── group_vars/
         ├── all.yml
         └── k8s_cluster.yml
@@ -159,7 +159,7 @@ inventory/
 VMStation uses YAML format for inventories (Kubespray native format):
 
 ```yaml
-# inventory/production/hosts.yml
+# /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml
 kube_control_plane:
   hosts:
     masternode:
@@ -227,11 +227,11 @@ kube_network_plugin: calico
 # 4. Run preflight checks (RHEL nodes)
 cd ansible
 ansible-playbook playbooks/run-preflight-rhel10.yml \
-  -i ../inventory/production/hosts.yml -l compute_nodes
+  -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml -l compute_nodes
 
 # 5. Deploy cluster
 cd ../kubespray
-ansible-playbook -i ../inventory/production/hosts.yml cluster.yml
+ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml cluster.yml
 ```
 
 ### Automated Deployment
@@ -270,7 +270,7 @@ kubectl get pods -A
 1. Add the new node to inventory:
 
 ```yaml
-# inventory/production/hosts.yml
+# /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml
 kube_node:
   hosts:
     # ... existing nodes ...
@@ -284,7 +284,7 @@ kube_node:
 
 ```bash
 cd kubespray
-ansible-playbook -i ../inventory/production/hosts.yml scale.yml \
+ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml scale.yml \
   --limit=new-worker
 ```
 
@@ -300,7 +300,7 @@ kubectl drain <node-name> --ignore-daemonsets --delete-emptydir-data
 
 ```bash
 cd kubespray
-ansible-playbook -i ../inventory/production/hosts.yml remove-node.yml \
+ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml remove-node.yml \
   -e node=<node-name>
 ```
 
@@ -310,7 +310,7 @@ ansible-playbook -i ../inventory/production/hosts.yml remove-node.yml \
 
 ```bash
 cd kubespray
-ansible-playbook -i ../inventory/production/hosts.yml cluster.yml \
+ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml cluster.yml \
   --tags=rotate_certificates
 ```
 
@@ -320,7 +320,7 @@ ansible-playbook -i ../inventory/production/hosts.yml cluster.yml \
 
 ```bash
 cd kubespray
-ansible-playbook -i ../inventory/production/hosts.yml reset.yml
+ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml reset.yml
 ```
 
 ## Troubleshooting
@@ -352,7 +352,7 @@ kubectl delete pods -n kube-system -l k8s-app=calico-node
 
 ```bash
 # Test SSH connectivity
-ansible all -i inventory/production/hosts.yml -m ping
+ansible all -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml -m ping
 
 # Check SSH keys
 ssh -i ~/.ssh/id_k3s root@192.168.4.61
@@ -387,13 +387,13 @@ Create a diagnostic bundle for troubleshooting:
 
 ```bash
 # Test connectivity to all nodes
-ansible all -i inventory/production/hosts.yml -m shell -a "ip addr"
+ansible all -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml -m shell -a "ip addr"
 
 # Check routes
-ansible all -i inventory/production/hosts.yml -m shell -a "ip route"
+ansible all -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml -m shell -a "ip route"
 
 # Test inter-node connectivity
-ansible all -i inventory/production/hosts.yml -m shell \
+ansible all -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml -m shell \
   -a "ping -c 3 192.168.4.63"
 ```
 
@@ -427,7 +427,7 @@ kube_version: v1.29.0  # Update to desired version
 
 ```bash
 cd kubespray
-ansible-playbook -i ../inventory/production/hosts.yml upgrade-cluster.yml
+ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml upgrade-cluster.yml
 ```
 
 4. **Verify Upgrade**

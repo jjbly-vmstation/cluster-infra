@@ -27,7 +27,7 @@ OPTIONS:
 
 EXAMPLES:
     $(basename "$0") -e production
-    $(basename "$0") inventory/production/hosts.yml
+    $(basename "$0") /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml
     $(basename "$0") -e production -c
 EOF
 }
@@ -47,7 +47,7 @@ main() {
             -e|--environment)
                 shift
                 local env="$1"
-                inventory_file="$REPO_ROOT/inventory/$env/hosts.yml"
+                inventory_file="/srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml"
                 ;;
             -c|--check-ssh)
                 check_ssh=true
@@ -69,7 +69,7 @@ main() {
     
     # Default to production inventory if not specified
     if [[ -z "$inventory_file" ]]; then
-        inventory_file="$REPO_ROOT/inventory/production/hosts.yml"
+        inventory_file="/srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml"
     fi
     
     print_banner "Inventory Validation"

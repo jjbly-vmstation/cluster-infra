@@ -72,7 +72,7 @@ main() {
         ((failed_checks++))
     fi
     
-    if [[ -f "$REPO_ROOT/inventory/production/hosts.yml" ]]; then
+    if [[ -f "/srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml" ]]; then
         log_success "Production inventory file exists"
     else
         log_error "Production inventory file not found"
@@ -102,9 +102,9 @@ main() {
         log_success "All checks passed! Kubespray setup is ready."
         echo ""
         echo "Next steps:"
-        echo "  1. Review and customize: inventory/production/hosts.yml"
+        echo "  1. Review and customize: /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml"
         echo "  2. Activate environment: source scripts/activate-kubespray-env.sh"
-        echo "  3. Deploy cluster: cd kubespray && ansible-playbook -i ../inventory/production/hosts.yml cluster.yml"
+        echo "  3. Deploy cluster: cd kubespray && ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml cluster.yml"
         return 0
     else
         log_error "$failed_checks check(s) failed"

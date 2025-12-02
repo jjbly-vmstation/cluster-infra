@@ -23,7 +23,7 @@ This directory contains all Ansible playbooks for VMStation Kubernetes cluster d
 ```bash
 ./deploy.sh debian           # Via wrapper script
 # OR
-ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/deploy-cluster.yaml
+ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml ansible/playbooks/deploy-cluster.yaml
 ```
 
 **Idempotency**: ✅ Safe to run multiple times
@@ -44,7 +44,7 @@ ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/deploy-cluster
 ```bash
 ./deploy.sh rke2             # Via wrapper script
 # OR
-ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/install-rke2-homelab.yml
+ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml ansible/playbooks/install-rke2-homelab.yml
 ```
 
 **Idempotency**: ✅ Safe to run multiple times - skips if already installed
@@ -60,7 +60,7 @@ ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/install-rke2-h
 
 **Usage**:
 ```bash
-ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/configure-homelab-monitoring.yml
+ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml ansible/playbooks/configure-homelab-monitoring.yml
 ```
 
 **Prerequisites**: RKE2 must be installed (run `install-rke2-homelab.yml` first)
@@ -86,7 +86,7 @@ ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/configure-home
 ```bash
 ./deploy.sh reset            # Via wrapper script
 # OR
-ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/reset-cluster.yaml
+ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml ansible/playbooks/reset-cluster.yaml
 ```
 
 **Idempotency**: ✅ Safe to run multiple times - handles missing files/services gracefully
@@ -102,7 +102,7 @@ ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/reset-cluster.
 **Usage**:
 ```bash
 # Called automatically by ./deploy.sh reset
-ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/uninstall-rke2-homelab.yml
+ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml ansible/playbooks/uninstall-rke2-homelab.yml
 ```
 
 #### `cleanup-homelab.yml`
@@ -116,7 +116,7 @@ ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/uninstall-rke2
 **Usage**:
 ```bash
 # Called automatically by ./deploy.sh rke2 (pre-flight check)
-ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/cleanup-homelab.yml
+ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml ansible/playbooks/cleanup-homelab.yml
 ```
 
 ### Operational Playbooks
@@ -132,7 +132,7 @@ ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/cleanup-homela
 
 **Usage**:
 ```bash
-ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/fix-loki-config.yaml
+ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml ansible/playbooks/fix-loki-config.yaml
 ```
 
 **When to use**:
@@ -158,7 +158,7 @@ See [LOKI_CONFIG_DRIFT_PREVENTION.md](../../docs/LOKI_CONFIG_DRIFT_PREVENTION.md
 ```bash
 ./deploy.sh spindown         # Via wrapper script
 # OR
-ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/spin-down-cluster.yaml
+ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml ansible/playbooks/spin-down-cluster.yaml
 ```
 
 **Note**: Does NOT power off nodes - use this before manual shutdown
@@ -175,7 +175,7 @@ ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/spin-down-clus
 ```bash
 ./deploy.sh setup            # Via wrapper script
 # OR
-ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/setup-autosleep.yaml
+ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml ansible/playbooks/setup-autosleep.yaml
 ```
 
 **Configuration**:
@@ -197,7 +197,7 @@ ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/setup-autoslee
 
 **Usage**:
 ```bash
-ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/verify-cluster.yaml
+ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml ansible/playbooks/verify-cluster.yaml
 ```
 
 **Exit Codes**:
@@ -288,7 +288,7 @@ All playbooks save detailed logs to `ansible/artifacts/` directory:
 
 ## Inventory Configuration
 
-Ensure your inventory file (`ansible/inventory/hosts.yml`) defines:
+Ensure your inventory file /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml`) defines:
 
 ```yaml
 monitoring_nodes:

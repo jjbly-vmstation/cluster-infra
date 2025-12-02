@@ -12,7 +12,7 @@ cluster-infra/
 ├── ansible/
 │   ├── ansible.cfg                 # Ansible configuration
 │   ├── inventory/
-│   │   ├── hosts.yml               # Main inventory file
+│   │   ├── /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml               # Main inventory file
 │   │   └── group_vars/             # Group variables
 │   │       ├── all.yml.template    # Variables template
 │   │       └── secrets.yml.example
@@ -31,12 +31,12 @@ cluster-infra/
 │   └── KUBESPRAY_DEPLOYMENT.md     # Kubespray deployment guide
 ├── inventory/
 │   ├── production/                 # Production inventory
-│   │   ├── hosts.yml               # Single source of truth
+│   │   ├── /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml               # Single source of truth
 │   │   └── group_vars/
 │   │       ├── all.yml
 │   │       └── k8s_cluster.yml
 │   └── staging/                    # Staging inventory
-│       ├── hosts.yml
+│       ├── /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml
 │       └── group_vars/
 ├── scripts/
 │   ├── run-kubespray.sh            # Kubespray setup wrapper
@@ -52,7 +52,7 @@ cluster-infra/
 │   └── kubeadm-config.yaml.j2      # Kubeadm configuration
 ├── terraform/
 │   └── malware-lab/                # Malware analysis lab IaC
-├── inventory.ini                   # Legacy inventory (backward compat)
+├── /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml                   # Canonical inventory
 ├── IMPROVEMENTS_AND_STANDARDS.md   # Best practices guide
 └── README.md
 ```
@@ -81,17 +81,17 @@ cluster-infra/
 
 ### 1. Configure Inventory
 
-The canonical inventory is located at `inventory/production/hosts.yml`. For most users, the default configuration is ready to use.
+The canonical inventory is located at /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml`. For most users, the default configuration is ready to use.
 
 ```bash
 # View the canonical inventory
-ansible-inventory -i inventory/production/hosts.yml --graph
+ansible-inventory -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml --graph
 
 # Validate inventory structure
 ./inventory/scripts/validate-inventory.sh
 
 # (Optional) Edit hosts or variables if needed
-vim inventory/production/hosts.yml
+vim /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml
 vim inventory/production/group_vars/all.yml
 
 # Copy ansible variables template
@@ -164,7 +164,7 @@ git submodule update --init --recursive
 ./scripts/validate-kubespray-setup.sh
 
 # 3. Configure inventory (edit as needed)
-vim inventory/production/hosts.yml
+vim /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml
 vim inventory/production/group_vars/all.yml
 
 # 4. Test inventory
@@ -173,12 +173,12 @@ vim inventory/production/group_vars/all.yml
 # 5. Run preflight checks (RHEL nodes)
 cd ansible
 ansible-playbook playbooks/run-preflight-rhel10.yml \
-  -i ../inventory/production/hosts.yml -l compute_nodes
+  -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml -l compute_nodes
 
 # 6. Deploy cluster
 cd ../kubespray
 source ../.cache/kubespray/.venv/bin/activate
-ansible-playbook -i ../inventory/production/hosts.yml cluster.yml
+ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml cluster.yml
 ```
 
 ### Kubespray Scripts

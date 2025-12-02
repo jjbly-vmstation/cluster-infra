@@ -4,7 +4,7 @@ This directory contains the canonical inventory for all VMStation Kubernetes clu
 
 ## 🎯 Single Source of Truth
 
-**`production/hosts.yml`** is the authoritative inventory file for the VMStation cluster. All other repositories and tools should reference or symlink to this file to ensure consistency.
+/srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml`** is the authoritative inventory file for the VMStation cluster. All other repositories and tools should reference or symlink to this file to ensure consistency.
 
 ## 📁 Structure
 
@@ -12,7 +12,7 @@ This directory contains the canonical inventory for all VMStation Kubernetes clu
 inventory/
 ├── README.md                           # This file
 ├── production/                         # Production environment
-│   ├── hosts.yml                       # Main inventory (Kubespray-compatible)
+│   ├── /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml                       # Main inventory (Kubespray-compatible)
 │   ├── group_vars/
 │   │   ├── all.yml                     # Global cluster variables
 │   │   ├── k8s_cluster/
@@ -25,7 +25,7 @@ inventory/
 │       ├── storagenodet3500.yml        # Storage node configuration
 │       └── homelab.yml                 # Compute node configuration
 ├── staging/                            # Staging environment (future)
-│   ├── hosts.yml
+│   ├── /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml
 │   └── group_vars/
 │       └── all.yml
 └── scripts/
@@ -40,13 +40,13 @@ inventory/
 
 ```bash
 # List all hosts and variables
-ansible-inventory -i production/hosts.yml --list
+ansible-inventory -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml --list
 
 # Show inventory graph
-ansible-inventory -i production/hosts.yml --graph
+ansible-inventory -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml --graph
 
 # Show host-specific variables
-ansible-inventory -i production/hosts.yml --host masternode
+ansible-inventory -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml --host masternode
 ```
 
 ### Validate Inventory
@@ -69,10 +69,10 @@ The validation script checks:
 ```
 
 This creates symlinks in:
-- `~/.vmstation/repos/cluster-config/ansible/inventory/hosts.yml`
-- `~/.vmstation/repos/cluster-setup/ansible/inventory/hosts.yml`
-- `~/.vmstation/repos/cluster-monitor-stack/ansible/inventory/hosts.yml`
-- `~/.vmstation/repos/cluster-application-stack/ansible/inventory/hosts.yml`
+- /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml`
+- /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml`
+- /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml`
+- /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml`
 
 ### Check for Drift
 
@@ -86,7 +86,7 @@ Compares the canonical inventory with copies in other repositories and reports a
 
 ### Modify Hosts
 
-Edit `production/hosts.yml` to add, remove, or modify hosts:
+Edit /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml` to add, remove, or modify hosts:
 
 ```yaml
 kube_node:
@@ -219,7 +219,7 @@ cd kubespray
 pip install -r requirements.txt
 
 # Use cluster-infra inventory
-ansible-playbook -i /path/to/cluster-infra/inventory/production/hosts.yml \
+ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml \
     cluster.yml
 ```
 
@@ -228,7 +228,8 @@ ansible-playbook -i /path/to/cluster-infra/inventory/production/hosts.yml \
 The canonical inventory replaces:
 
 - ❌ `cluster-infra/inventory.ini` (deprecated, Kubespray-style)
-- ❌ `cluster-infra/ansible/inventory/hosts.yml` (legacy custom groups)
+  ✅ Use /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml` as the canonical inventory
+- ❌ /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml` (legacy custom groups)
 - ❌ Duplicate inventories in other repositories
 
 ### Why This Structure?
@@ -248,7 +249,7 @@ The canonical inventory replaces:
 ./scripts/validate-inventory.sh
 
 # Test with ansible-inventory
-ansible-inventory -i production/hosts.yml --list
+ansible-inventory -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml --list
 ```
 
 ### Drift Detected
@@ -267,7 +268,7 @@ Ensure you're using the correct inventory path:
 
 ```bash
 # Correct
-ansible-playbook -i inventory/production/hosts.yml playbook.yml
+ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml playbook.yml
 
 # Or from ansible/ directory with ansible.cfg configured
 cd ansible

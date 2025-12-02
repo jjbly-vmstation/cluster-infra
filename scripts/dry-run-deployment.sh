@@ -63,7 +63,7 @@ main() {
     
     local kubespray_dir="${KUBESPRAY_DIR:-$REPO_ROOT/kubespray}"
     local venv_dir="${KUBESPRAY_VENV:-$kubespray_dir/.venv}"
-    local inventory_file="$REPO_ROOT/inventory/$environment/hosts.yml"
+    local inventory_file="/srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml"
     
     # Validate setup
     log_info "Validating environment: $environment"

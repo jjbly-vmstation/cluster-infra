@@ -2,7 +2,7 @@
 
 ## 🎯 TL;DR
 
-The canonical inventory is at `inventory/production/hosts.yml`. Everything is already configured and validated.
+The canonical inventory is at /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml`. Everything is already configured and validated.
 
 ## ✅ Quick Commands
 
@@ -11,15 +11,15 @@ The canonical inventory is at `inventory/production/hosts.yml`. Everything is al
 ./scripts/validate-inventory.sh
 
 # View inventory
-ansible-inventory -i production/hosts.yml --graph
-ansible-inventory -i production/hosts.yml --list
+ansible-inventory -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml --graph
+ansible-inventory -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml --list
 
 # Use in playbooks (from ansible/ directory)
 cd ../ansible
 ansible-playbook playbooks/deploy-cluster.yaml
 
 # Or specify explicitly
-ansible-playbook -i ../inventory/production/hosts.yml playbooks/deploy-cluster.yaml
+ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml playbooks/deploy-cluster.yaml
 ```
 
 ## 📋 What Changed?
@@ -27,12 +27,12 @@ ansible-playbook -i ../inventory/production/hosts.yml playbooks/deploy-cluster.y
 ### Before (Deprecated)
 ```
 inventory.ini                        # Root level, INI format
-ansible/inventory/hosts.yml          # Legacy custom groups
+/srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml          # Legacy custom groups
 ```
 
 ### After (Current)
 ```
-inventory/production/hosts.yml       # Canonical, Kubespray-compatible
+/srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml       # Canonical, Kubespray-compatible
 ```
 
 ## 🏗️ Host Groups
@@ -85,7 +85,7 @@ Target repos:
 ## 🛠️ Editing
 
 ### Change hosts
-Edit `production/hosts.yml`
+Edit /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml`
 
 ### Change cluster config
 Edit `production/group_vars/all.yml`

@@ -74,10 +74,10 @@ jobs:
           import os
           
           files = [
-              'inventory/production/hosts.yml',
+              '/srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml',
               'inventory/production/group_vars/all.yml',
               'inventory/production/group_vars/k8s_cluster.yml',
-              'inventory/staging/hosts.yml',
+              '/srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml',
               'inventory/staging/group_vars/all.yml',
               'inventory/staging/group_vars/k8s_cluster.yml'
           ]
@@ -102,11 +102,11 @@ jobs:
       - name: Validate Ansible inventory structure
         run: |
           echo "Validating production inventory structure..."
-          ansible-inventory -i inventory/production/hosts.yml --list > /dev/null
+          ansible-inventory -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml --list > /dev/null
           echo "✓ Production inventory structure is valid"
           
           echo "Validating staging inventory structure..."
-          ansible-inventory -i inventory/staging/hosts.yml --list > /dev/null || echo "⚠ Staging inventory is empty (this is expected)"
+          ansible-inventory -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml --list > /dev/null || echo "⚠ Staging inventory is empty (this is expected)"
 
   validate-scripts:
     name: Validate Script Functionality

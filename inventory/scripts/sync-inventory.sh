@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INVENTORY_DIR="$(dirname "$SCRIPT_DIR")"
-CANONICAL_INVENTORY="${INVENTORY_DIR}/production/hosts.yml"
+CANONICAL_INVENTORY="/srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml"
 
 echo "=== VMStation Inventory Sync ==="
 echo "Canonical inventory: ${CANONICAL_INVENTORY}"
@@ -46,7 +46,7 @@ sync_to_repo() {
     mkdir -p "$target_dir"
     
     # Create symlink to canonical inventory
-    local target_link="${target_dir}/hosts.yml"
+    local target_link="/srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml"
     
     # Remove existing file/link if present
     if [[ -e "$target_link" || -L "$target_link" ]]; then

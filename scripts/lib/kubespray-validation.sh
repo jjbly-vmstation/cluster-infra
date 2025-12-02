@@ -120,7 +120,7 @@ validate_kubespray_requirements() {
     local essential_files=(
         "cluster.yml"
         "requirements.txt"
-        "inventory/sample/hosts.ini"
+        "/srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml"
         "roles/kubespray-defaults/defaults/main.yaml"
     )
     
