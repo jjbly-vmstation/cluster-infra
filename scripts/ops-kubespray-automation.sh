@@ -272,7 +272,8 @@ backup_files() {
     
     for file in "${files[@]}"; do
         if [[ -f "$file" ]]; then
-            local dest="$BACKUP_DIR/$(basename "$file")"
+            local dest
+            dest="$BACKUP_DIR/$(basename "$file")"
             cp "$file" "$dest"
             log_info "Backed up: $file"
         else
@@ -335,7 +336,7 @@ validate_inventory() {
         return 0
     else
         log_warn "Inventory validation had failures"
-        cat "$logfile" | tail -20
+        tail -20 "$logfile"
         return 1
     fi
 }
@@ -366,7 +367,7 @@ run_preflight() {
         return 0
     else
         log_error "Preflight checks failed, attempting remediation..."
-        cat "$logfile" | tail -50
+        tail -50 "$logfile"
         
         # Attempt basic remediation
         remediate_preflight
@@ -426,7 +427,7 @@ setup_kubespray() {
         log_info "✓ Kubespray setup completed"
     else
         log_error "Kubespray setup failed"
-        cat "$logfile" | tail -50
+        tail -50 "$logfile"
         return 1
     fi
 }
@@ -453,6 +454,7 @@ deploy_cluster() {
     fi
     
     cd "$KUBESPRAY_DIR"
+    # shellcheck disable=SC1091
     source "$venv/bin/activate"
     
     log_cmd "ansible-playbook cluster.yml" "$logfile"
@@ -478,7 +480,7 @@ deploy_cluster() {
                 ((attempt++))
             else
                 log_error "All deployment attempts exhausted"
-                cat "$logfile" | tail -100
+                tail -100 "$logfile"
                 cd "$REPO_ROOT"
                 return 1
             fi
@@ -634,7 +636,7 @@ deploy_monitoring_infrastructure() {
         log_info "✓ Monitoring deployment completed"
     else
         log_warn "Monitoring deployment had issues"
-        cat "$LOG_DIR/monitoring-deployment.log" | tail -50
+        tail -50 "$LOG_DIR/monitoring-deployment.log"
     fi
     
     # Deploy infrastructure
@@ -643,7 +645,7 @@ deploy_monitoring_infrastructure() {
         log_info "✓ Infrastructure deployment completed"
     else
         log_warn "Infrastructure deployment had issues"
-        cat "$LOG_DIR/infrastructure-deployment.log" | tail -50
+        tail -50 "$LOG_DIR/infrastructure-deployment.log"
     fi
 }
 
@@ -734,7 +736,7 @@ EOF
         log_info "✓ Smoke test passed"
     else
         log_warn "Smoke test failed"
-        cat "$LOG_DIR/smoke-test.log" | tail -30
+        tail -30 "$LOG_DIR/smoke-test.log"
     fi
 }
 

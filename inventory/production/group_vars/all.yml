@@ -1,0 +1,43 @@
+---
+# Global variables for all nodes in production cluster
+
+# Kubernetes configuration
+kubernetes_version: "1.29"
+kube_version: "v1.29.0"
+
+# Network configuration
+pod_network_cidr: "10.244.0.0/16"
+service_network_cidr: "10.96.0.0/12"
+kube_service_addresses: "10.96.0.0/12"
+kube_pods_subnet: "10.244.0.0/16"
+
+# Control plane endpoint
+control_plane_endpoint: "192.168.4.63:6443"
+kube_apiserver_ip: "192.168.4.63"
+
+# Container runtime
+container_runtime: containerd
+container_manager: containerd
+cri_socket: "unix:///var/run/containerd/containerd.sock"
+
+# CNI configuration
+cni_plugin: flannel
+kube_network_plugin: calico  # Kubespray default
+
+# System configuration
+disable_swap: true
+setup_firewall: false
+
+# Download settings
+download_run_once: true
+download_localhost: false
+
+# Cluster name
+cluster_name: vmstation-prod
+
+# Node labels and taints
+node_labels: {}
+node_taints: []
+
+# Kubelet configuration
+kubelet_max_pods: 110

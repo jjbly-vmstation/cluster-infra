@@ -1,0 +1,15 @@
+---
+# Kubernetes cluster-specific configuration for staging
+
+# Cluster configuration
+kube_proxy_mode: iptables
+
+# DNS configuration
+dns_mode: coredns
+enable_nodelocaldns: true
+
+# Metrics server
+metrics_server_enabled: true
+
+# Container runtime settings
+containerd_use_systemd_cgroup: true

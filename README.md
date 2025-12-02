@@ -8,32 +8,52 @@ This repository contains Ansible playbooks, roles, and scripts for deploying and
 
 ```
 cluster-infra/
+├── kubespray/                      # Git submodule (Kubespray official)
 ├── ansible/
-│   ├── ansible.cfg              # Ansible configuration
+│   ├── ansible.cfg                 # Ansible configuration
 │   ├── inventory/
-│   │   ├── hosts.yml            # Main inventory file
-│   │   └── group_vars/          # Group variables
-│   │       ├── all.yml.template # Variables template
+│   │   ├── hosts.yml               # Main inventory file
+│   │   └── group_vars/             # Group variables
+│   │       ├── all.yml.template    # Variables template
 │   │       └── secrets.yml.example
 │   ├── playbooks/
-│   │   ├── deploy-cluster.yaml      # Kubernetes deployment
-│   │   ├── reset-cluster.yaml       # Cluster cleanup
-│   │   ├── cleanup-homelab.yml      # Homelab cleanup
-│   │   ├── run-preflight-rhel10.yml # RHEL10 preparation
-│   │   ├── verify-cluster.yaml      # Cluster verification
+│   │   ├── deploy-cluster.yaml     # Kubernetes deployment
+│   │   ├── reset-cluster.yaml      # Cluster cleanup
+│   │   ├── cleanup-homelab.yml     # Homelab cleanup
+│   │   ├── run-preflight-rhel10.yml# RHEL10 preparation
+│   │   ├── verify-cluster.yaml     # Cluster verification
 │   │   └── README.md
 │   └── roles/
-│       └── preflight-rhel10/        # RHEL10 preflight role
+│       └── preflight-rhel10/       # RHEL10 preflight role
+├── config/
+│   └── kubespray-defaults.env      # Kubespray configuration
+├── docs/
+│   └── KUBESPRAY_DEPLOYMENT.md     # Kubespray deployment guide
+├── inventory/
+│   ├── production/                 # Production inventory
+│   │   ├── hosts.yml               # Single source of truth
+│   │   └── group_vars/
+│   │       ├── all.yml
+│   │       └── k8s_cluster.yml
+│   └── staging/                    # Staging inventory
+│       ├── hosts.yml
+│       └── group_vars/
 ├── scripts/
-│   ├── run-kubespray.sh             # Kubespray setup wrapper
-│   ├── activate-kubespray-env.sh    # Environment activation
-│   └── ops-kubespray-automation.sh  # CI/CD automation
+│   ├── run-kubespray.sh            # Kubespray setup wrapper
+│   ├── activate-kubespray-env.sh   # Environment activation
+│   ├── ops-kubespray-automation.sh # CI/CD automation
+│   ├── validate-kubespray-setup.sh # Validate environment
+│   ├── test-inventory.sh           # Validate inventory
+│   ├── dry-run-deployment.sh       # Test deployment
+│   └── lib/
+│       ├── kubespray-common.sh     # Shared functions
+│       └── kubespray-validation.sh # Validation functions
 ├── templates/
-│   └── kubeadm-config.yaml.j2       # Kubeadm configuration
+│   └── kubeadm-config.yaml.j2      # Kubeadm configuration
 ├── terraform/
-│   └── malware-lab/                 # Malware analysis lab IaC
-├── inventory.ini                    # Kubespray-compatible inventory
-├── IMPROVEMENTS_AND_STANDARDS.md    # Best practices guide
+│   └── malware-lab/                # Malware analysis lab IaC
+├── inventory.ini                   # Legacy inventory (backward compat)
+├── IMPROVEMENTS_AND_STANDARDS.md   # Best practices guide
 └── README.md
 ```
 
@@ -122,17 +142,57 @@ The `deploy-cluster.yaml` playbook implements 8 phases:
 
 ## Kubespray Integration
 
-For production deployments, this repository supports Kubespray:
+For production deployments, this repository uses Kubespray as the primary deployment method:
+
+### Quick Start with Kubespray
 
 ```bash
-# Initialize Kubespray
+# 1. Initialize Kubespray submodule and setup environment
+git submodule update --init --recursive
 ./scripts/run-kubespray.sh
 
-# Activate environment
-source ./scripts/activate-kubespray-env.sh
+# 2. Validate setup
+./scripts/validate-kubespray-setup.sh
 
-# Follow the printed instructions for deployment
+# 3. Configure inventory (edit as needed)
+vim inventory/production/hosts.yml
+vim inventory/production/group_vars/all.yml
+
+# 4. Test inventory
+./scripts/test-inventory.sh -e production
+
+# 5. Run preflight checks (RHEL nodes)
+cd ansible
+ansible-playbook playbooks/run-preflight-rhel10.yml \
+  -i ../inventory/production/hosts.yml -l compute_nodes
+
+# 6. Deploy cluster
+cd ../kubespray
+source ../.cache/kubespray/.venv/bin/activate
+ansible-playbook -i ../inventory/production/hosts.yml cluster.yml
 ```
+
+### Kubespray Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `run-kubespray.sh` | Initialize Kubespray environment and dependencies |
+| `activate-kubespray-env.sh` | Activate Python venv and set KUBECONFIG |
+| `ops-kubespray-automation.sh` | Full automated deployment workflow (CI/CD) |
+| `validate-kubespray-setup.sh` | Verify Kubespray environment setup |
+| `test-inventory.sh` | Validate and test inventory files |
+| `dry-run-deployment.sh` | Test deployment configuration without changes |
+
+### Documentation
+
+For complete Kubespray deployment documentation, see [docs/KUBESPRAY_DEPLOYMENT.md](docs/KUBESPRAY_DEPLOYMENT.md)
+
+Topics covered:
+- Deployment workflow
+- Inventory management
+- Operations (scaling, upgrades, certificate rotation)
+- Troubleshooting guide
+- Best practices
 
 ## Configuration
 
