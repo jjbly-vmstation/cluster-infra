@@ -310,18 +310,11 @@ normalize_inventory() {
         # Create inventory directory
         mkdir -p "$(dirname "$KUBESPRAY_INVENTORY")"
         
-        # Copy and normalize from canonical inventory (try YAML first, fallback to INI)
+        # Copy canonical inventory (YAML format works with Kubespray)
         if [[ -f "$MAIN_INVENTORY" ]]; then
-            # Use ansible-inventory to convert YAML to INI format for Kubespray
-            if command -v ansible-inventory &> /dev/null; then
-                # Generate INI format inventory
-                ansible-inventory -i "$MAIN_INVENTORY" --list --export > "$KUBESPRAY_INVENTORY" 2>/dev/null || \
-                    cp "$MAIN_INVENTORY" "$KUBESPRAY_INVENTORY"
-                log_info "Created Kubespray inventory from canonical inventory"
-            else
-                cp "$MAIN_INVENTORY" "$KUBESPRAY_INVENTORY"
-                log_info "Copied canonical inventory to Kubespray location"
-            fi
+            # Kubespray supports YAML inventory, so direct copy is sufficient
+            cp "$MAIN_INVENTORY" "$KUBESPRAY_INVENTORY"
+            log_info "Copied canonical inventory to Kubespray location"
         elif [[ -f "$REPO_ROOT/inventory.ini" ]]; then
             # Fallback to deprecated inventory.ini if canonical not found
             cp "$REPO_ROOT/inventory.ini" "$KUBESPRAY_INVENTORY"

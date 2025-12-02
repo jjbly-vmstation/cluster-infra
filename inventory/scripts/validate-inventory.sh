@@ -28,9 +28,11 @@ fi
 
 # Check YAML syntax
 echo "✓ Checking YAML syntax..."
-if ! ansible-inventory -i "${INVENTORY_FILE}" --list > /dev/null 2>&1; then
+syntax_output=$(ansible-inventory -i "${INVENTORY_FILE}" --list 2>&1)
+syntax_result=$?
+if [[ $syntax_result -ne 0 ]]; then
     echo "ERROR: YAML syntax validation failed"
-    ansible-inventory -i "${INVENTORY_FILE}" --list 2>&1
+    echo "$syntax_output"
     exit 1
 fi
 echo "  YAML syntax is valid"
