@@ -1,0 +1,36 @@
+---
+# Global cluster configuration
+# This file contains variables that apply to all hosts in the inventory
+
+# Cluster identity
+cluster_name: vmstation
+deployment_type: production
+
+# Ansible connection settings
+ansible_python_interpreter: /usr/bin/python3
+ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
+
+# Network configuration
+pod_network_cidr: "10.244.0.0/16"
+service_network_cidr: "10.96.0.0/12"
+cluster_cidr: "10.244.0.0/16"
+
+# Domain settings
+dns_domain: cluster.local
+
+# System configuration
+disable_swap: true
+setup_firewall: false
+
+# Container runtime
+container_runtime: containerd
+cri_socket: "unix:///var/run/containerd/containerd.sock"
+
+# Kubernetes version
+kubernetes_version: "1.29"
+
+# CNI plugin
+cni_plugin: flannel
+
+# Cluster endpoint
+control_plane_endpoint: "192.168.4.63:6443"

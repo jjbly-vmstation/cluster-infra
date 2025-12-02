@@ -1,0 +1,19 @@
+---
+# Staging environment global configuration
+# Placeholder for future staging deployment
+
+cluster_name: vmstation-staging
+deployment_type: staging
+
+# Network configuration (adjust for staging)
+pod_network_cidr: "10.245.0.0/16"
+service_network_cidr: "10.97.0.0/12"
+cluster_cidr: "10.245.0.0/16"
+
+# Domain settings
+dns_domain: staging.cluster.local
+
+# Container runtime
+container_runtime: containerd
+
+# TODO: Configure staging-specific settings when environment is ready
