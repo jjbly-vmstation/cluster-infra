@@ -28,7 +28,8 @@ kube_oidc_auth: false
 # Admission plugins
 kube_apiserver_enable_admission_plugins:
   - NodeRestriction
-  - PodSecurityPolicy
+  # Note: PodSecurityPolicy is deprecated in K8s v1.21+, removed in v1.25+
+  # Consider using Pod Security Standards for K8s v1.23+
 
 # Security
 kube_read_only_port: 0

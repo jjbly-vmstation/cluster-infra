@@ -21,8 +21,8 @@ container_manager: containerd
 cri_socket: "unix:///var/run/containerd/containerd.sock"
 
 # CNI configuration
-cni_plugin: flannel
-kube_network_plugin: calico  # Kubespray default
+# Use Calico for production (Kubespray default, more features)
+kube_network_plugin: calico
 
 # System configuration
 disable_swap: true

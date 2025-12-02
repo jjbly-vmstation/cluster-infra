@@ -3,6 +3,10 @@
 *.pyc
 __pycache__/
 
+# Kubespray submodule artifacts
+kubespray/.venv/
+kubespray/inventory/mycluster/
+
 # Ansible artifacts
 ansible/artifacts/
 *.retry

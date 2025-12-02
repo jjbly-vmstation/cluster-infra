@@ -81,12 +81,10 @@ main() {
     
     # Check 6: Script library
     log_info "Checking script library..."
-    # DEBUG: echo "SCRIPT_DIR=$SCRIPT_DIR, checking $SCRIPT_DIR/lib/kubespray-common.sh" >&2
     if [[ -f "$SCRIPT_DIR/lib/kubespray-common.sh" ]]; then
         log_success "Common library exists"
     else
         log_error "Common library not found"
-        log_error "Path checked: $SCRIPT_DIR/lib/kubespray-common.sh"
         ((failed_checks++))
     fi
     
