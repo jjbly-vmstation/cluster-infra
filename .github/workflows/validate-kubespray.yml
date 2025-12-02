@@ -26,6 +26,8 @@ jobs:
   shellcheck:
     name: ShellCheck Scripts
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout repository
         # Using @v4 tag for automatic security patches
@@ -46,6 +48,8 @@ jobs:
   validate-inventory:
     name: Validate Inventory Files
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -107,6 +111,8 @@ jobs:
   validate-scripts:
     name: Validate Script Functionality
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -182,6 +188,8 @@ jobs:
   validate-documentation:
     name: Validate Documentation
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -227,6 +235,8 @@ jobs:
   summary:
     name: Validation Summary
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     needs: [shellcheck, validate-inventory, validate-scripts, validate-documentation]
     if: always()
     steps:
