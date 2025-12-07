@@ -2,7 +2,7 @@
 # Role: freeipa
 # Purpose: create CA secret in-cluster and a cert-manager ClusterIssuer that uses it.
  - name: Ensure namespace for identity exists
-   k8s:
+  k8s:
      state: present
      definition:
        apiVersion: v1
@@ -11,17 +11,17 @@
          name: identity
 
  - name: Read CA cert file from control host
-   slurp:
+  slurp:
      src: "{{ cert_source_path | default('/opt/vmstation-org/cluster-setup/scripts/certs/ca.cert.pem') }}"
    register: ca_cert_b64
 
  - name: Read CA key file from control host
-   slurp:
+  slurp:
      src: "{{ cert_source_key | default('/opt/vmstation-org/cluster-setup/scripts/certs/ca.key.pem') }}"
    register: ca_key_b64
 
  - name: Create or update Kubernetes secret with CA (for cert-manager)
-   k8s:
+  k8s:
      state: present
      definition:
        apiVersion: v1
@@ -35,20 +35,20 @@
          tls.key: "{{ ca_key_b64.content }}"
 
  - name: Render ClusterIssuer manifest for cert-manager (FreeIPA CA)
-   template:
+  template:
      src: clusterissuer-freeipa.yml.j2
      dest: "/tmp/clusterissuer-freeipa.yml"
 
  - name: Apply ClusterIssuer manifest
-   k8s:
+  k8s:
      state: present
      src: /tmp/clusterissuer-freeipa.yml
 
  - name: Info - FreeIPA role complete
-   debug:
-     msg: "FreeIPA role created secret freeipa-ca in namespace cert-manager and applied a ClusterIssuer."
+  debug:
+    msg: "FreeIPA role created secret freeipa-ca in namespace cert-manager and applied a ClusterIssuer."
 
-- name: Optionally install FreeIPA via Helm (if variables provided)
+ - name: Optionally install FreeIPA via Helm (if variables provided)
   when: freeipa_install_enabled | default(false) | bool
   block:
     - name: Add FreeIPA helm repo if provided
