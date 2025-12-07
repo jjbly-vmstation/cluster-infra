@@ -1,0 +1,41 @@
+---
+# tasks for keycloak role
+- name: Ensure Keycloak namespace exists (if enabled)
+  when: keycloak_enabled | bool
+  k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ keycloak_namespace }}"
+
+- name: Add Keycloak Helm repo (if enabled)
+  when: keycloak_enabled | bool
+  community.kubernetes.helm_repository:
+    name: "{{ keycloak_helm_repo_name }}"
+    repo_url: "{{ keycloak_helm_repo }}"
+
+- name: Install/Upgrade Keycloak Helm chart (if enabled)
+  when: keycloak_enabled | bool
+  community.kubernetes.helm:
+    name: "{{ keycloak_release_name }}"
+    chart_ref: "{{ keycloak_chart_name }}"
+    release_namespace: "{{ keycloak_namespace }}"
+    create_namespace: false
+    values: "{{ keycloak_values }}"
+    state: present
+
+- name: Debug Keycloak status
+  when: keycloak_enabled | bool
+  k8s_info:
+    kind: Deployment
+    namespace: "{{ keycloak_namespace }}"
+    label_selectors:
+      - "app.kubernetes.io/name=keycloak"
+  register: keycloak_info
+
+- name: Print Keycloak deployment info
+  when: keycloak_enabled | bool
+  debug:
+    msg: "Keycloak deployments: {{ keycloak_info.resources | length }}"

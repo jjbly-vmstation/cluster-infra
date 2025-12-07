@@ -1,0 +1,16 @@
+---
+# Playbook: setup-identity-stack.yml
+# Purpose: Install and configure FreeIPA, Keycloak (SAML) and accept the pre-generated certificates
+# Note: This is a scaffold; operators should fill in host groups and role implementations.
+
+- name: Setup Identity Stack (FreeIPA + Keycloak) and import bootstrap certs
+  hosts: masternode
+  become: true
+  vars:
+    cert_source_path: "/opt/vmstation-org/cluster-setup/scripts/certs"
+    cert_cache_path: "/var/cache/cluster-cert-bootstrap"
+
+  roles:
+    - identity-bootstrap
+    - freeipa
+    - keycloak
