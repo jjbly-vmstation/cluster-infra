@@ -1,9 +1,0 @@
----
-# defaults for keycloak role
-keycloak_enabled: true
-keycloak_helm_repo: "https://charts.bitnami.com/bitnami"
-keycloak_helm_repo_name: "bitnami"
-keycloak_chart_name: "bitnami/keycloak"
-keycloak_release_name: "keycloak"
-keycloak_namespace: "keycloak"
-keycloak_values: {}

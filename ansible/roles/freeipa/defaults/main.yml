@@ -1,9 +1,0 @@
----
-# defaults for freeipa role
-freeipa_install_enabled: false
-freeipa_helm_repo: ""
-freeipa_helm_repo_name: "freeipa"
-freeipa_chart_name: ""
-freeipa_release_name: "freeipa"
-freeipa_namespace: "freeipa"
-freeipa_values: {}

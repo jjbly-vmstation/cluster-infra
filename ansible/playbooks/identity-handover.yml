@@ -1,0 +1,60 @@
+---
+# Playbook: identity-handover.yml
+# Purpose: Import a pre-generated bootstrap CA into the long-term identity/PKI stack
+# and create a cert-manager `ClusterIssuer` pointing to that CA. This playbook uses
+# `kubectl` to apply resources so it will run where a kubeconfig is available.
+
+- name: Import bootstrap CA into identity stack and create ClusterIssuer
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ca_file: "/opt/vmstation-org/cluster-setup/scripts/certs/ca.cert.pem"
+    secret_name: freeipa-ca
+    clusterissuer_name: freeipa-ca-issuer
+    template_dest: "/tmp/clusterissuer-freeipa.yml"
+    namespace: cert-manager
+
+  tasks:
+    - name: Ensure CA file exists
+      stat:
+        path: "{{ ca_file }}"
+      register: ca_stat
+
+    - name: Fail if CA file not found
+      fail:
+        msg: "CA file {{ ca_file }} not found. Run the pre-generate playbook in cluster-setup first or adjust ca_file var."
+      when: not ca_stat.stat.exists
+
+    - name: Ensure kubectl is available
+      command: which kubectl
+      register: kubectl_path
+      failed_when: kubectl_path.rc != 0
+      changed_when: false
+
+    - name: Create or update Kubernetes Secret with CA
+      command: >-
+        kubectl create secret generic {{ secret_name }} --namespace {{ namespace }} --from-file=ca.crt={{ ca_file }} --dry-run=client -o yaml | kubectl apply -f -
+      register: secret_apply
+
+    - name: Render ClusterIssuer template
+      template:
+        src: "../templates/clusterissuer-freeipa.yml.j2"
+        dest: "{{ template_dest }}"
+
+    - name: Apply ClusterIssuer to cluster
+      command: kubectl apply -f {{ template_dest }}
+      register: issuer_apply
+
+    - name: Show results
+      debug:
+        msg: |
+          Secret apply stdout: {{ secret_apply.stdout }}
+          ClusterIssuer apply stdout: {{ issuer_apply.stdout }}
+
+    - name: Next steps message
+      debug:
+        msg: |
+          The CA has been imported into Kubernetes as secret '{{ secret_name }}' in namespace '{{ namespace }}' and
+          a ClusterIssuer '{{ clusterissuer_name }}' was applied. Verify cert-manager logs and FreeIPA connectivity,
+          then update workloads to request certificates via cert-manager.

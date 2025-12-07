@@ -1,4 +1,0 @@
----
-# defaults for identity-bootstrap role
-cert_source_path: "/opt/vmstation-org/cluster-setup/scripts/certs"
-cert_cache_path: "/var/cache/cluster-cert-bootstrap"
