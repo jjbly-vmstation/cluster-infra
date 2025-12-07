@@ -1,0 +1,48 @@
+# Canonical Kubespray inventory (source of truth outside the Kubespray submodule)
+# Generated from the canonical `cluster-setup/ansible/inventory/hosts.yml` — keep this as the authoritative copy.
+all:
+  hosts:
+    masternode:
+      ansible_host: 192.168.4.63
+      ansible_user: jjbly
+      ansible_connection: local
+      node_role: control-plane
+      wol_mac: 00:e0:4c:68:cb:bf
+    storagenodet3500:
+      ansible_host: 192.168.4.61
+      ansible_user: jjbly
+      ansible_ssh_private_key_file: /home/jjbly/.ssh/id_ed25519
+      node_role: worker
+      wol_mac: b8:ac:6f:7e:6c:9d
+    homelab:
+      ansible_host: 192.168.4.62
+      ansible_user: jashandeepjustinbains
+      ansible_ssh_private_key_file: /home/jjbly/.ssh/id_ed25519
+      node_role: worker
+      wol_mac: d0:94:66:30:d6:63
+      os_family: RedHat
+      os_version: 10
+      ansible_become: true
+      ansible_become_method: sudo
+
+  children:
+    kube_control_plane:
+      hosts:
+        masternode: {}
+
+    etcd:
+      hosts:
+        masternode: {}
+
+    kube_node:
+      hosts:
+        storagenodet3500: {}
+        homelab: {}
+
+    monitoring_nodes:
+      hosts:
+        masternode: {}
+
+    storage_nodes:
+      hosts:
+        storagenodet3500: {}
