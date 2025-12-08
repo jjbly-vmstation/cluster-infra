@@ -33,6 +33,16 @@
       changed_when: false
 
     - name: Create or update Kubernetes Secret with CA
+      # Ensure the target namespace exists so the secret creation won't fail when cert-manager
+      # has not yet been installed. This is safe to run idempotently.
+    - name: Ensure '{{ namespace }}' namespace exists
+      shell: >-
+        kubectl create namespace {{ namespace }} --dry-run=client -o yaml | kubectl apply -f -
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      changed_when: false
+
+    - name: Create or update Kubernetes Secret with CA
       shell: >-
         kubectl create secret generic {{ secret_name }} --namespace {{ namespace }} --from-file=ca.crt={{ ca_file }} --dry-run=client -o yaml | kubectl apply -f -
       environment:
