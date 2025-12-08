@@ -99,7 +99,7 @@
       when: not keycloak_manifest_stat.stat.exists and (keycloak_values_file is not defined or keycloak_values_file == '')
 
     - name: Wait for Keycloak rollout (best-effort)
-      shell: kubectl rollout status deployment/keycloak -n {{ namespace_identity }} --timeout=180s
+      shell: kubectl rollout status statefulset/keycloak -n {{ namespace_identity }} --timeout=180s
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
       ignore_errors: true
