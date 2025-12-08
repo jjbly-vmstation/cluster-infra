@@ -41,6 +41,8 @@
         - kubectl
         - helm
 
+    
+
     - name: Ensure identity-related namespaces exist
       shell: >-
         kubectl create namespace {{ item }} --dry-run=client -o yaml | kubectl apply -f -
@@ -115,20 +117,98 @@
         helm repo update
       changed_when: false
 
-    - name: Install/upgrade cert-manager Helm chart (installCRDs=false)
+    - name: Install/upgrade cert-manager Helm chart (installCRDs=false) with control-plane tolerations
       shell: >-
         KUBECONFIG=/etc/kubernetes/admin.conf helm upgrade --install cert-manager jetstack/cert-manager --namespace {{ namespace_cert_manager }} --create-namespace --set installCRDs=false
+        --set controller.tolerations[0].key=node-role.kubernetes.io/control-plane --set controller.tolerations[0].operator=Exists
+        --set webhook.tolerations[0].key=node-role.kubernetes.io/control-plane --set webhook.tolerations[0].operator=Exists
+        --set cainjector.tolerations[0].key=node-role.kubernetes.io/control-plane --set cainjector.tolerations[0].operator=Exists
       register: certmgr_helm
 
-    - name: Wait for cert-manager deployments to be ready
-      shell: >-
-        KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status deployment/cert-manager -n {{ namespace_cert_manager }} --timeout=180s;
-        KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status deployment/cert-manager-webhook -n {{ namespace_cert_manager }} --timeout=180s;
-        KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status deployment/cert-manager-cainjector -n {{ namespace_cert_manager }} --timeout=180s
-      register: certmgr_rollout
-      failed_when: certmgr_rollout.rc != 0
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
+    - name: Wait for cert-manager deployments to be ready (with diagnostics on failure)
+      block:
+        - name: Wait for cert-manager controller rollout
+          shell: >-
+            KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status deployment/cert-manager -n {{ namespace_cert_manager }} --timeout=180s
+          register: certmgr_rollout_controller
+          failed_when: certmgr_rollout_controller.rc != 0
+          environment:
+            KUBECONFIG: /etc/kubernetes/admin.conf
+
+        - name: Wait for cert-manager webhook rollout
+          shell: >-
+            KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status deployment/cert-manager-webhook -n {{ namespace_cert_manager }} --timeout=180s
+          register: certmgr_rollout_webhook
+          failed_when: certmgr_rollout_webhook.rc != 0
+          environment:
+            KUBECONFIG: /etc/kubernetes/admin.conf
+
+        - name: Wait for cert-manager cainjector rollout
+          shell: >-
+            KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status deployment/cert-manager-cainjector -n {{ namespace_cert_manager }} --timeout=180s
+          register: certmgr_rollout_cainjector
+          failed_when: certmgr_rollout_cainjector.rc != 0
+          environment:
+            KUBECONFIG: /etc/kubernetes/admin.conf
+
+      rescue:
+        - name: Get UTC timestamp for diagnostics filename
+          shell: date -u +%Y%m%dT%H%M%SZ
+          register: diag_ts
+          changed_when: false
+
+        - name: Collect cert-manager pod list and status
+          shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_cert_manager }} get pods -o wide
+          register: certmgr_pods
+          changed_when: false
+
+        - name: Describe cert-manager namespace pods
+          shell: |
+            for p in $(kubectl -n {{ namespace_cert_manager }} get pods -o name); do
+              echo "=== $p ===";
+              kubectl -n {{ namespace_cert_manager }} describe $p || true;
+            done
+          register: certmgr_describe
+          changed_when: false
+          environment:
+            KUBECONFIG: /etc/kubernetes/admin.conf
+
+        - name: Collect cert-manager webhook logs (best-effort)
+          shell: |
+            set -e; for p in $(kubectl -n {{ namespace_cert_manager }} get pods -l app.kubernetes.io/component=webhook -o name 2>/dev/null || true); do
+              echo "=== logs $p ===";
+              kubectl -n {{ namespace_cert_manager }} logs $p --all-containers || true;
+            done
+          register: certmgr_logs
+          changed_when: false
+          environment:
+            KUBECONFIG: /etc/kubernetes/admin.conf
+
+        - name: Collect events in cert-manager namespace
+          shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_cert_manager }} get events --sort-by=.metadata.creationTimestamp
+          register: certmgr_events
+          changed_when: false
+
+        - name: Save cert-manager diagnostics to root backup dir
+          copy:
+            dest: "{{ backup_dir }}/cert-manager-diagnostics-{{ diag_ts.stdout }}.log"
+            content: |
+              ===== PODS =====
+              {{ certmgr_pods.stdout | default('') }}
+              ===== DESCRIBE =====
+              {{ certmgr_describe.stdout | default('') }}
+              ===== LOGS =====
+              {{ certmgr_logs.stdout | default('') }}
+              ===== EVENTS =====
+              {{ certmgr_events.stdout | default('') }}
+          become: true
+          owner: root
+          group: root
+          mode: '0600'
+
+        - name: Fail with diagnostics notice for operator
+          fail:
+            msg: "cert-manager deployments did not become ready within timeout. Diagnostics saved to {{ backup_dir }}/cert-manager-diagnostics-{{ diag_ts.stdout }}.log"
 
     - name: Ensure ClusterIssuer CRD exists before creating ClusterIssuer
       shell: >-
