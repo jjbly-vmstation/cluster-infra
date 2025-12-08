@@ -27,15 +27,18 @@
       when: not ca_stat.stat.exists
 
     - name: Ensure kubectl is available
-      command: which kubectl
+      shell: which kubectl
       register: kubectl_path
       failed_when: kubectl_path.rc != 0
       changed_when: false
 
     - name: Create or update Kubernetes Secret with CA
-      command: >-
+      shell: >-
         kubectl create secret generic {{ secret_name }} --namespace {{ namespace }} --from-file=ca.crt={{ ca_file }} --dry-run=client -o yaml | kubectl apply -f -
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
       register: secret_apply
+      changed_when: "'configured' in secret_apply.stdout or secret_apply.rc == 0"
 
     - name: Render ClusterIssuer template
       template:
@@ -43,7 +46,9 @@
         dest: "{{ template_dest }}"
 
     - name: Apply ClusterIssuer to cluster
-      command: kubectl apply -f {{ template_dest }}
+      shell: kubectl apply -f {{ template_dest }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
       register: issuer_apply
 
     - name: Show results
