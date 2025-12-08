@@ -1,0 +1,58 @@
+# Example Keycloak Helm values file for quick install.
+# Copy to keycloak-values.yaml and replace placeholders before running the playbook.
+# NOTE: This is a minimal example for non-production testing. For production, use
+# a proper external database, persistent storage, and secret management.
+
+replicaCount: 1
+
+# Admin credentials (replace before installing)
+keycloak:
+  adminUser: "admin"
+  adminPassword: "CHANGEME_ADMIN_PASSWORD"
+
+# Service exposure
+service:
+  type: ClusterIP
+  port: 8080
+
+# Use internal DB (not recommended for production)
+database:
+  vendor: h2
+  # For production, configure externalPostgres with host/port/database/user/password
+
+# Persistence
+persistence:
+  enabled: false
+  size: 10Gi
+
+# Ingress (optional) - configure your ingress controller and host
+ingress:
+  enabled: false
+  annotations: {}
+  hosts:
+    - host: keycloak.vmstation.local
+      paths:
+        - /
+  tls: []
+
+# FreeIPA / LDAP federation placeholders - configure after Keycloak is up
+# Example values for the Keycloak LDAP federation provider - this file does NOT
+# configure federation automatically; use Keycloak UI or API to add LDAP provider.
+freeipa:
+  ldapUrl: "ldap://masternode.vmstation.local"
+  bindDn: "uid=admin,cn=users,cn=accounts,dc=vmstation,dc=local"
+  bindCredential: "CHANGEME_LDAP_BIND_PASSWORD"
+  usersDn: "cn=users,cn=accounts,dc=vmstation,dc=local"
+  searchScope: 1
+
+# Additional flags
+proxyAddressForwarding: true
+
+# Resource requests/limits (tune for your environment)
+resources:
+  requests:
+    cpu: "100m"
+    memory: "256Mi"
+  limits:
+    cpu: "500m"
+    memory: "1Gi"
