@@ -1,6 +1,12 @@
 ---
 # Playbook: identity-handover.yml
 # Purpose: Import a pre-generated bootstrap CA into the long-term identity/PKI stack
+---
+# Playbook: identity-handover.yml
+# Purpose: Import a pre-generated bootstrap CA into the long-term identity/PKI stack
+# and create a cert-manager `ClusterIssuer` pointing to that CA. This playbook uses
+# `kubectl` to apply resources so it will run where a kubeconfig is available.
+
 # and create a cert-manager `ClusterIssuer` pointing to that CA. This playbook uses
 # `kubectl` to apply resources so it will run where a kubeconfig is available.
 
@@ -32,9 +38,8 @@
       failed_when: kubectl_path.rc != 0
       changed_when: false
 
-    - name: Create or update Kubernetes Secret with CA
-      # Ensure the target namespace exists so the secret creation won't fail when cert-manager
-      # has not yet been installed. This is safe to run idempotently.
+    # Ensure the target namespace exists so the secret creation won't fail when cert-manager
+    # has not yet been installed. This is safe to run idempotently.
     - name: Ensure '{{ namespace }}' namespace exists
       shell: >-
         kubectl create namespace {{ namespace }} --dry-run=client -o yaml | kubectl apply -f -

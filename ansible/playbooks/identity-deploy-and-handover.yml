@@ -1,0 +1,158 @@
+---
+# Playbook: identity-deploy-and-handover.yml
+# Purpose: Deploy FreeIPA, Keycloak, (optional) SAML config and hand over
+# the FreeIPA CA to cert-manager by creating a Secret and ClusterIssuer.
+# Also create a root-owned backup of CA material under `/root/identity-backup`
+# so cluster recovery is possible if the identity node fails.
+
+- name: Deploy identity stack and hand over CA to cert-manager
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    # Paths or manifests to use when available. Adjust these to your repo layout.
+    freeipa_manifest: "/opt/vmstation-org/cluster-infra/manifests/freeipa.yaml"
+    keycloak_manifest: "/opt/vmstation-org/cluster-infra/manifests/keycloak.yaml"
+    keycloak_helm_chart: "codecentric/keycloak"
+    keycloak_values_file: "/opt/vmstation-org/cluster-infra/helm/keycloak-values.yaml"
+
+    # CA sources (from your pre-generate step in cluster-setup)
+    ca_cert_src: "/opt/vmstation-org/cluster-setup/scripts/certs/ca.cert.pem"
+    ca_key_src:  "/opt/vmstation-org/cluster-setup/scripts/certs/ca.key.pem"
+
+    # Kubernetes targets
+    namespace_cert_manager: cert-manager
+    namespace_identity: identity
+    namespace_platform: platform
+    secret_name: freeipa-ca
+    clusterissuer_name: freeipa-ca-issuer
+    template_dest: "/tmp/clusterissuer-freeipa.yml"
+
+    # Backup location on the controller (root-owned)
+    backup_dir: /root/identity-backup
+
+  tasks:
+    - name: Ensure required binaries are present (kubectl, helm)
+      shell: which {{ item }}
+      register: which_out
+      failed_when: which_out.rc != 0
+      changed_when: false
+      loop:
+        - kubectl
+        - helm
+
+    - name: Ensure identity-related namespaces exist
+      shell: >-
+        kubectl create namespace {{ item }} --dry-run=client -o yaml | kubectl apply -f -
+      loop:
+        - "{{ namespace_cert_manager }}"
+        - "{{ namespace_identity }}"
+        - "{{ namespace_platform }}"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      changed_when: false
+
+    - name: Deploy FreeIPA from manifest if present
+      stat:
+        path: "{{ freeipa_manifest }}"
+      register: freeipa_manifest_stat
+
+    - name: Apply FreeIPA manifest
+      shell: kubectl apply -f {{ freeipa_manifest }}
+      when: freeipa_manifest_stat.stat.exists
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: freeipa_apply
+
+    - name: Inform about missing FreeIPA manifest
+      debug:
+        msg: "FreeIPA manifest {{ freeipa_manifest }} not found. Provide a manifest or deploy FreeIPA by other means."
+      when: not freeipa_manifest_stat.stat.exists
+
+    - name: Deploy Keycloak (manifest if present)
+      stat:
+        path: "{{ keycloak_manifest }}"
+      register: keycloak_manifest_stat
+
+    - name: Apply Keycloak manifest
+      shell: kubectl apply -f {{ keycloak_manifest }}
+      when: keycloak_manifest_stat.stat.exists
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: keycloak_apply
+
+    - name: Install Keycloak via Helm if manifest missing but values file exists
+      shell: >-
+        helm repo add codecentric https://codecentric.github.io/helm-charts >/dev/null 2>&1 || true;
+        helm repo update >/dev/null 2>&1;
+        helm upgrade --install keycloak {{ keycloak_helm_chart }} -n {{ namespace_identity }} -f {{ keycloak_values_file }} --create-namespace
+      when: not keycloak_manifest_stat.stat.exists and (keycloak_values_file is defined)
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: keycloak_helm_install
+
+    - name: Warn if neither manifest nor values file available for Keycloak
+      debug:
+        msg: "Keycloak manifest not found and values file missing; please provide one to automate Keycloak install."
+      when: not keycloak_manifest_stat.stat.exists and (keycloak_values_file is not defined or keycloak_values_file == '')
+
+    - name: Wait for Keycloak rollout (best-effort)
+      shell: kubectl rollout status deployment/keycloak -n {{ namespace_identity }} --timeout=180s
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      ignore_errors: true
+
+    - name: Ensure CA cert file exists
+      stat:
+        path: "{{ ca_cert_src }}"
+      register: ca_cert_stat
+
+    - name: Ensure backup directory exists (root-owned)
+      file:
+        path: "{{ backup_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Backup CA material to root backup (cert and key if present)
+      shell: >-
+        set -e;
+        cp -f {{ ca_cert_src }} {{ backup_dir }}/ca.cert.pem || true;
+        if [ -f "{{ ca_key_src }}" ]; then cp -f {{ ca_key_src }} {{ backup_dir }}/ca.key.pem; fi;
+        tar -C {{ backup_dir }} -czf {{ backup_dir }}/identity-ca-backup.tar.gz --remove-files $(ls {{ backup_dir }} | grep -E 'ca.(cert|key).pem' || true) >/dev/null 2>&1 || true;
+      when: ca_cert_stat.stat.exists
+      register: backup_run
+      changed_when: backup_run.rc == 0
+
+    - name: Create or update Kubernetes Secret with CA
+      shell: >-
+        kubectl create secret generic {{ secret_name }} --namespace {{ namespace_cert_manager }} --from-file=ca.crt={{ ca_cert_src }} --dry-run=client -o yaml | kubectl apply -f -
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: secret_apply
+
+    - name: Render ClusterIssuer template
+      template:
+        src: "../templates/clusterissuer-freeipa.yml.j2"
+        dest: "{{ template_dest }}"
+
+    - name: Apply ClusterIssuer to cluster
+      shell: kubectl apply -f {{ template_dest }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: issuer_apply
+
+    - name: Show results
+      debug:
+        msg: |
+          FreeIPA applied: {{ freeipa_apply.stdout | default('not applied') }}
+          Keycloak applied: {{ keycloak_apply.stdout | default(keycloak_helm_install.stdout | default('not applied')) }}
+          Secret apply stdout: {{ secret_apply.stdout }}
+          ClusterIssuer apply stdout: {{ issuer_apply.stdout }}
+
+    - name: Final guidance
+      debug:
+        msg: |
+          Identity stack deployment attempted. Verify FreeIPA and Keycloak pods are Running and
+          that cert-manager is installed and healthy. The CA backup (if available) was stored at {{ backup_dir }}/identity-ca-backup.tar.gz
