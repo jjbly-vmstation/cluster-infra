@@ -117,12 +117,9 @@
         helm repo update
       changed_when: false
 
-    - name: Install/upgrade cert-manager Helm chart (installCRDs=false) with control-plane tolerations
+    - name: Install/upgrade cert-manager Helm chart (installCRDs=false)
       shell: >-
         KUBECONFIG=/etc/kubernetes/admin.conf helm upgrade --install cert-manager jetstack/cert-manager --namespace {{ namespace_cert_manager }} --create-namespace --set installCRDs=false
-        --set controller.tolerations[0].key=node-role.kubernetes.io/control-plane --set controller.tolerations[0].operator=Exists
-        --set webhook.tolerations[0].key=node-role.kubernetes.io/control-plane --set webhook.tolerations[0].operator=Exists
-        --set cainjector.tolerations[0].key=node-role.kubernetes.io/control-plane --set cainjector.tolerations[0].operator=Exists
       register: certmgr_helm
 
     - name: Wait for cert-manager deployments to be ready (with diagnostics on failure)
