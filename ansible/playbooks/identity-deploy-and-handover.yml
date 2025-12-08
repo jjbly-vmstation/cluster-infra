@@ -102,6 +102,41 @@
         KUBECONFIG: /etc/kubernetes/admin.conf
       ignore_errors: true
 
+    - name: Ensure cert-manager CRDs are installed (idempotent)
+      shell: >-
+        kubectl apply -f https://github.com/jetstack/cert-manager/releases/latest/download/cert-manager.crds.yaml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      changed_when: false
+
+    - name: Add cert-manager Helm repo
+      shell: |
+        helm repo add jetstack https://charts.jetstack.io || true
+        helm repo update
+      changed_when: false
+
+    - name: Install/upgrade cert-manager Helm chart (installCRDs=false)
+      shell: >-
+        KUBECONFIG=/etc/kubernetes/admin.conf helm upgrade --install cert-manager jetstack/cert-manager --namespace {{ namespace_cert_manager }} --create-namespace --set installCRDs=false
+      register: certmgr_helm
+
+    - name: Wait for cert-manager deployments to be ready
+      shell: >-
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status deployment/cert-manager -n {{ namespace_cert_manager }} --timeout=180s;
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status deployment/cert-manager-webhook -n {{ namespace_cert_manager }} --timeout=180s;
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status deployment/cert-manager-cainjector -n {{ namespace_cert_manager }} --timeout=180s
+      register: certmgr_rollout
+      failed_when: certmgr_rollout.rc != 0
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Ensure ClusterIssuer CRD exists before creating ClusterIssuer
+      shell: >-
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl get crd clusterissuers.cert-manager.io
+      register: crd_check
+      failed_when: crd_check.rc != 0
+      changed_when: false
+
     - name: Ensure CA cert file exists
       stat:
         path: "{{ ca_cert_src }}"
