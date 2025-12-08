@@ -201,10 +201,10 @@
               {{ certmgr_logs.stdout | default('') }}
               ===== EVENTS =====
               {{ certmgr_events.stdout | default('') }}
+            owner: root
+            group: root
+            mode: '0600'
           become: true
-          owner: root
-          group: root
-          mode: '0600'
 
         - name: Fail with diagnostics notice for operator
           fail:
