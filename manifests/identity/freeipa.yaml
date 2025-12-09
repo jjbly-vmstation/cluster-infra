@@ -185,6 +185,13 @@ data:
   README.md: |
     # FreeIPA Setup Notes
     
+    ============================================================
+    SECURITY CRITICAL: Default passwords in this manifest MUST
+    be replaced before deployment. Use strong, randomly generated
+    passwords and store them securely (e.g., using Kubernetes
+    secrets or a password manager).
+    ============================================================
+    
     ## First-time setup
     
     After the FreeIPA pod is running, you may need to:

@@ -64,12 +64,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Node selector syntax**: Updated Helm `--set` flags to use proper escaping for `kubernetes.io/hostname`
 - **Error handling**: Improved error handling with block/rescue patterns for better diagnostics
 - **CA backup**: CA backup now happens conditionally based on `identity_force_replace` flag
+- **Security warnings**: Enhanced security warnings for CHANGEME password placeholders in both playbook and configuration files
 
 ### Fixed
 - **Missing FreeIPA manifest**: Created complete FreeIPA manifest to resolve "manifest not found" warning
 - **PVC Pending issue**: Enhanced PV binding logic to automatically bind Pending PVCs to Available PVs
 - **Registry issues**: Forcing stable postgres:11 image prevents Docker Hub rate limiting and missing tag errors
-- **Cert-manager CRD URL**: Updated to use official cert-manager.io domain instead of deprecated jetstack URL
+- **Cert-manager CRD URL**: Pinned to v1.13.3 for reproducibility and security (instead of "latest")
+- **Verbose output**: Removed redundant debug messages to reduce playbook verbosity
 
 ## Usage
 

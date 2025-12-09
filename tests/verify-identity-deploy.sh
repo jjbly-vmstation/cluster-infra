@@ -47,6 +47,8 @@ if ! command -v kubectl &> /dev/null; then
 fi
 
 # Set KUBECONFIG if not set
+# Note: This uses admin.conf which has cluster-admin privileges.
+# For production environments, consider using a more restrictive kubeconfig.
 export KUBECONFIG=${KUBECONFIG:-/etc/kubernetes/admin.conf}
 
 log_info "Starting identity deployment verification..."

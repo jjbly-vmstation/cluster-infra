@@ -2,6 +2,13 @@
 # This file is used by the identity-deploy-and-handover.yml playbook
 # to deploy Keycloak with PostgreSQL on the infra node (control-plane)
 #
+# ============================================================
+# SECURITY CRITICAL: Replace all CHANGEME passwords below with
+# strong, randomly generated passwords before deployment.
+# Use: openssl rand -base64 32
+# Store passwords securely (e.g., password manager, vault)
+# ============================================================
+#
 # STORAGE CONFIGURATION:
 # The identity-deploy-and-handover.yml playbook creates:
 # - A 'manual' StorageClass for manual PV provisioning

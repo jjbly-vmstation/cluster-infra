@@ -288,16 +288,46 @@
     - name: Check if Keycloak values file has placeholder passwords
       shell: |
         if [ -f "{{ keycloak_values_file }}" ] && grep -q "CHANGEME" {{ keycloak_values_file }} 2>/dev/null; then
-          echo "WARNING: Keycloak values file contains CHANGEME placeholders. Replace them before production use."
+          echo "SECURITY WARNING: Keycloak values file contains CHANGEME placeholders."
+          echo "These are insecure default passwords that MUST be replaced before production use."
+          echo "Generate strong passwords and update {{ keycloak_values_file }} before deployment."
+          exit 0
         fi
       register: password_check
       changed_when: false
       failed_when: false
 
-    - name: Display password placeholder warning
+    - name: Display password placeholder security warning
       debug:
-        msg: "{{ password_check.stdout }}"
+        msg: |
+          ============================================================
+          SECURITY WARNING: Default Passwords Detected
+          ============================================================
+          {{ password_check.stdout }}
+          ============================================================
       when: password_check.stdout != ""
+
+    - name: Check if FreeIPA manifest has placeholder passwords
+      shell: |
+        if [ -f "{{ freeipa_manifest }}" ] && grep -q "CHANGEME" {{ freeipa_manifest }} 2>/dev/null; then
+          echo "SECURITY WARNING: FreeIPA manifest contains CHANGEME placeholders."
+          echo "These are insecure default passwords that MUST be replaced before production use."
+          echo "Update passwords in {{ freeipa_manifest }} before deployment."
+        fi
+      register: freeipa_password_check
+      changed_when: false
+      failed_when: false
+      when: freeipa_manifest_stat.stat.exists
+
+    - name: Display FreeIPA password placeholder security warning
+      debug:
+        msg: |
+          ============================================================
+          SECURITY WARNING: Default FreeIPA Passwords Detected
+          ============================================================
+          {{ freeipa_password_check.stdout }}
+          ============================================================
+      when: freeipa_password_check is defined and freeipa_password_check.stdout != ""
 
     - name: Check if Keycloak values file exists
       stat:
@@ -323,10 +353,7 @@
         KUBECONFIG: /etc/kubernetes/admin.conf
       register: keycloak_helm_install
 
-    - name: Display Keycloak Helm install result
-      debug:
-        msg: "Keycloak Helm chart installed/upgraded: {{ keycloak_helm_install.stdout_lines[-3:] if keycloak_helm_install.stdout_lines is defined else 'N/A' }}"
-      when: keycloak_helm_install is defined and keycloak_helm_install.rc == 0
+
 
     - name: Wait for Keycloak PostgreSQL PVC to be created
       shell: >-
@@ -528,7 +555,7 @@
 
     - name: Ensure cert-manager CRDs are installed (idempotent)
       shell: >-
-        kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.crds.yaml
+        kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.3/cert-manager.crds.yaml
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
       register: certmgr_crds
