@@ -1,0 +1,218 @@
+---
+# FreeIPA deployment manifest for identity services
+# This provides Kerberos, LDAP, and CA services for the cluster
+# It should be deployed on the infra node (control-plane) with persistent storage
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: freeipa-data-pv
+  labels:
+    app: freeipa
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: manual
+  hostPath:
+    path: /srv/identity_data/freeipa
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: freeipa-data
+  namespace: identity
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: manual
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: freeipa
+  namespace: identity
+  labels:
+    app: freeipa
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+    - name: https
+      port: 443
+      targetPort: 443
+    - name: ldap
+      port: 389
+      targetPort: 389
+    - name: ldaps
+      port: 636
+      targetPort: 636
+    - name: kerberos
+      port: 88
+      targetPort: 88
+      protocol: TCP
+    - name: kerberos-udp
+      port: 88
+      targetPort: 88
+      protocol: UDP
+    - name: kpasswd
+      port: 464
+      targetPort: 464
+      protocol: TCP
+    - name: kpasswd-udp
+      port: 464
+      targetPort: 464
+      protocol: UDP
+  selector:
+    app: freeipa
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: freeipa
+  namespace: identity
+  labels:
+    app: freeipa
+spec:
+  serviceName: freeipa
+  replicas: 1
+  selector:
+    matchLabels:
+      app: freeipa
+  template:
+    metadata:
+      labels:
+        app: freeipa
+    spec:
+      # Schedule on infra node (control-plane)
+      # The playbook will set this via nodeSelector
+      # nodeSelector:
+      #   kubernetes.io/hostname: your-masternode
+      containers:
+      - name: freeipa-server
+        image: freeipa/freeipa-server:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: IPA_SERVER_HOSTNAME
+          value: "ipa.vmstation.local"
+        - name: PASSWORD
+          value: "CHANGEME_IPA_ADMIN_PASSWORD"
+        - name: IPA_SERVER_INSTALL_OPTS
+          value: "-U --realm=VMSTATION.LOCAL --domain=vmstation.local --ds-password=CHANGEME_DS_PASSWORD --admin-password=CHANGEME_IPA_ADMIN_PASSWORD --no-host-dns --no-ntp"
+        ports:
+        - containerPort: 80
+          name: http
+        - containerPort: 443
+          name: https
+        - containerPort: 389
+          name: ldap
+        - containerPort: 636
+          name: ldaps
+        - containerPort: 88
+          name: kerberos
+        - containerPort: 464
+          name: kpasswd
+        securityContext:
+          capabilities:
+            add:
+            - SYS_TIME
+            - NET_ADMIN
+        volumeMounts:
+        - name: freeipa-data
+          mountPath: /data
+        - name: cgroup
+          mountPath: /sys/fs/cgroup
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+        - name: run
+          mountPath: /run
+        readinessProbe:
+          exec:
+            command:
+            - /usr/bin/systemctl
+            - status
+            - ipa
+          initialDelaySeconds: 60
+          timeoutSeconds: 10
+          periodSeconds: 10
+          failureThreshold: 30
+        livenessProbe:
+          exec:
+            command:
+            - /usr/bin/systemctl
+            - status
+            - ipa
+          initialDelaySeconds: 120
+          timeoutSeconds: 10
+          periodSeconds: 30
+          failureThreshold: 10
+      volumes:
+      - name: freeipa-data
+        persistentVolumeClaim:
+          claimName: freeipa-data
+      - name: cgroup
+        hostPath:
+          path: /sys/fs/cgroup
+          type: Directory
+      - name: tmp
+        emptyDir: {}
+      - name: run
+        emptyDir:
+          medium: Memory
+---
+# ConfigMap with FreeIPA setup instructions and post-deployment notes
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: freeipa-setup-notes
+  namespace: identity
+data:
+  README.md: |
+    # FreeIPA Setup Notes
+    
+    ## First-time setup
+    
+    After the FreeIPA pod is running, you may need to:
+    
+    1. Wait for FreeIPA to complete its initialization (check pod logs)
+    2. Access the FreeIPA web UI at https://ipa.vmstation.local
+    3. Log in with admin credentials (password from IPA_SERVER_INSTALL_OPTS)
+    4. Configure DNS records to point to the FreeIPA service
+    5. Configure Keycloak LDAP federation to connect to FreeIPA
+    
+    ## CA Certificate Export
+    
+    To export the FreeIPA CA certificate for use with cert-manager:
+    
+    ```bash
+    kubectl exec -n identity sts/freeipa -- cat /etc/ipa/ca.crt > /tmp/freeipa-ca.crt
+    kubectl create secret generic freeipa-ca --from-file=ca.crt=/tmp/freeipa-ca.crt -n cert-manager
+    ```
+    
+    ## Password Placeholders
+    
+    IMPORTANT: The default passwords (CHANGEME_*) in this manifest are insecure.
+    Replace them before deploying to production:
+    
+    - IPA_SERVER_INSTALL_OPTS: --admin-password and --ds-password
+    - PASSWORD: FreeIPA admin password
+    
+    ## Storage
+    
+    FreeIPA data is stored at /srv/identity_data/freeipa on the infra node.
+    Ensure this directory has adequate space (20Gi minimum).

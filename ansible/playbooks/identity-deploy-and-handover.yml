@@ -1,24 +1,30 @@
 ---
 # Playbook: identity-deploy-and-handover.yml
-# Purpose: Deploy FreeIPA, Keycloak, (optional) SAML config and hand over
+# Purpose: Deploy FreeIPA, Keycloak, cert-manager and hand over
 # the FreeIPA CA to cert-manager by creating a Secret and ClusterIssuer.
 # Also create a root-owned backup of CA material under `/root/identity-backup`
 # so cluster recovery is possible if the identity node fails.
+#
+# This is an all-in-one playbook for identity deployment on the masternode (control-plane).
+# It handles Keycloak, PostgreSQL, cert-manager, and optionally FreeIPA with safe,
+# idempotent behavior, hostPath backup/restore, and an opt-in destructive replace workflow.
 
 - name: Deploy identity stack and hand over CA to cert-manager
   hosts: localhost
   connection: local
-  gather_facts: false
+  gather_facts: true
   vars:
-    # Paths or manifests to use when available. Adjust these to your repo layout.
-    freeipa_manifest: "/opt/vmstation-org/cluster-infra/manifests/freeipa.yaml"
-    keycloak_manifest: "/opt/vmstation-org/cluster-infra/manifests/keycloak.yaml"
+    # Paths to manifests (auto-detect from playbook location)
+    playbook_dir: "{{ playbook_dir }}"
+    repo_root: "{{ playbook_dir | dirname | dirname }}"
+    freeipa_manifest: "{{ repo_root }}/manifests/identity/freeipa.yaml"
+    keycloak_manifest: "{{ repo_root }}/manifests/keycloak.yaml"
     keycloak_helm_chart: "codecentric/keycloak"
-    keycloak_values_file: "/opt/vmstation-org/cluster-infra/helm/keycloak-values.yaml"
+    keycloak_values_file: "{{ repo_root }}/helm/keycloak-values.yaml"
     
     # Storage manifests for Keycloak PostgreSQL
-    storage_class_manifest: "/opt/vmstation-org/cluster-infra/manifests/identity/storage-class-manual.yaml"
-    keycloak_pv_manifest: "/opt/vmstation-org/cluster-infra/manifests/identity/keycloak-postgresql-pv.yaml"
+    storage_class_manifest: "{{ repo_root }}/manifests/identity/storage-class-manual.yaml"
+    keycloak_pv_manifest: "{{ repo_root }}/manifests/identity/keycloak-postgresql-pv.yaml"
 
     # CA sources (from your pre-generate step in cluster-setup)
     ca_cert_src: "/opt/vmstation-org/cluster-setup/scripts/certs/ca.cert.pem"
@@ -35,13 +41,22 @@
     # Backup location on the controller (root-owned)
     backup_dir: /root/identity-backup
     
-    # Identity data storage location (for PostgreSQL persistent data)
+    # Identity data storage location (for PostgreSQL and FreeIPA persistent data)
     identity_data_dir: /srv/identity_data
+    
     # Control destructive replacement behavior. Set to true to back up and remove
     # existing identity pods before installing/upgrading. Disabled by default to
     # avoid accidental data loss. Use with caution in production.
     identity_force_replace: false
     identity_backup_before_replace: true
+    
+    # Rollout wait timeout in seconds (default: 180s per resource)
+    rollout_wait_timeout: 180
+    
+    # PostgreSQL image configuration
+    postgresql_image_registry: docker.io
+    postgresql_image_repository: postgres
+    postgresql_image_tag: "11"
 
   tasks:
     - name: Ensure required binaries are present (kubectl, helm)
@@ -53,7 +68,34 @@
         - kubectl
         - helm
 
-    
+    - name: Detect infra node (control-plane/masternode) for infra scheduling
+      block:
+        - name: Attempt to detect control-plane node
+          shell: |
+            KUBECONFIG=/etc/kubernetes/admin.conf kubectl get nodes -l node-role.kubernetes.io/control-plane -o jsonpath='{.items[0].metadata.name}'
+          register: infra_node_detect
+          changed_when: false
+          failed_when: false
+
+        - name: Fallback to first schedulable node if no control-plane found
+          shell: |
+            KUBECONFIG=/etc/kubernetes/admin.conf kubectl get nodes -o jsonpath='{.items[?(@.spec.taints[*].effect!="NoSchedule")].metadata.name}' | awk '{print $1}'
+          register: infra_node_fallback
+          changed_when: false
+          when: infra_node_detect.stdout == ""
+
+        - name: Set infra_node variable
+          set_fact:
+            infra_node: "{{ infra_node_detect.stdout if infra_node_detect.stdout != '' else infra_node_fallback.stdout }}"
+
+        - name: Fail if no infra node detected
+          fail:
+            msg: "No suitable infra node detected. Please ensure at least one schedulable node exists."
+          when: infra_node == ""
+
+        - name: Display detected infra node
+          debug:
+            msg: "Detected infra node: {{ infra_node }}"
 
     - name: Ensure identity-related namespaces exist
       shell: >-
@@ -66,20 +108,17 @@
         KUBECONFIG: /etc/kubernetes/admin.conf
       changed_when: false
 
-    - name: Detect infra node (control-plane/masternode) for infra scheduling
-      shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl get nodes -l node-role.kubernetes.io/control-plane -o jsonpath='{.items[0].metadata.name}'
-      register: infra_node
-      changed_when: false
-      failed_when: infra_node.rc != 0
-
-    - name: Create identity data directories for PostgreSQL storage
+    - name: Create identity data directories for persistent storage
       file:
-        path: "{{ identity_data_dir }}/postgresql"
+        path: "{{ item }}"
         state: directory
         mode: '0755'
         owner: root
         group: root
       become: true
+      loop:
+        - "{{ identity_data_dir }}/postgresql"
+        - "{{ identity_data_dir }}/freeipa"
 
     - name: Ensure nodes are schedulable (uncordon all nodes)
       shell: |
@@ -90,44 +129,27 @@
       failed_when: false
       changed_when: false
 
-    - name: Deploy StorageClass for Keycloak PostgreSQL
+    - name: Deploy StorageClass for Keycloak PostgreSQL (idempotent)
       shell: kubectl apply -f {{ storage_class_manifest }}
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
       register: storage_class_apply
-      when: storage_class_manifest is defined
+      changed_when: "'created' in storage_class_apply.stdout or 'configured' in storage_class_apply.stdout"
 
-    - name: Deploy PersistentVolume for Keycloak PostgreSQL
+    - name: Deploy PersistentVolume for Keycloak PostgreSQL (idempotent)
       shell: kubectl apply -f {{ keycloak_pv_manifest }}
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
       register: keycloak_pv_apply
-      when: keycloak_pv_manifest is defined
+      changed_when: "'created' in keycloak_pv_apply.stdout or 'configured' in keycloak_pv_apply.stdout"
 
-    - name: Deploy FreeIPA from manifest if present
+    - name: Check if FreeIPA manifest exists
       stat:
         path: "{{ freeipa_manifest }}"
       register: freeipa_manifest_stat
 
-    - name: Apply FreeIPA manifest
-      shell: kubectl apply -f {{ freeipa_manifest }}
-      when: freeipa_manifest_stat.stat.exists
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
-      register: freeipa_apply
-
-    - name: Inform about missing FreeIPA manifest
-      debug:
-        msg: "FreeIPA manifest {{ freeipa_manifest }} not found. Provide a manifest or deploy FreeIPA by other means."
-      when: not freeipa_manifest_stat.stat.exists
-
-    - name: Deploy Keycloak (manifest if present)
-      stat:
-        path: "{{ keycloak_manifest }}"
-      register: keycloak_manifest_stat
-
     - name: Optional: Backup and remove existing identity pods before redeploy (controlled)
-      when: identity_force_replace | default(false) | bool
+      when: identity_force_replace | default(false) | bool and identity_backup_before_replace | default(true) | bool
       block:
         - name: Create backup directory on controller (root-owned)
           file:
@@ -138,55 +160,136 @@
             mode: '0700'
           become: true
 
-        - name: Backup Postgres hostPath data (best-effort)
-          shell: >-
-            set -e; ts=$(date -u +%Y%m%dT%H%M%SZ); \
-            if [ -d "{{ identity_data_dir }}/postgresql" ]; then \
-              tar -C "{{ identity_data_dir }}" -czf "{{ backup_dir }}/identity-postgres-data-${ts}.tar.gz" postgresql || true; \
-            else echo "No hostPath data to back up at {{ identity_data_dir }}/postgresql"; fi
-          become: true
-          register: identity_backup
+        - name: Get current timestamp for backup filename
+          shell: date -u +%Y%m%dT%H%M%SZ
+          register: backup_timestamp
           changed_when: false
+
+        - name: Backup CA material if available
+          block:
+            - name: Check if CA cert exists
+              stat:
+                path: "{{ ca_cert_src }}"
+              register: ca_cert_exists
+
+            - name: Backup CA certificate and key
+              shell: >-
+                set -e;
+                cp -f {{ ca_cert_src }} {{ backup_dir }}/ca.cert.pem 2>/dev/null || true;
+                if [ -f "{{ ca_key_src }}" ]; then cp -f {{ ca_key_src }} {{ backup_dir }}/ca.key.pem; fi;
+                cd {{ backup_dir }} && tar -czf identity-ca-backup.tar.gz ca.cert.pem ca.key.pem 2>/dev/null && rm -f ca.cert.pem ca.key.pem || true;
+              when: ca_cert_exists.stat.exists
+              become: true
+              register: ca_backup
+
+        - name: Backup PostgreSQL hostPath data
+          shell: >-
+            set -e;
+            if [ -d "{{ identity_data_dir }}/postgresql" ]; then
+              tar -C "{{ identity_data_dir }}" -czf "{{ backup_dir }}/identity-postgres-data-{{ backup_timestamp.stdout }}.tar.gz" postgresql;
+              echo "Backup created: {{ backup_dir }}/identity-postgres-data-{{ backup_timestamp.stdout }}.tar.gz";
+            else
+              echo "No hostPath data to back up at {{ identity_data_dir }}/postgresql";
+            fi
+          become: true
+          register: postgres_backup
+
+        - name: Backup FreeIPA hostPath data (if exists)
+          shell: >-
+            set -e;
+            if [ -d "{{ identity_data_dir }}/freeipa" ]; then
+              tar -C "{{ identity_data_dir }}" -czf "{{ backup_dir }}/identity-freeipa-data-{{ backup_timestamp.stdout }}.tar.gz" freeipa;
+              echo "Backup created: {{ backup_dir }}/identity-freeipa-data-{{ backup_timestamp.stdout }}.tar.gz";
+            else
+              echo "No FreeIPA data to back up at {{ identity_data_dir }}/freeipa";
+            fi
+          become: true
+          register: freeipa_backup
+
+        - name: Compute SHA256 checksums for backup files
+          shell: >-
+            cd {{ backup_dir }} && sha256sum identity-*.tar.gz > SHA256SUMS 2>/dev/null || true
+          become: true
+          register: backup_checksums
+
+        - name: Display backup information
+          debug:
+            msg: |
+              Backups created in {{ backup_dir }}:
+              {{ postgres_backup.stdout }}
+              {{ freeipa_backup.stdout }}
+              Checksums saved to {{ backup_dir }}/SHA256SUMS
+
+    - name: Scale down identity workloads for destructive replace
+      when: identity_force_replace | default(false) | bool
+      block:
+        - name: Scale down FreeIPA StatefulSet to 0 (if present)
+          shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} scale sts freeipa --replicas=0 --timeout=60s || true
+          register: scale_down_freeipa
+          failed_when: false
 
         - name: Scale down Keycloak StatefulSet to 0 (if present)
           shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} scale sts keycloak --replicas=0 --timeout=60s || true
           register: scale_down_keycloak
           failed_when: false
 
-        - name: Scale down Postgres StatefulSet to 0 (if present)
+        - name: Scale down PostgreSQL StatefulSet to 0 (if present)
           shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} scale sts keycloak-postgresql --replicas=0 --timeout=60s || true
           register: scale_down_postgres
           failed_when: false
 
-        - name: Delete any remaining Keycloak/Postgres pods (force removal)
+        - name: Delete any remaining identity pods (force removal)
           shell: >-
-            KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} delete pod -l app.kubernetes.io/name=keycloak --ignore-not-found || true; \
-            KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} delete pod -l app.kubernetes.io/name=postgresql --ignore-not-found || true
+            KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} delete pod --all --ignore-not-found --grace-period=10 --timeout=60s || true
           register: delete_identity_pods
           failed_when: false
 
         - name: Wait for identity pods to be fully removed
           shell: >-
-            KUBECONFIG=/etc/kubernetes/admin.conf bash -c "for i in {1..60}; do if [ -z \"$(kubectl -n {{ namespace_identity }} get pods -o name 2>/dev/null)\" ]; then exit 0; fi; sleep 1; done; echo 'timeout' && exit 1"
+            KUBECONFIG=/etc/kubernetes/admin.conf bash -c "for i in {1..60}; do if [ -z \"$(kubectl -n {{ namespace_identity }} get pods -o name 2>/dev/null)\" ]; then exit 0; fi; sleep 1; done; exit 1"
           register: wait_for_pod_removal
           failed_when: wait_for_pod_removal.rc != 0
-          retries: 1
-          until: wait_for_pod_removal.rc == 0
 
-    - name: Apply Keycloak manifest
+    - name: Deploy FreeIPA from manifest (if available)
+      shell: kubectl apply -f {{ freeipa_manifest }}
+      when: freeipa_manifest_stat.stat.exists
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: freeipa_apply
+      changed_when: "'created' in freeipa_apply.stdout or 'configured' in freeipa_apply.stdout"
+
+    - name: Set nodeSelector for FreeIPA StatefulSet
+      shell: |
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl patch statefulset freeipa -n {{ namespace_identity }} -p '{"spec":{"template":{"spec":{"nodeSelector":{"kubernetes.io/hostname":"{{ infra_node }}"}}}}}' || true
+      when: freeipa_manifest_stat.stat.exists
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: freeipa_node_selector
+      failed_when: false
+
+    - name: Inform about missing FreeIPA manifest
+      debug:
+        msg: "FreeIPA manifest {{ freeipa_manifest }} not found. FreeIPA will not be deployed. To deploy FreeIPA, ensure the manifest exists."
+      when: not freeipa_manifest_stat.stat.exists
+
+    - name: Check if Keycloak manifest exists
+      stat:
+        path: "{{ keycloak_manifest }}"
+      register: keycloak_manifest_stat
+
+    - name: Apply Keycloak manifest (if available)
       shell: kubectl apply -f {{ keycloak_manifest }}
       when: keycloak_manifest_stat.stat.exists
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
       register: keycloak_apply
+      changed_when: "'created' in keycloak_apply.stdout or 'configured' in keycloak_apply.stdout"
 
     - name: Check if Keycloak values file has placeholder passwords
       shell: |
-        if grep -q "CHANGEME" {{ keycloak_values_file }} 2>/dev/null; then
+        if [ -f "{{ keycloak_values_file }}" ] && grep -q "CHANGEME" {{ keycloak_values_file }} 2>/dev/null; then
           echo "WARNING: Keycloak values file contains CHANGEME placeholders. Replace them before production use."
-          exit 0
         fi
-      when: keycloak_values_file is defined
       register: password_check
       changed_when: false
       failed_when: false
@@ -194,110 +297,257 @@
     - name: Display password placeholder warning
       debug:
         msg: "{{ password_check.stdout }}"
-      when: password_check is defined and password_check.stdout != ""
+      when: password_check.stdout != ""
 
-    - name: Install Keycloak via Helm if manifest missing but values file exists
-      # Force a known-good Postgres image for environments that cannot pull the
-      # Bitnami tag (registry issues, removed tag, or proxy returning HTML errors).
+    - name: Check if Keycloak values file exists
+      stat:
+        path: "{{ keycloak_values_file }}"
+      register: keycloak_values_stat
+
+    - name: Install/upgrade Keycloak via Helm
       shell: >-
         helm repo add codecentric https://codecentric.github.io/helm-charts >/dev/null 2>&1 || true;
         helm repo update >/dev/null 2>&1;
-        helm upgrade --install keycloak {{ keycloak_helm_chart }} -n {{ namespace_identity }} -f {{ keycloak_values_file }} --create-namespace \
-          --set postgresql.image.registry=docker.io \
-          --set postgresql.image.repository=postgres \
-          --set postgresql.image.tag=11 \
-          --set postgresql.image.pullPolicy=IfNotPresent \
-          {{ ('--set keycloak.nodeSelector.kubernetes\\.io/hostname=' + infra_node.stdout) if infra_node.stdout is defined else '' }} \
-          {{ ('--set postgresql.nodeSelector.kubernetes\\.io/hostname=' + infra_node.stdout) if infra_node.stdout is defined else '' }}
-      when: not keycloak_manifest_stat.stat.exists and (keycloak_values_file is defined)
+        helm upgrade --install keycloak {{ keycloak_helm_chart }} 
+        -n {{ namespace_identity }} 
+        -f {{ keycloak_values_file }} 
+        --create-namespace 
+        --set postgresql.image.registry={{ postgresql_image_registry }}
+        --set postgresql.image.repository={{ postgresql_image_repository }}
+        --set postgresql.image.tag={{ postgresql_image_tag }}
+        --set postgresql.image.pullPolicy=IfNotPresent
+        --set keycloak.nodeSelector."kubernetes\.io/hostname"={{ infra_node }}
+        --set postgresql.nodeSelector."kubernetes\.io/hostname"={{ infra_node }}
+      when: keycloak_values_stat.stat.exists
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
       register: keycloak_helm_install
 
-    - name: Check Keycloak PostgreSQL PVC status (non-fatal)
+    - name: Display Keycloak Helm install result
+      debug:
+        msg: "Keycloak Helm chart installed/upgraded: {{ keycloak_helm_install.stdout_lines[-3:] if keycloak_helm_install.stdout_lines is defined else 'N/A' }}"
+      when: keycloak_helm_install is defined and keycloak_helm_install.rc == 0
+
+    - name: Wait for Keycloak PostgreSQL PVC to be created
       shell: >-
-        KUBECONFIG=/etc/kubernetes/admin.conf kubectl get pvc data-keycloak-postgresql-0 -n {{ namespace_identity }} -o jsonpath='{.status.phase}' || true
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl get pvc data-keycloak-postgresql-0 -n {{ namespace_identity }} -o name
+      register: pvc_exists_check
+      until: pvc_exists_check.rc == 0
+      retries: 30
+      delay: 2
+      failed_when: false
+
+    - name: Check Keycloak PostgreSQL PVC status
+      shell: >-
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl get pvc data-keycloak-postgresql-0 -n {{ namespace_identity }} -o jsonpath='{.status.phase}'
       register: keycloak_postgres_pvc_phase
       changed_when: false
+      failed_when: false
 
-    - name: Find Available PVs labeled for Keycloak Postgres
+    - name: Find Available PVs labeled for Keycloak PostgreSQL
       shell: >-
-        KUBECONFIG=/etc/kubernetes/admin.conf kubectl get pv -l app=keycloak,component=postgresql -o jsonpath='{range .items[?(@.status.phase=="Available")]}{.metadata.name}{"\n"}{end}' || true
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl get pv -l app=keycloak,component=postgresql -o jsonpath='{range .items[?(@.status.phase=="Available")]}{.metadata.name}{"\n"}{end}'
       register: keycloak_postgres_available_pvs
       changed_when: false
+      failed_when: false
 
     - name: Bind an Available PV to Keycloak PVC when PVC is Pending
       shell: >-
-        KUBECONFIG=/etc/kubernetes/admin.conf kubectl patch pv {{ item }} -p '{"spec":{"claimRef":{"namespace":"{{ namespace_identity }}","name":"data-keycloak-postgresql-0"}}}' --type=merge
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl patch pv {{ item }} 
+        -p '{"spec":{"claimRef":{"namespace":"{{ namespace_identity }}","name":"data-keycloak-postgresql-0"}}}'
       loop: "{{ keycloak_postgres_available_pvs.stdout_lines }}"
-      when: keycloak_postgres_pvc_phase.stdout == 'Pending' and keycloak_postgres_available_pvs.stdout != ''
+      when: 
+        - keycloak_postgres_pvc_phase.stdout == 'Pending'
+        - keycloak_postgres_available_pvs.stdout != ''
       register: keycloak_pv_bind
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Log PV binding result
+      debug:
+        msg: "PV binding attempted for PVC data-keycloak-postgresql-0. Result: {{ keycloak_pv_bind.results | default('No binding needed') }}"
+      when: keycloak_pv_bind is defined
 
     - name: Verify Keycloak PVC after binding attempt
       shell: >-
         KUBECONFIG=/etc/kubernetes/admin.conf kubectl get pvc data-keycloak-postgresql-0 -n {{ namespace_identity }} -o wide
       register: keycloak_postgres_pvc_verify
       changed_when: false
+      failed_when: false
+
+    - name: Display PVC status
+      debug:
+        msg: "{{ keycloak_postgres_pvc_verify.stdout_lines }}"
+      when: keycloak_postgres_pvc_verify.stdout != ""
 
     - name: Warn if neither manifest nor values file available for Keycloak
       debug:
         msg: "Keycloak manifest not found and values file missing; please provide one to automate Keycloak install."
-      when: not keycloak_manifest_stat.stat.exists and (keycloak_values_file is not defined or keycloak_values_file == '')
+      when: not keycloak_manifest_stat.stat.exists and not keycloak_values_stat.stat.exists
 
-    - name: Wait for Keycloak PostgreSQL rollout (best-effort)
-      shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status statefulset/keycloak-postgresql -n {{ namespace_identity }} --timeout=180s
-      register: keycloak_pg_rollout
-      changed_when: keycloak_pg_rollout.rc == 0
-      failed_when: false
-
-    - name: Attempt recovery for Postgres StatefulSet if rollout failed
-      when: keycloak_pg_rollout.rc != 0
+    - name: Wait for Keycloak PostgreSQL rollout
       block:
-        - name: Scale down Postgres StatefulSet to 0
-          shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} scale sts keycloak-postgresql --replicas=0
-          register: scale_down_pg
-          failed_when: false
+        - name: Wait for PostgreSQL StatefulSet rollout
+          shell: >-
+            KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status statefulset/keycloak-postgresql 
+            -n {{ namespace_identity }} --timeout={{ rollout_wait_timeout }}s
+          register: keycloak_pg_rollout
+          failed_when: keycloak_pg_rollout.rc != 0
 
-        - name: Delete any remaining Postgres pods to ensure fresh recreate
-          shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} delete pod -l app.kubernetes.io/name=postgresql --ignore-not-found
-          register: delete_pg_pods
-          failed_when: false
+      rescue:
+        - name: Handle PostgreSQL rollout timeout
+          block:
+            - name: Get timestamp for diagnostics
+              shell: date -u +%Y%m%dT%H%M%SZ
+              register: pg_diag_ts
+              changed_when: false
 
-        - name: Scale up Postgres StatefulSet to 1
-          shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} scale sts keycloak-postgresql --replicas=1
-          register: scale_up_pg
-          failed_when: false
+            - name: Collect PostgreSQL diagnostics
+              shell: |
+                echo "=== PostgreSQL Pods ===" 
+                kubectl -n {{ namespace_identity }} get pods -l app.kubernetes.io/name=postgresql -o wide || true
+                echo ""
+                echo "=== PostgreSQL Pod Describe ==="
+                for pod in $(kubectl -n {{ namespace_identity }} get pods -l app.kubernetes.io/name=postgresql -o name); do
+                  echo "--- $pod ---"
+                  kubectl -n {{ namespace_identity }} describe $pod || true
+                done
+                echo ""
+                echo "=== PVC Status ==="
+                kubectl -n {{ namespace_identity }} get pvc -o yaml || true
+                echo ""
+                echo "=== PV Status ==="
+                kubectl get pv -o yaml || true
+                echo ""
+                echo "=== Events ==="
+                kubectl -n {{ namespace_identity }} get events --sort-by=.metadata.creationTimestamp || true
+              register: pg_diagnostics
+              environment:
+                KUBECONFIG: /etc/kubernetes/admin.conf
 
-        - name: Wait for Postgres StatefulSet rollout after recovery
-          shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status statefulset/keycloak-postgresql -n {{ namespace_identity }} --timeout=180s
-          register: keycloak_pg_rollout_after
-          failed_when: false
+            - name: Save PostgreSQL diagnostics
+              copy:
+                dest: "{{ backup_dir }}/postgres-diagnostics-{{ pg_diag_ts.stdout }}.log"
+                content: "{{ pg_diagnostics.stdout }}"
+                owner: root
+                group: root
+                mode: '0600'
+              become: true
 
-    - name: Wait for Keycloak rollout (best-effort)
-      shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status statefulset/keycloak -n {{ namespace_identity }} --timeout=180s
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
-      ignore_errors: true
+            - name: Attempt PostgreSQL recovery if identity_force_replace is true
+              when: identity_force_replace | default(false) | bool
+              block:
+                - name: Run backup and replace flow for PostgreSQL
+                  debug:
+                    msg: "identity_force_replace is true. Running backup and replace flow."
+
+                - name: Backup PostgreSQL data before recovery
+                  shell: >-
+                    set -e;
+                    ts=$(date -u +%Y%m%dT%H%M%SZ);
+                    if [ -d "{{ identity_data_dir }}/postgresql" ]; then
+                      tar -C "{{ identity_data_dir }}" -czf "{{ backup_dir }}/identity-postgres-recovery-${ts}.tar.gz" postgresql;
+                      echo "Recovery backup created: {{ backup_dir }}/identity-postgres-recovery-${ts}.tar.gz";
+                    fi
+                  become: true
+                  register: pg_recovery_backup
+
+                - name: Scale down PostgreSQL StatefulSet
+                  shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} scale sts keycloak-postgresql --replicas=0 --timeout=60s
+                  failed_when: false
+
+                - name: Delete PostgreSQL pods
+                  shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} delete pod -l app.kubernetes.io/name=postgresql --ignore-not-found --grace-period=10
+                  failed_when: false
+
+                - name: Wait for pod removal
+                  pause:
+                    seconds: 10
+
+                - name: Scale up PostgreSQL StatefulSet
+                  shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} scale sts keycloak-postgresql --replicas=1
+                  failed_when: false
+
+                - name: Wait for PostgreSQL rollout after recovery
+                  shell: >-
+                    KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status statefulset/keycloak-postgresql 
+                    -n {{ namespace_identity }} --timeout={{ rollout_wait_timeout }}s
+                  register: pg_rollout_after_recovery
+
+            - name: Fail with diagnostics notice if recovery not attempted
+              fail:
+                msg: "PostgreSQL rollout failed. Diagnostics saved to {{ backup_dir }}/postgres-diagnostics-{{ pg_diag_ts.stdout }}.log. Set identity_force_replace=true to attempt recovery."
+              when: not (identity_force_replace | default(false) | bool)
+
+    - name: Wait for Keycloak rollout
+      block:
+        - name: Wait for Keycloak StatefulSet rollout
+          shell: >-
+            KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status statefulset/keycloak 
+            -n {{ namespace_identity }} --timeout={{ rollout_wait_timeout }}s
+          register: keycloak_rollout
+          failed_when: keycloak_rollout.rc != 0
+
+      rescue:
+        - name: Handle Keycloak rollout timeout
+          block:
+            - name: Get timestamp for diagnostics
+              shell: date -u +%Y%m%dT%H%M%SZ
+              register: kc_diag_ts
+              changed_when: false
+
+            - name: Collect Keycloak diagnostics
+              shell: |
+                echo "=== Keycloak Pods ==="
+                kubectl -n {{ namespace_identity }} get pods -l app.kubernetes.io/name=keycloak -o wide || true
+                echo ""
+                echo "=== Keycloak Pod Describe ==="
+                for pod in $(kubectl -n {{ namespace_identity }} get pods -l app.kubernetes.io/name=keycloak -o name); do
+                  echo "--- $pod ---"
+                  kubectl -n {{ namespace_identity }} describe $pod || true
+                done
+                echo ""
+                echo "=== Events ==="
+                kubectl -n {{ namespace_identity }} get events --sort-by=.metadata.creationTimestamp || true
+              register: kc_diagnostics
+              environment:
+                KUBECONFIG: /etc/kubernetes/admin.conf
+
+            - name: Save Keycloak diagnostics
+              copy:
+                dest: "{{ backup_dir }}/keycloak-diagnostics-{{ kc_diag_ts.stdout }}.log"
+                content: "{{ kc_diagnostics.stdout }}"
+                owner: root
+                group: root
+                mode: '0600'
+              become: true
+
+            - name: Fail with diagnostics notice
+              fail:
+                msg: "Keycloak rollout failed. Diagnostics saved to {{ backup_dir }}/keycloak-diagnostics-{{ kc_diag_ts.stdout }}.log"
 
     - name: Ensure cert-manager CRDs are installed (idempotent)
       shell: >-
-        kubectl apply -f https://github.com/jetstack/cert-manager/releases/latest/download/cert-manager.crds.yaml
+        kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.crds.yaml
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
-      changed_when: false
+      register: certmgr_crds
+      changed_when: "'created' in certmgr_crds.stdout or 'configured' in certmgr_crds.stdout"
 
     - name: Add cert-manager Helm repo
       shell: |
-        helm repo add jetstack https://charts.jetstack.io || true
+        helm repo add jetstack https://charts.jetstack.io 2>&1 || true
         helm repo update
       changed_when: false
+      register: helm_repo_add
 
-    - name: Install/upgrade cert-manager Helm chart (installCRDs=false)
+    - name: Install/upgrade cert-manager Helm chart with node affinity
       shell: >-
-        KUBECONFIG=/etc/kubernetes/admin.conf helm upgrade --install cert-manager jetstack/cert-manager --namespace {{ namespace_cert_manager }} --create-namespace --set installCRDs=false \
-          {{ '--set nodeSelector.kubernetes\\.io/hostname=' + infra_node.stdout if infra_node.stdout is defined else '' }}
+        KUBECONFIG=/etc/kubernetes/admin.conf helm upgrade --install cert-manager jetstack/cert-manager 
+        --namespace {{ namespace_cert_manager }} 
+        --create-namespace 
+        --set installCRDs=false
+        --set nodeSelector."kubernetes\.io/hostname"={{ infra_node }}
       register: certmgr_helm
 
     - name: Wait for cert-manager deployments to be ready (with diagnostics on failure)
@@ -433,23 +683,71 @@
         KUBECONFIG: /etc/kubernetes/admin.conf
       register: issuer_apply
 
-    - name: Show results
+    - name: Display backup files and checksums (if created)
+      block:
+        - name: Read backup directory contents
+          shell: ls -lh {{ backup_dir }}/ 2>/dev/null || echo "No backup directory found"
+          register: backup_files
+          become: true
+          changed_when: false
+
+        - name: Read SHA256 checksums
+          shell: cat {{ backup_dir }}/SHA256SUMS 2>/dev/null || echo "No checksums file found"
+          register: backup_sums
+          become: true
+          changed_when: false
+
+        - name: Display backup information
+          debug:
+            msg: |
+              === Backup Files ===
+              {{ backup_files.stdout }}
+              
+              === SHA256 Checksums ===
+              {{ backup_sums.stdout }}
+      when: identity_force_replace | default(false) | bool
+
+    - name: Show deployment results summary
       debug:
         msg: |
-          StorageClass applied: {{ storage_class_apply.stdout | default('not applied') }}
-          Keycloak PV applied: {{ keycloak_pv_apply.stdout | default('not applied') }}
-          FreeIPA applied: {{ freeipa_apply.stdout | default('not applied') }}
-          Keycloak applied: {{ keycloak_apply.stdout | default(keycloak_helm_install.stdout | default('not applied')) }}
-          Secret apply stdout: {{ secret_apply.stdout }}
-          ClusterIssuer apply stdout: {{ issuer_apply.stdout }}
+          ============================================================
+          Identity Deployment Summary
+          ============================================================
+          Infra Node: {{ infra_node }}
+          
+          Storage:
+            - StorageClass 'manual': {{ storage_class_apply.stdout | default('applied') }}
+            - Keycloak PostgreSQL PV: {{ keycloak_pv_apply.stdout | default('applied') }}
+            - Data Directory: {{ identity_data_dir }}
+          
+          Components:
+            - FreeIPA: {{ 'Applied' if freeipa_manifest_stat.stat.exists else 'Skipped (manifest not found)' }}
+            - Keycloak: {{ 'Applied' if keycloak_helm_install is defined and keycloak_helm_install.rc == 0 else 'Skipped' }}
+            - cert-manager: {{ 'Installed' if certmgr_helm.rc == 0 else 'Failed' }}
+            - ClusterIssuer: {{ 'Applied' if issuer_apply is defined and issuer_apply.rc == 0 else 'Skipped' }}
+          
+          Verification:
+            Run: {{ repo_root }}/tests/verify-identity-deploy.sh
+          
+          Re-run this playbook:
+            ansible-playbook {{ playbook_dir }}/identity-deploy-and-handover.yml
+          
+          For destructive replace (with backup):
+            ansible-playbook {{ playbook_dir }}/identity-deploy-and-handover.yml -e identity_force_replace=true
+          
+          Backup Location: {{ backup_dir }}
+          ============================================================
 
     - name: Final guidance
       debug:
         msg: |
-          Identity stack deployment attempted. Verify FreeIPA and Keycloak pods are Running and
-          that cert-manager is installed and healthy. The CA backup (if available) was stored at {{ backup_dir }}/identity-ca-backup.tar.gz
+          Identity stack deployment completed. 
           
-          Storage configuration:
-          - StorageClass 'manual' has been created for manual PV provisioning
-          - PersistentVolume 'keycloak-postgresql-pv' (10Gi) created at {{ identity_data_dir }}/postgresql
-          - Keycloak PostgreSQL PVC should now bind successfully
+          Next steps:
+          1. Verify all pods are running: kubectl get pods -n identity -o wide
+          2. Verify cert-manager: kubectl get pods -n cert-manager -o wide
+          3. Run acceptance tests: {{ repo_root }}/tests/verify-identity-deploy.sh
+          4. Replace CHANGEME passwords in {{ keycloak_values_file }} before production use
+          5. Configure FreeIPA (if deployed) and integrate with Keycloak LDAP
+          
+          For issues, check diagnostics in {{ backup_dir }}/
