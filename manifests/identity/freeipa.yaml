@@ -141,7 +141,10 @@ spec:
           mountPath: /data
         - name: cgroup
           mountPath: /sys/fs/cgroup
-          readOnly: true
+          # The cgroup mount needs to be writable for systemd inside the
+          # FreeIPA container. Do NOT mount readOnly here so systemd can
+          # manage cgroups when running inside the container on the infra node.
+          readOnly: false
         - name: tmp
           mountPath: /tmp
         - name: run

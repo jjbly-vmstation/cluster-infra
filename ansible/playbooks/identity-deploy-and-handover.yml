@@ -53,6 +53,11 @@
     # a host chown. This is safe when you control the masternode filesystem.
     # Default true to ensure recoveries succeed; set to false to disable.
     enable_postgres_chown: true
+    # When true the playbook will attempt to ensure correct ownership on
+    # the FreeIPA hostPath ({{ identity_data_dir }}/freeipa) similar to the
+    # PostgreSQL chown flow. This runs an idempotent, privileged Job that
+    # fixes ownership and is safe when you control the masternode filesystem.
+    enable_freeipa_chown: true
     identity_backup_before_replace: true
     
     # Rollout wait timeout in seconds (default: 300s per resource)
@@ -214,6 +219,64 @@
 
         - name: Delete chown Job
           shell: kubectl -n {{ namespace_identity }} delete job/postgres-chown-job --ignore-not-found
+          environment:
+            KUBECONFIG: /etc/kubernetes/admin.conf
+          changed_when: false
+          failed_when: false
+
+    - name: Optionally fix hostPath ownership for FreeIPA via privileged Job
+      when: (enable_freeipa_chown | default(false) | bool) or (identity_force_replace | default(false) | bool)
+      block:
+        - name: Render FreeIPA chown job manifest to temporary file
+          copy:
+            dest: /tmp/freeipa-chown-job.yml
+            content: |
+              apiVersion: batch/v1
+              kind: Job
+              metadata:
+                name: freeipa-chown-job
+                namespace: {{ namespace_identity }}
+              spec:
+                backoffLimit: 0
+                template:
+                  metadata:
+                    name: freeipa-chown
+                  spec:
+                    nodeSelector:
+                      kubernetes.io/hostname: {{ infra_node | default('') }}
+                    restartPolicy: OnFailure
+                    containers:
+                      - name: chown
+                        image: busybox:1.36
+                        command: ["/bin/sh", "-c", "chown -R 0:0 {{ identity_data_dir }}/freeipa && ls -ld {{ identity_data_dir }}/freeipa && echo DONE"]
+                        securityContext:
+                          privileged: true
+                        volumeMounts:
+                          - name: host-freeipa
+                            mountPath: {{ identity_data_dir }}/freeipa
+                    volumes:
+                      - name: host-freeipa
+                        hostPath:
+                          path: {{ identity_data_dir }}/freeipa
+                          type: DirectoryOrCreate
+          become: true
+
+        - name: Apply FreeIPA chown Job manifest
+          shell: kubectl apply -f /tmp/freeipa-chown-job.yml
+          environment:
+            KUBECONFIG: /etc/kubernetes/admin.conf
+          register: freeipa_chown_job_apply
+          changed_when: "'created' in freeipa_chown_job_apply.stdout or 'configured' in freeipa_chown_job_apply.stdout"
+
+        - name: Wait for FreeIPA chown Job completion
+          shell: kubectl -n {{ namespace_identity }} wait --for=condition=complete job/freeipa-chown-job --timeout=120s
+          environment:
+            KUBECONFIG: /etc/kubernetes/admin.conf
+          register: freeipa_chown_job_wait
+          failed_when: freeipa_chown_job_wait.rc != 0
+
+        - name: Delete FreeIPA chown Job
+          shell: kubectl -n {{ namespace_identity }} delete job/freeipa-chown-job --ignore-not-found
           environment:
             KUBECONFIG: /etc/kubernetes/admin.conf
           changed_when: false
