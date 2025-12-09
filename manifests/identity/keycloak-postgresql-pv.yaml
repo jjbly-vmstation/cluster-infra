@@ -2,6 +2,10 @@
 # PersistentVolume for Keycloak PostgreSQL data
 # This volume uses hostPath storage on the master/control plane node
 # Adjust the path and node selector according to your environment
+#
+# NOTE: The PV is scheduled on control-plane nodes. If your control-plane nodes have
+# taints (NoSchedule), ensure the PostgreSQL StatefulSet has appropriate tolerations
+# or remove taints with: kubectl taint nodes --all node-role.kubernetes.io/control-plane-
 apiVersion: v1
 kind: PersistentVolume
 metadata:
