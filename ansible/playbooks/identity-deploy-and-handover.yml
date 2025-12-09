@@ -122,6 +122,22 @@
         KUBECONFIG: /etc/kubernetes/admin.conf
       register: keycloak_apply
 
+    - name: Check if Keycloak values file has placeholder passwords
+      shell: |
+        if grep -q "CHANGEME" {{ keycloak_values_file }} 2>/dev/null; then
+          echo "WARNING: Keycloak values file contains CHANGEME placeholders. Replace them before production use."
+          exit 0
+        fi
+      when: keycloak_values_file is defined
+      register: password_check
+      changed_when: false
+      failed_when: false
+
+    - name: Display password placeholder warning
+      debug:
+        msg: "{{ password_check.stdout }}"
+      when: password_check is defined and password_check.stdout != ""
+
     - name: Install Keycloak via Helm if manifest missing but values file exists
       shell: >-
         helm repo add codecentric https://codecentric.github.io/helm-charts >/dev/null 2>&1 || true;
