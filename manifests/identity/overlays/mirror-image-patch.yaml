@@ -1,0 +1,63 @@
+---
+# FreeIPA Image Mirror Patch
+# Purpose: Update FreeIPA StatefulSet to use mirrored image from local registry
+# Usage: kubectl apply -f manifests/identity/overlays/mirror-image-patch.yaml
+#
+# This patch changes the FreeIPA container image from Docker Hub to the local
+# registry to avoid Docker Hub authentication issues and rate limiting.
+#
+# Prerequisites:
+# 1. Run scripts/mirror-freeipa-to-local-registry.sh to mirror the image
+# 2. Ensure the local registry is accessible at localhost:5000
+#
+# To customize the tag, edit the image field below before applying.
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: freeipa
+  namespace: identity
+spec:
+  template:
+    spec:
+      containers:
+      - name: freeipa-server
+        # Updated to use local registry mirror instead of docker.io/freeipa/freeipa-server:latest
+        # Default tag: almalinux-9 (AlmaLinux 9 based, stable and recommended)
+        # Alternative tags: fedora-39, rocky-9, centos-stream-9
+        # To use a different tag, update this line and re-mirror the image
+        image: localhost:5000/freeipa-server:almalinux-9
+        
+        # Keep imagePullPolicy as IfNotPresent for local registry
+        # This avoids unnecessary pulls after the first successful pull
+        imagePullPolicy: IfNotPresent
+
+---
+# Optional: Add imagePullSecrets if your local registry requires authentication
+# Uncomment and configure the secret below if needed
+#
+# apiVersion: v1
+# kind: Secret
+# metadata:
+#   name: local-registry-creds
+#   namespace: identity
+# type: kubernetes.io/dockerconfigjson
+# data:
+#   .dockerconfigjson: <base64-encoded-docker-config>
+#
+# Then uncomment the imagePullSecrets section in the patch above:
+#
+# apiVersion: apps/v1
+# kind: StatefulSet
+# metadata:
+#   name: freeipa
+#   namespace: identity
+# spec:
+#   template:
+#     spec:
+#       imagePullSecrets:
+#       - name: local-registry-creds
+#       containers:
+#       - name: freeipa-server
+#         image: localhost:5000/freeipa-server:almalinux-9
+#         imagePullPolicy: IfNotPresent

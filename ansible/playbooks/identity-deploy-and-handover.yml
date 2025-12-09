@@ -57,6 +57,16 @@
     postgresql_image_registry: docker.io
     postgresql_image_repository: postgres
     postgresql_image_tag: "11"
+    
+    # FreeIPA image mirroring configuration (optional)
+    # Enable to mirror FreeIPA image from quay.io to local registry and update StatefulSet
+    # This resolves Docker Hub authentication and rate limiting issues
+    freeipa_mirror_image: false
+    freeipa_image_tag: "almalinux-9"
+    freeipa_source_repo: "quay.io/freeipa/freeipa-server"
+    freeipa_local_registry: "localhost:5000"
+    freeipa_mirror_script: "{{ repo_root }}/scripts/mirror-freeipa-to-local-registry.sh"
+    freeipa_image_patch: "{{ repo_root }}/manifests/identity/overlays/mirror-image-patch.yaml"
 
   tasks:
     - name: Ensure required binaries are present (kubectl, helm)
@@ -266,6 +276,128 @@
         KUBECONFIG: /etc/kubernetes/admin.conf
       register: freeipa_node_selector
       failed_when: false
+
+    - name: "Optional: Mirror FreeIPA image to local registry and apply patch"
+      when: 
+        - freeipa_manifest_stat.stat.exists
+        - freeipa_mirror_image | default(false) | bool
+      block:
+        - name: Check if mirror script exists
+          stat:
+            path: "{{ freeipa_mirror_script }}"
+          register: mirror_script_stat
+
+        - name: Fail if mirror script not found
+          fail:
+            msg: "FreeIPA mirror script not found at {{ freeipa_mirror_script }}"
+          when: not mirror_script_stat.stat.exists
+
+        - name: Display FreeIPA mirror operation info
+          debug:
+            msg: |
+              ============================================================
+              FreeIPA Image Mirror Operation
+              ============================================================
+              This will mirror the FreeIPA image from {{ freeipa_source_repo }}
+              to local registry {{ freeipa_local_registry }} with tag {{ freeipa_image_tag }}.
+              
+              This resolves Docker Hub authentication and rate limiting issues.
+              ============================================================
+
+        - name: Execute FreeIPA image mirror script
+          shell: |
+            export FREEIPA_TAG="{{ freeipa_image_tag }}"
+            export FREEIPA_SOURCE_REPO="{{ freeipa_source_repo }}"
+            export LOCAL_REGISTRY="{{ freeipa_local_registry }}"
+            {{ freeipa_mirror_script }}
+          register: mirror_output
+          become: true
+          changed_when: "'Image copied successfully' in mirror_output.stdout"
+          failed_when: mirror_output.rc != 0
+
+        - name: Display mirror script output
+          debug:
+            msg: "{{ mirror_output.stdout_lines }}"
+          when: mirror_output.stdout_lines is defined
+
+        - name: Check if image patch file exists
+          stat:
+            path: "{{ freeipa_image_patch }}"
+          register: image_patch_stat
+
+        - name: Apply FreeIPA image patch if available
+          shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl apply -f {{ freeipa_image_patch }}
+          environment:
+            KUBECONFIG: /etc/kubernetes/admin.conf
+          register: patch_apply
+          when: image_patch_stat.stat.exists
+          changed_when: "'configured' in patch_apply.stdout"
+
+        - name: Apply FreeIPA image patch inline if patch file not found
+          shell: |
+            KUBECONFIG=/etc/kubernetes/admin.conf kubectl patch statefulset freeipa -n {{ namespace_identity }} --type='strategic' -p '
+            spec:
+              template:
+                spec:
+                  containers:
+                  - name: freeipa-server
+                    image: {{ freeipa_local_registry }}/freeipa-server:{{ freeipa_image_tag }}
+                    imagePullPolicy: IfNotPresent
+            '
+          environment:
+            KUBECONFIG: /etc/kubernetes/admin.conf
+          register: inline_patch
+          when: not image_patch_stat.stat.exists
+          changed_when: "'patched' in inline_patch.stdout"
+
+        - name: Wait for FreeIPA pod to restart with new image
+          shell: |
+            KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} rollout status statefulset/freeipa --timeout=300s || true
+          environment:
+            KUBECONFIG: /etc/kubernetes/admin.conf
+          register: freeipa_rollout
+          failed_when: false
+
+        - name: Check FreeIPA pod status after image change
+          shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl get pods -n {{ namespace_identity }} -l app=freeipa -o wide
+          environment:
+            KUBECONFIG: /etc/kubernetes/admin.conf
+          register: freeipa_pod_status
+          changed_when: false
+
+        - name: Display FreeIPA pod status
+          debug:
+            msg: "{{ freeipa_pod_status.stdout_lines }}"
+
+        - name: Check for ImagePullBackOff or other issues
+          shell: |
+            KUBECONFIG=/etc/kubernetes/admin.conf kubectl describe pod -n {{ namespace_identity }} -l app=freeipa | grep -A 10 "Events:" || true
+          environment:
+            KUBECONFIG: /etc/kubernetes/admin.conf
+          register: freeipa_events
+          changed_when: false
+
+        - name: Display FreeIPA events
+          debug:
+            msg: "{{ freeipa_events.stdout_lines }}"
+          when: freeipa_events.stdout != ""
+
+        - name: FreeIPA mirror operation summary
+          debug:
+            msg: |
+              ============================================================
+              FreeIPA Image Mirror - Operation Complete
+              ============================================================
+              Image: {{ freeipa_local_registry }}/freeipa-server:{{ freeipa_image_tag }}
+              Status: {{ 'Success' if mirror_output.rc == 0 else 'Failed' }}
+              
+              Next steps:
+              1. Monitor pod status: kubectl get pods -n identity -w
+              2. Check logs: kubectl logs -n identity freeipa-0 -f
+              3. Verify service: kubectl describe pod freeipa-0 -n identity
+              
+              For troubleshooting, see: {{ repo_root }}/docs/IDENTITY_FREEIPA_MIRROR.md
+              ============================================================
 
     - name: Inform about missing FreeIPA manifest
       debug:
@@ -776,5 +908,11 @@
           3. Run acceptance tests: {{ repo_root }}/tests/verify-identity-deploy.sh
           4. Replace CHANGEME passwords in {{ keycloak_values_file }} before production use
           5. Configure FreeIPA (if deployed) and integrate with Keycloak LDAP
+          
+          FreeIPA Image Mirroring (optional):
+          - To resolve Docker Hub authentication issues, enable image mirroring:
+            ansible-playbook {{ playbook_dir }}/identity-deploy-and-handover.yml -e freeipa_mirror_image=true
+          - Or run mirror script manually: sudo {{ repo_root }}/scripts/mirror-freeipa-to-local-registry.sh
+          - Documentation: {{ repo_root }}/docs/IDENTITY_FREEIPA_MIRROR.md
           
           For issues, check diagnostics in {{ backup_dir }}/
