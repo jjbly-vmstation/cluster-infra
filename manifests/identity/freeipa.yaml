@@ -104,7 +104,7 @@ spec:
       #   kubernetes.io/hostname: your-masternode
       containers:
       - name: freeipa-server
-        image: freeipa/freeipa-server:latest
+        image: freeipa/freeipa-server:almalinux-10-4.12.2
         imagePullPolicy: IfNotPresent
         env:
         - name: IPA_SERVER_HOSTNAME

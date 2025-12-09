@@ -57,6 +57,14 @@
     postgresql_image_registry: docker.io
     postgresql_image_repository: postgres
     postgresql_image_tag: "11"
+    # FreeIPA image to deploy (explicit tag - avoid :latest)
+    # Example: freeipa/freeipa-server:almalinux-10-4.12.2
+    freeipa_image: "freeipa/freeipa-server:almalinux-10-4.12.2"
+    # Optional registry credentials (leave undefined to skip secret creation)
+    # freeipa_registry_server: "https://index.docker.io/v1/"
+    # freeipa_registry_username: "myuser"
+    # freeipa_registry_password: "${VAULT_OR_ENV_PASSWORD}"
+    # freeipa_registry_email: "ops@example.com"
 
   tasks:
     - name: Ensure required binaries are present (kubectl, helm)
