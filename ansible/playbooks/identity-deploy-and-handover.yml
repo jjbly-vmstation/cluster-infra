@@ -186,8 +186,37 @@
         msg: "Keycloak manifest not found and values file missing; please provide one to automate Keycloak install."
       when: not keycloak_manifest_stat.stat.exists and (keycloak_values_file is not defined or keycloak_values_file == '')
 
+    - name: Wait for Keycloak PostgreSQL rollout (best-effort)
+      shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status statefulset/keycloak-postgresql -n {{ namespace_identity }} --timeout=180s
+      register: keycloak_pg_rollout
+      changed_when: keycloak_pg_rollout.rc == 0
+      failed_when: false
+
+    - name: Attempt recovery for Postgres StatefulSet if rollout failed
+      when: keycloak_pg_rollout.rc != 0
+      block:
+        - name: Scale down Postgres StatefulSet to 0
+          shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} scale sts keycloak-postgresql --replicas=0
+          register: scale_down_pg
+          failed_when: false
+
+        - name: Delete any remaining Postgres pods to ensure fresh recreate
+          shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} delete pod -l app.kubernetes.io/name=postgresql --ignore-not-found
+          register: delete_pg_pods
+          failed_when: false
+
+        - name: Scale up Postgres StatefulSet to 1
+          shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} scale sts keycloak-postgresql --replicas=1
+          register: scale_up_pg
+          failed_when: false
+
+        - name: Wait for Postgres StatefulSet rollout after recovery
+          shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status statefulset/keycloak-postgresql -n {{ namespace_identity }} --timeout=180s
+          register: keycloak_pg_rollout_after
+          failed_when: false
+
     - name: Wait for Keycloak rollout (best-effort)
-      shell: kubectl rollout status statefulset/keycloak -n {{ namespace_identity }} --timeout=180s
+      shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status statefulset/keycloak -n {{ namespace_identity }} --timeout=180s
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
       ignore_errors: true
