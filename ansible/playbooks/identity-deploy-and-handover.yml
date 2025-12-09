@@ -148,7 +148,7 @@
         path: "{{ freeipa_manifest }}"
       register: freeipa_manifest_stat
 
-    - name: Optional: Backup and remove existing identity pods before redeploy (controlled)
+    - name: "Optional: Backup and remove existing identity pods before redeploy (controlled)"
       when: identity_force_replace | default(false) | bool and identity_backup_before_replace | default(true) | bool
       block:
         - name: Create backup directory on controller (root-owned)
