@@ -48,6 +48,11 @@
     # existing identity pods before installing/upgrading. Disabled by default to
     # avoid accidental data loss. Use with caution in production.
     identity_force_replace: false
+    # When true the playbook will attempt to ensure correct ownership on
+    # the PostgreSQL hostPath by either running a privileged Job or delegating
+    # a host chown. This is safe when you control the masternode filesystem.
+    # Default true to ensure recoveries succeed; set to false to disable.
+    enable_postgres_chown: true
     identity_backup_before_replace: true
     
     # Rollout wait timeout in seconds (default: 300s per resource)
@@ -157,7 +162,7 @@
       changed_when: "'created' in keycloak_pv_apply.stdout or 'configured' in keycloak_pv_apply.stdout"
 
     - name: Optionally fix hostPath ownership for PostgreSQL via privileged Job
-      when: enable_postgres_chown | default(false) | bool
+      when: (enable_postgres_chown | default(false) | bool) or (identity_force_replace | default(false) | bool)
       block:
         - name: Render chown job manifest to temporary file
           copy:

@@ -68,3 +68,15 @@ The PV is configured with node affinity to control plane nodes. If you need to s
 - **Backup**: The data in `/srv/identity_data/postgresql` should be backed up regularly
 - **Capacity**: Monitor disk usage; expand the PV if needed (requires cluster downtime)
 - **Performance**: hostPath storage is suitable for single-node or small deployments. For production, consider using a proper storage solution like NFS, Ceph, or cloud-provided block storage.
+
+## Permissions and fsGroup
+
+- The Keycloak PostgreSQL subchart (`helm/keycloak-values.yaml`) configures `securityContext.runAsUser: 999`
+   and `securityContext.fsGroup: 999`. `fsGroup` instructs kubelet to ensure mounted volumes
+   are accessible to the Pod's group which prevents common hostPath permission issues.
+- During a destructive replace or recovery, the `identity-deploy-and-handover.yml` playbook will
+   automatically attempt to repair hostPath ownership by running a short-lived privileged Job
+   (or via a delegated host chown). This behavior is enabled by default (`enable_postgres_chown=true`)
+   and also runs when `identity_force_replace=true`.
+- If your environment uses an NFS export with `root_squash`, in-cluster Jobs cannot change
+   ownership; you must chown on the NFS server or adjust the export mapping.

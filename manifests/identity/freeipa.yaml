@@ -131,6 +131,11 @@ spec:
             add:
             - SYS_TIME
             - NET_ADMIN
+          # Allow the FreeIPA container to manage systemd/cgroup resources. FreeIPA
+          # runs systemd inside the container and needs elevated privileges to
+          # operate correctly on many host kernels. This grants the container
+          # privileged mode; keep this limited to infra/control-plane nodes.
+          privileged: true
         volumeMounts:
         - name: freeipa-data
           mountPath: /data
@@ -169,6 +174,8 @@ spec:
         hostPath:
           path: /sys/fs/cgroup
           type: Directory
+          # The cgroup mount needs to be writable for systemd inside the
+          # FreeIPA container. Allow read-write by not marking readOnly.
       - name: tmp
         emptyDir: {}
       - name: run
