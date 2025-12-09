@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - PostgreSQL Rollout Timeout (2025-12-09)
+
+- **PostgreSQL configuration compatibility**: Fixed incompatibility between official `postgres:11` image and Bitnami-specific Helm chart settings
+  - Disabled `volumePermissions.enabled` (not supported by official postgres image)
+  - Changed `securityContext` from UID 1001 (Bitnami) to UID 999 (official postgres user)
+  - Updated playbook to create PostgreSQL directory with ownership `999:999` instead of `root:root`
+- **Rollout timeout**: Increased default `rollout_wait_timeout` from 180s to 300s to accommodate slower PostgreSQL initialization
+- **Root cause**: The keycloak-values.yaml was using the official `postgres:11` image but had Bitnami PostgreSQL chart-specific configuration that was incompatible, causing the StatefulSet to fail during rollout
+
 ### Added - Identity Deployment Refactoring (2025-12-09)
 
 #### Infrastructure

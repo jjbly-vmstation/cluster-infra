@@ -50,13 +50,18 @@
     identity_force_replace: false
     identity_backup_before_replace: true
     
-    # Rollout wait timeout in seconds (default: 180s per resource)
-    rollout_wait_timeout: 180
+    # Rollout wait timeout in seconds (default: 300s per resource)
+    # Increased from 180s to 300s to accommodate PostgreSQL initialization on slower systems
+    rollout_wait_timeout: 300
     
     # PostgreSQL image configuration
     postgresql_image_registry: docker.io
     postgresql_image_repository: postgres
     postgresql_image_tag: "11"
+    # PostgreSQL user/group IDs for the official postgres image (UID/GID 999)
+    # This must match the securityContext in keycloak-values.yaml
+    postgresql_uid: "999"
+    postgresql_gid: "999"
     # FreeIPA image to deploy (explicit tag - avoid :latest)
     # Example: freeipa/freeipa-server:almalinux-10-4.12.2
     freeipa_image: "freeipa/freeipa-server:almalinux-10-4.12.2"
@@ -118,15 +123,15 @@
 
     - name: Create identity data directories for persistent storage
       file:
-        path: "{{ item }}"
+        path: "{{ item.path }}"
         state: directory
-        mode: '0755'
-        owner: root
-        group: root
+        mode: "{{ item.mode }}"
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
       become: true
       loop:
-        - "{{ identity_data_dir }}/postgresql"
-        - "{{ identity_data_dir }}/freeipa"
+        - { path: "{{ identity_data_dir }}/postgresql", mode: '0755', owner: "{{ postgresql_uid }}", group: "{{ postgresql_gid }}" }
+        - { path: "{{ identity_data_dir }}/freeipa", mode: '0755', owner: 'root', group: 'root' }
 
     - name: Ensure nodes are schedulable (uncordon all nodes)
       shell: |
