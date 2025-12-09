@@ -139,10 +139,16 @@
       when: password_check is defined and password_check.stdout != ""
 
     - name: Install Keycloak via Helm if manifest missing but values file exists
+      # Force a known-good Postgres image for environments that cannot pull the
+      # Bitnami tag (registry issues, removed tag, or proxy returning HTML errors).
       shell: >-
         helm repo add codecentric https://codecentric.github.io/helm-charts >/dev/null 2>&1 || true;
         helm repo update >/dev/null 2>&1;
-        helm upgrade --install keycloak {{ keycloak_helm_chart }} -n {{ namespace_identity }} -f {{ keycloak_values_file }} --create-namespace
+        helm upgrade --install keycloak {{ keycloak_helm_chart }} -n {{ namespace_identity }} -f {{ keycloak_values_file }} --create-namespace \
+          --set postgresql.image.registry=docker.io \
+          --set postgresql.image.repository=postgres \
+          --set postgresql.image.tag=11 \
+          --set postgresql.image.pullPolicy=IfNotPresent
       when: not keycloak_manifest_stat.stat.exists and (keycloak_values_file is defined)
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf

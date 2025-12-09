@@ -41,6 +41,22 @@ postgresql:
       enabled: true
       storageClass: "manual"  # Use the manual StorageClass created by the playbook
       size: 10Gi
+  # Image overrides: if Docker Hub pull fails (rate limiting, missing tag, or proxy),
+  # you can override the image repository/tag here or configure image pull secrets.
+  # Examples:
+  # image:
+  #   registry: docker.io
+  #   repository: bitnami/postgresql
+  #   tag: 11.14.0-debian-10-r28
+  #   pullPolicy: IfNotPresent
+  # imagePullSecrets:
+  #   - name: regcred
+  #
+  # If you need to authenticate to Docker Hub (or another registry), create
+  # a docker-registry secret and set its name under `imagePullSecrets`:
+  # kubectl create secret docker-registry regcred \
+  #   --docker-server=https://index.docker.io/v1/ \
+  #   --docker-username=<user> --docker-password=<pass> --docker-email=<email> -n identity
 
 # Persistence for Keycloak itself (themes, providers, etc)
 persistence:
