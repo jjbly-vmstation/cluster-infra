@@ -37,6 +37,11 @@
     
     # Identity data storage location (for PostgreSQL persistent data)
     identity_data_dir: /srv/identity_data
+    # Control destructive replacement behavior. Set to true to back up and remove
+    # existing identity pods before installing/upgrading. Disabled by default to
+    # avoid accidental data loss. Use with caution in production.
+    identity_force_replace: false
+    identity_backup_before_replace: true
 
   tasks:
     - name: Ensure required binaries are present (kubectl, helm)
@@ -60,6 +65,12 @@
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
       changed_when: false
+
+    - name: Detect infra node (control-plane/masternode) for infra scheduling
+      shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl get nodes -l node-role.kubernetes.io/control-plane -o jsonpath='{.items[0].metadata.name}'
+      register: infra_node
+      changed_when: false
+      failed_when: infra_node.rc != 0
 
     - name: Create identity data directories for PostgreSQL storage
       file:
@@ -115,6 +126,53 @@
         path: "{{ keycloak_manifest }}"
       register: keycloak_manifest_stat
 
+    - name: Optional: Backup and remove existing identity pods before redeploy (controlled)
+      when: identity_force_replace | default(false) | bool
+      block:
+        - name: Create backup directory on controller (root-owned)
+          file:
+            path: "{{ backup_dir }}"
+            state: directory
+            owner: root
+            group: root
+            mode: '0700'
+          become: true
+
+        - name: Backup Postgres hostPath data (best-effort)
+          shell: >-
+            set -e; ts=$(date -u +%Y%m%dT%H%M%SZ); \
+            if [ -d "{{ identity_data_dir }}/postgresql" ]; then \
+              tar -C "{{ identity_data_dir }}" -czf "{{ backup_dir }}/identity-postgres-data-${ts}.tar.gz" postgresql || true; \
+            else echo "No hostPath data to back up at {{ identity_data_dir }}/postgresql"; fi
+          become: true
+          register: identity_backup
+          changed_when: false
+
+        - name: Scale down Keycloak StatefulSet to 0 (if present)
+          shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} scale sts keycloak --replicas=0 --timeout=60s || true
+          register: scale_down_keycloak
+          failed_when: false
+
+        - name: Scale down Postgres StatefulSet to 0 (if present)
+          shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} scale sts keycloak-postgresql --replicas=0 --timeout=60s || true
+          register: scale_down_postgres
+          failed_when: false
+
+        - name: Delete any remaining Keycloak/Postgres pods (force removal)
+          shell: >-
+            KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} delete pod -l app.kubernetes.io/name=keycloak --ignore-not-found || true; \
+            KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} delete pod -l app.kubernetes.io/name=postgresql --ignore-not-found || true
+          register: delete_identity_pods
+          failed_when: false
+
+        - name: Wait for identity pods to be fully removed
+          shell: >-
+            KUBECONFIG=/etc/kubernetes/admin.conf bash -c "for i in {1..60}; do if [ -z \"$(kubectl -n {{ namespace_identity }} get pods -o name 2>/dev/null)\" ]; then exit 0; fi; sleep 1; done; echo 'timeout' && exit 1"
+          register: wait_for_pod_removal
+          failed_when: wait_for_pod_removal.rc != 0
+          retries: 1
+          until: wait_for_pod_removal.rc == 0
+
     - name: Apply Keycloak manifest
       shell: kubectl apply -f {{ keycloak_manifest }}
       when: keycloak_manifest_stat.stat.exists
@@ -148,7 +206,9 @@
           --set postgresql.image.registry=docker.io \
           --set postgresql.image.repository=postgres \
           --set postgresql.image.tag=11 \
-          --set postgresql.image.pullPolicy=IfNotPresent
+          --set postgresql.image.pullPolicy=IfNotPresent \
+          {{ ('--set keycloak.nodeSelector.kubernetes\\.io/hostname=' + infra_node.stdout) if infra_node.stdout is defined else '' }} \
+          {{ ('--set postgresql.nodeSelector.kubernetes\\.io/hostname=' + infra_node.stdout) if infra_node.stdout is defined else '' }}
       when: not keycloak_manifest_stat.stat.exists and (keycloak_values_file is defined)
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
@@ -236,7 +296,8 @@
 
     - name: Install/upgrade cert-manager Helm chart (installCRDs=false)
       shell: >-
-        KUBECONFIG=/etc/kubernetes/admin.conf helm upgrade --install cert-manager jetstack/cert-manager --namespace {{ namespace_cert_manager }} --create-namespace --set installCRDs=false
+        KUBECONFIG=/etc/kubernetes/admin.conf helm upgrade --install cert-manager jetstack/cert-manager --namespace {{ namespace_cert_manager }} --create-namespace --set installCRDs=false \
+          {{ '--set nodeSelector.kubernetes\\.io/hostname=' + infra_node.stdout if infra_node.stdout is defined else '' }}
       register: certmgr_helm
 
     - name: Wait for cert-manager deployments to be ready (with diagnostics on failure)

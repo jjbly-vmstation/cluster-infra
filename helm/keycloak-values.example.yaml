@@ -63,6 +63,18 @@ persistence:
   enabled: false
   size: 10Gi
 
+# Node scheduling examples: if you want Keycloak and its DB to always run on a
+# single infra node (for example, your masternode/control-plane), add a
+# nodeSelector here or set it via Helm --set flags in the playbook.
+#
+# Example (replace 'masternode' with your node name from `kubectl get nodes`):
+# keycloak:
+#   nodeSelector:
+#     kubernetes.io/hostname: masternode
+# postgresql:
+#   nodeSelector:
+#     kubernetes.io/hostname: masternode
+
 # Ingress (optional) - configure your ingress controller and host
 ingress:
   enabled: false
