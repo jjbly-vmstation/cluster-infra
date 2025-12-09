@@ -1,0 +1,10 @@
+---
+# Manual StorageClass for Keycloak PostgreSQL
+# This StorageClass is used for manual PV provisioning with hostPath or local volumes
+# The provisioner is set to kubernetes.io/no-provisioner to allow manual binding
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: manual
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
