@@ -46,6 +46,18 @@ postgresql:
     repository: postgres
     tag: "11"
     pullPolicy: IfNotPresent
+  # Enable volume permission initContainer so mounted hostPath directories
+  # are fixed to the expected UID/GID before Postgres starts. This is
+  # safer than changing host ownership from the playbook and is supported
+  # by the Bitnami subchart.
+  volumePermissions:
+    enabled: true
+  # Ensure the primary container and filesystem group use the expected UID
+  # for Bitnami Postgres (commonly 1001). This sets fsGroup on mounts so
+  # Kubernetes adjusts group ownership for the container process.
+  securityContext:
+    runAsUser: 1001
+    fsGroup: 1001
   primary:
     persistence:
       enabled: true
