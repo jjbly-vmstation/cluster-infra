@@ -203,6 +203,12 @@ Topics covered:
 - Troubleshooting guide
 - Best practices
 
+#### Identity Services
+
+- **FreeIPA Image Mirror Guide**: [docs/IDENTITY_FREEIPA_MIRROR.md](docs/IDENTITY_FREEIPA_MIRROR.md) - Comprehensive guide for resolving FreeIPA ImagePullBackOff issues
+- **FreeIPA Quick Fix**: [docs/IDENTITY_FREEIPA_QUICKSTART.md](docs/IDENTITY_FREEIPA_QUICKSTART.md) - Quick reference for immediate fixes
+- **Identity Backup**: [docs/IDENTITY_BACKUP.md](docs/IDENTITY_BACKUP.md) - Identity stack backup and recovery procedures
+
 ## Configuration
 
 ### Key Variables
@@ -254,6 +260,19 @@ ansible-playbook playbooks/deploy-cluster.yaml --check -e "manifests_path=/tmp/m
 ## Troubleshooting
 
 ### Common Issues
+
+**FreeIPA ImagePullBackOff:**
+```bash
+# Quick fix: Mirror image to local registry
+sudo /opt/vmstation-org/cluster-infra/scripts/mirror-freeipa-to-local-registry.sh
+kubectl apply -f manifests/identity/overlays/mirror-image-patch.yaml
+
+# Or use Ansible automation
+ansible-playbook ansible/playbooks/identity-deploy-and-handover.yml \
+  -e freeipa_mirror_image=true
+
+# See docs/IDENTITY_FREEIPA_QUICKSTART.md for details
+```
 
 **Nodes not becoming Ready:**
 ```bash
