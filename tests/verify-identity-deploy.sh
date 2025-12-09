@@ -4,8 +4,9 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+# SCRIPT_DIR and REPO_ROOT are reserved for future use if needed to reference repository files
+# SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # Colors for output
 RED='\033[0;31m'
@@ -125,7 +126,6 @@ fi
 
 # Test 8: Check cert-manager deployments
 log_info "Test 8: Checking cert-manager deployments..."
-CERTMGR_READY=true
 for deployment in cert-manager cert-manager-webhook cert-manager-cainjector; do
     if kubectl get deployment "$deployment" -n cert-manager &> /dev/null; then
         READY=$(kubectl get deployment "$deployment" -n cert-manager -o jsonpath='{.status.readyReplicas}')
@@ -134,11 +134,9 @@ for deployment in cert-manager cert-manager-webhook cert-manager-cainjector; do
             test_pass "cert-manager deployment '$deployment' is ready ($READY/$DESIRED)"
         else
             test_fail "cert-manager deployment '$deployment' is not ready ($READY/$DESIRED)"
-            CERTMGR_READY=false
         fi
     else
         test_fail "cert-manager deployment '$deployment' does not exist"
-        CERTMGR_READY=false
     fi
 done
 
