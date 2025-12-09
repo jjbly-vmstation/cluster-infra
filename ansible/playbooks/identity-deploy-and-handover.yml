@@ -183,12 +183,14 @@
                         command: ["/bin/sh", "-c", "chown -R {{ postgresql_uid }}:{{ postgresql_gid }} {{ identity_data_dir }}/postgresql && ls -ld {{ identity_data_dir }}/postgresql && echo DONE"]
                         securityContext:
                           privileged: true
+                        volumeMounts:
+                          - name: host-postgres
+                            mountPath: {{ identity_data_dir }}/postgresql
                     volumes:
                       - name: host-postgres
                         hostPath:
                           path: {{ identity_data_dir }}/postgresql
-                          type: Directory
-                    volumesFrom: []
+                          type: DirectoryOrCreate
           become: true
 
         - name: Apply chown Job manifest
