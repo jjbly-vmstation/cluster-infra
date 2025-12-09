@@ -52,7 +52,7 @@
     
     # Rollout wait timeout in seconds (default: 300s per resource)
     # Increased from 180s to 300s to accommodate PostgreSQL initialization on slower systems
-    rollout_wait_timeout: 300
+    rollout_wait_timeout: 120
     
     # PostgreSQL image configuration
     postgresql_image_registry: docker.io
