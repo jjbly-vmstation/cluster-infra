@@ -148,6 +148,33 @@
         KUBECONFIG: /etc/kubernetes/admin.conf
       register: keycloak_helm_install
 
+    - name: Check Keycloak PostgreSQL PVC status (non-fatal)
+      shell: >-
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl get pvc data-keycloak-postgresql-0 -n {{ namespace_identity }} -o jsonpath='{.status.phase}' || true
+      register: keycloak_postgres_pvc_phase
+      changed_when: false
+
+    - name: Find Available PVs labeled for Keycloak Postgres
+      shell: >-
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl get pv -l app=keycloak,component=postgresql -o jsonpath='{range .items[?(@.status.phase=="Available")]}{.metadata.name}{"\n"}{end}' || true
+      register: keycloak_postgres_available_pvs
+      changed_when: false
+
+    - name: Bind an Available PV to Keycloak PVC when PVC is Pending
+      shell: >-
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl patch pv {{ item }} -p '{"spec":{"claimRef":{"namespace":"{{ namespace_identity }}","name":"data-keycloak-postgresql-0"}}}' --type=merge
+      loop: "{{ keycloak_postgres_available_pvs.stdout_lines }}"
+      when: keycloak_postgres_pvc_phase.stdout == 'Pending' and keycloak_postgres_available_pvs.stdout != ''
+      register: keycloak_pv_bind
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Verify Keycloak PVC after binding attempt
+      shell: >-
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl get pvc data-keycloak-postgresql-0 -n {{ namespace_identity }} -o wide
+      register: keycloak_postgres_pvc_verify
+      changed_when: false
+
     - name: Warn if neither manifest nor values file available for Keycloak
       debug:
         msg: "Keycloak manifest not found and values file missing; please provide one to automate Keycloak install."
