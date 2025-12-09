@@ -15,6 +15,10 @@
     keycloak_manifest: "/opt/vmstation-org/cluster-infra/manifests/keycloak.yaml"
     keycloak_helm_chart: "codecentric/keycloak"
     keycloak_values_file: "/opt/vmstation-org/cluster-infra/helm/keycloak-values.yaml"
+    
+    # Storage manifests for Keycloak PostgreSQL
+    storage_class_manifest: "/opt/vmstation-org/cluster-infra/manifests/identity/storage-class-manual.yaml"
+    keycloak_pv_manifest: "/opt/vmstation-org/cluster-infra/manifests/identity/keycloak-postgresql-pv.yaml"
 
     # CA sources (from your pre-generate step in cluster-setup)
     ca_cert_src: "/opt/vmstation-org/cluster-setup/scripts/certs/ca.cert.pem"
@@ -30,6 +34,9 @@
 
     # Backup location on the controller (root-owned)
     backup_dir: /root/identity-backup
+    
+    # Identity data storage location (for PostgreSQL persistent data)
+    identity_data_dir: /srv/identity_data
 
   tasks:
     - name: Ensure required binaries are present (kubectl, helm)
@@ -53,6 +60,29 @@
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
       changed_when: false
+
+    - name: Create identity data directories for PostgreSQL storage
+      file:
+        path: "{{ identity_data_dir }}/postgresql"
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+      become: true
+
+    - name: Deploy StorageClass for Keycloak PostgreSQL
+      shell: kubectl apply -f {{ storage_class_manifest }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: storage_class_apply
+      when: storage_class_manifest is defined
+
+    - name: Deploy PersistentVolume for Keycloak PostgreSQL
+      shell: kubectl apply -f {{ keycloak_pv_manifest }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: keycloak_pv_apply
+      when: keycloak_pv_manifest is defined
 
     - name: Deploy FreeIPA from manifest if present
       stat:
@@ -258,6 +288,8 @@
     - name: Show results
       debug:
         msg: |
+          StorageClass applied: {{ storage_class_apply.stdout | default('not applied') }}
+          Keycloak PV applied: {{ keycloak_pv_apply.stdout | default('not applied') }}
           FreeIPA applied: {{ freeipa_apply.stdout | default('not applied') }}
           Keycloak applied: {{ keycloak_apply.stdout | default(keycloak_helm_install.stdout | default('not applied')) }}
           Secret apply stdout: {{ secret_apply.stdout }}
@@ -268,3 +300,8 @@
         msg: |
           Identity stack deployment attempted. Verify FreeIPA and Keycloak pods are Running and
           that cert-manager is installed and healthy. The CA backup (if available) was stored at {{ backup_dir }}/identity-ca-backup.tar.gz
+          
+          Storage configuration:
+          - StorageClass 'manual' has been created for manual PV provisioning
+          - PersistentVolume 'keycloak-postgresql-pv' (10Gi) created at {{ identity_data_dir }}/postgresql
+          - Keycloak PostgreSQL PVC should now bind successfully

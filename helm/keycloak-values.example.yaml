@@ -2,6 +2,13 @@
 # Copy to keycloak-values.yaml and replace placeholders before running the playbook.
 # NOTE: This is a minimal example for non-production testing. For production, use
 # a proper external database, persistent storage, and secret management.
+#
+# STORAGE CONFIGURATION:
+# The identity-deploy-and-handover.yml playbook creates:
+# - A 'manual' StorageClass for manual PV provisioning
+# - A PersistentVolume (keycloak-postgresql-pv) at /srv/identity_data/postgresql
+# This resolves the "PVC data-keycloak-postgresql-0 Pending" issue by providing
+# storage for the PostgreSQL database used by Keycloak.
 
 replicaCount: 1
 
@@ -16,11 +23,26 @@ service:
   port: 8080
 
 # Use internal DB (not recommended for production)
+# For development/testing with h2, set vendor: h2 and disable postgresql
+# For production, use postgresql with persistent storage
 database:
-  vendor: h2
+  vendor: postgres
   # For production, configure externalPostgres with host/port/database/user/password
 
-# Persistence
+# PostgreSQL subchart configuration (when using internal PostgreSQL)
+postgresql:
+  enabled: true
+  auth:
+    username: keycloak
+    password: "CHANGEME_DB_PASSWORD"
+    database: keycloak
+  primary:
+    persistence:
+      enabled: true
+      storageClass: "manual"  # Use the manual StorageClass created by the playbook
+      size: 10Gi
+
+# Persistence for Keycloak itself (themes, providers, etc)
 persistence:
   enabled: false
   size: 10Gi
