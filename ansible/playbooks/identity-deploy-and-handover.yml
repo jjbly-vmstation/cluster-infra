@@ -813,6 +813,26 @@
       register: certmgr_helm
       become: true
 
+    - name: Patch cert-manager cainjector with nodeSelector for masternode
+      shell: >-
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl patch deployment cert-manager-cainjector 
+        -n {{ namespace_cert_manager }} 
+        -p '{"spec":{"template":{"spec":{"nodeSelector":{"kubernetes.io/hostname":"{{ infra_node }}"}}}}}'
+      register: certmgr_cainjector_patch
+      failed_when: false
+      changed_when: "'patched' in certmgr_cainjector_patch.stdout"
+      become: true
+
+    - name: Patch cert-manager webhook with nodeSelector for masternode
+      shell: >-
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl patch deployment cert-manager-webhook 
+        -n {{ namespace_cert_manager }} 
+        -p '{"spec":{"template":{"spec":{"nodeSelector":{"kubernetes.io/hostname":"{{ infra_node }}"}}}}}'
+      register: certmgr_webhook_patch
+      failed_when: false
+      changed_when: "'patched' in certmgr_webhook_patch.stdout"
+      become: true
+
     - name: Wait for cert-manager deployments to be ready (with diagnostics on failure)
       block:
         - name: Wait for cert-manager controller rollout
@@ -959,6 +979,149 @@
         KUBECONFIG: /etc/kubernetes/admin.conf
       register: issuer_apply
       become: true
+
+    - name: Deploy Keycloak NodePort Service for desktop access
+      shell: >-
+        cat <<EOF | kubectl apply -f -
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: keycloak-nodeport
+          namespace: {{ namespace_identity }}
+          labels:
+            app: keycloak
+            component: nodeport
+          annotations:
+            description: "NodePort service for desktop access to Keycloak"
+        spec:
+          type: NodePort
+          ports:
+            - name: http
+              port: 80
+              targetPort: 8080
+              nodePort: 30080
+              protocol: TCP
+            - name: https
+              port: 8443
+              targetPort: 8443
+              nodePort: 30443
+              protocol: TCP
+          selector:
+            app.kubernetes.io/name: keycloak
+        EOF
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: keycloak_nodeport_apply
+      changed_when: "'created' in keycloak_nodeport_apply.stdout or 'configured' in keycloak_nodeport_apply.stdout"
+      become: true
+
+    - name: Setup Keycloak admin user and desktop access
+      block:
+        - name: Generate secure admin password if not provided
+          shell: openssl rand -base64 32
+          register: generated_admin_password
+          when: keycloak_admin_password is not defined or keycloak_admin_password == ''
+          changed_when: false
+
+        - name: Set admin password variable
+          set_fact:
+            admin_password: "{{ keycloak_admin_password | default(generated_admin_password.stdout) }}"
+
+        - name: Wait for Keycloak pod to be ready
+          shell: >-
+            KUBECONFIG=/etc/kubernetes/admin.conf kubectl wait --for=condition=ready 
+            pod/keycloak-0 -n {{ namespace_identity }} --timeout=300s
+          register: keycloak_ready
+          failed_when: keycloak_ready.rc != 0
+          become: true
+
+        - name: Check if admin user exists in Keycloak
+          shell: >-
+            KUBECONFIG=/etc/kubernetes/admin.conf kubectl exec -n {{ namespace_identity }} keycloak-0 -- 
+            /opt/jboss/keycloak/bin/kcadm.sh get users -r master --fields username 2>/dev/null | 
+            grep -c '"admin"' || echo "0"
+          register: admin_user_check
+          changed_when: false
+          failed_when: false
+          become: true
+
+        - name: Create Keycloak admin user
+          shell: >-
+            KUBECONFIG=/etc/kubernetes/admin.conf kubectl exec -n {{ namespace_identity }} keycloak-0 -- 
+            /opt/jboss/keycloak/bin/add-user-keycloak.sh 
+            -r master -u admin -p "{{ admin_password }}"
+          when: admin_user_check.stdout == "0"
+          register: admin_user_create
+          become: true
+
+        - name: Restart Keycloak pod to apply admin user
+          shell: >-
+            KUBECONFIG=/etc/kubernetes/admin.conf kubectl delete pod keycloak-0 -n {{ namespace_identity }}
+          when: admin_user_check.stdout == "0" and admin_user_create.rc == 0
+          register: keycloak_restart
+          become: true
+
+        - name: Wait for Keycloak pod restart
+          shell: >-
+            KUBECONFIG=/etc/kubernetes/admin.conf kubectl wait --for=condition=ready 
+            pod/keycloak-0 -n {{ namespace_identity }} --timeout=300s
+          when: keycloak_restart is defined and keycloak_restart.rc == 0
+          register: keycloak_reready
+          become: true
+
+        - name: Get cluster node IPs for access URLs
+          shell: >-
+            KUBECONFIG=/etc/kubernetes/admin.conf kubectl get nodes 
+            -o jsonpath='{.items[*].status.addresses[?(@.type=="InternalIP")].address}'
+          register: node_ips
+          changed_when: false
+          become: true
+
+        - name: Save Keycloak admin credentials to secure location
+          copy:
+            dest: "{{ backup_dir }}/keycloak-admin-credentials.txt"
+            content: |
+              Keycloak Admin Credentials
+              Generated: {{ ansible_date_time.iso8601 }}
+              
+              Username: admin
+              Password: {{ admin_password }}
+              
+              Access URLs (from desktop):
+              {% for ip in node_ips.stdout.split() %}
+              - http://{{ ip }}:30080/auth
+              {% endfor %}
+              
+              Admin Console:
+              {% for ip in node_ips.stdout.split() %}
+              - http://{{ ip }}:30080/auth/admin
+              {% endfor %}
+            owner: root
+            group: root
+            mode: '0600'
+          become: true
+
+        - name: Display Keycloak access information
+          debug:
+            msg: |
+              ============================================================
+              Keycloak Admin Setup Complete!
+              ============================================================
+              Username: admin
+              Password: {{ admin_password }}
+              
+              Access from desktop:
+              {% for ip in node_ips.stdout.split() %}
+              - http://{{ ip }}:30080/auth
+              {% endfor %}
+              
+              Admin Console:
+              {% for ip in node_ips.stdout.split() %}
+              - http://{{ ip }}:30080/auth/admin
+              {% endfor %}
+              
+              Credentials saved to: {{ backup_dir }}/keycloak-admin-credentials.txt
+              ============================================================
 
     - name: Display backup files and checksums (if created)
       block:
