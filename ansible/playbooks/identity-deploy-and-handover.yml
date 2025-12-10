@@ -1052,6 +1052,7 @@
             -r master -u admin -p "{{ admin_password }}"
           when: admin_user_check.stdout == "0"
           register: admin_user_create
+          no_log: true
           become: true
 
         - name: Restart Keycloak pod to apply admin user
@@ -1065,7 +1066,7 @@
           shell: >-
             KUBECONFIG=/etc/kubernetes/admin.conf kubectl wait --for=condition=ready 
             pod/keycloak-0 -n {{ namespace_identity }} --timeout=300s
-          when: keycloak_restart is defined and keycloak_restart.rc == 0
+          when: keycloak_restart is defined and keycloak_restart is not skipped and keycloak_restart.rc == 0
           register: keycloak_reready
           become: true
 
