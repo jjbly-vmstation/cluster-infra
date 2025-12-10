@@ -15,7 +15,7 @@ metadata:
     component: postgresql
 spec:
   capacity:
-    storage: 10Gi
+    storage: 8Gi
   accessModes:
     - ReadWriteOnce
   persistentVolumeReclaimPolicy: Retain

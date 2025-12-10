@@ -9,9 +9,8 @@ metadata:
   name: keycloak-postgresql
   namespace: identity
   labels:
-    app.kubernetes.io/name: postgresql
-    app.kubernetes.io/instance: keycloak
-    app.kubernetes.io/component: database
+    app: keycloak
+    component: postgresql
 spec:
   type: ClusterIP
   ports:
@@ -20,8 +19,8 @@ spec:
       targetPort: 5432
       protocol: TCP
   selector:
-    app.kubernetes.io/name: postgresql
-    app.kubernetes.io/instance: keycloak
+    app: keycloak
+    component: postgresql
 ---
 apiVersion: v1
 kind: Secret
@@ -29,14 +28,11 @@ metadata:
   name: keycloak-postgresql
   namespace: identity
   labels:
-    app.kubernetes.io/name: postgresql
-    app.kubernetes.io/instance: keycloak
-    app.kubernetes.io/component: database
+    app: keycloak
+    component: postgresql
 type: Opaque
 stringData:
-  POSTGRES_USER: keycloak
-  POSTGRES_PASSWORD: CHANGEME_DB_PASSWORD
-  POSTGRES_DB: keycloak
+  postgresql-password: CHANGEME_DB_PASSWORD
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -44,42 +40,42 @@ metadata:
   name: keycloak-postgresql
   namespace: identity
   labels:
-    app.kubernetes.io/name: postgresql
-    app.kubernetes.io/instance: keycloak
-    app.kubernetes.io/component: database
+    app: keycloak
+    component: postgresql
 spec:
   serviceName: keycloak-postgresql
   replicas: 1
+  podManagementPolicy: OrderedReady
+  revisionHistoryLimit: 10
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
   selector:
     matchLabels:
-      app.kubernetes.io/name: postgresql
-      app.kubernetes.io/instance: keycloak
+      app: keycloak
+      component: postgresql
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: postgresql
-        app.kubernetes.io/instance: keycloak
+        app: keycloak
+        component: postgresql
     spec:
+      nodeSelector:
+        kubernetes.io/hostname: masternode
       containers:
       - name: postgresql
         image: docker.io/postgres:11
         imagePullPolicy: IfNotPresent
         env:
         - name: POSTGRES_USER
-          valueFrom:
-            secretKeyRef:
-              name: keycloak-postgresql
-              key: POSTGRES_USER
+          value: "keycloak"
         - name: POSTGRES_PASSWORD
           valueFrom:
             secretKeyRef:
               name: keycloak-postgresql
-              key: POSTGRES_PASSWORD
+              key: postgresql-password
         - name: POSTGRES_DB
-          valueFrom:
-            secretKeyRef:
-              name: keycloak-postgresql
-              key: POSTGRES_DB
+          value: "keycloak"
         - name: PGDATA
           value: /var/lib/postgresql/data/pgdata
         ports:
@@ -122,12 +118,15 @@ spec:
   - metadata:
       name: data
       labels:
-        app.kubernetes.io/name: postgresql
-        app.kubernetes.io/instance: keycloak
+        app: keycloak
+        component: postgresql
     spec:
       accessModes:
       - ReadWriteOnce
       storageClassName: manual
+      volumeMode: Filesystem
       resources:
         requests:
-          storage: 10Gi
+          storage: 8Gi
+  updateStrategy:
+    type: RollingUpdate
