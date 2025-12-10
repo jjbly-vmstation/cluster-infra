@@ -1,8 +1,30 @@
 diff --git a/ansible/playbooks/identity-deploy-and-handover.yml b/ansible/playbooks/identity-deploy-and-handover.yml
-index 79cb02b..d7a1b89 100644
+index 79cb02b..ee3b507 100644
 --- a/ansible/playbooks/identity-deploy-and-handover.yml
 +++ b/ansible/playbooks/identity-deploy-and-handover.yml
-@@ -99,6 +99,7 @@
+@@ -21,6 +21,7 @@
+     keycloak_manifest: "{{ repo_root }}/manifests/keycloak.yaml"
+     keycloak_helm_chart: "codecentric/keycloak"
+     keycloak_values_file: "{{ repo_root }}/helm/keycloak-values.yaml"
++    postgresql_manifest: "{{ repo_root }}/manifests/identity/postgresql-statefulset.yaml"
+     
+     # Storage manifests for Keycloak PostgreSQL
+     storage_class_manifest: "{{ repo_root }}/manifests/identity/storage-class-manual.yaml"
+@@ -64,11 +65,11 @@
+     # Increased from 180s to 300s to accommodate PostgreSQL initialization on slower systems
+     rollout_wait_timeout: 120
+     
+-    # PostgreSQL image configuration
++    # PostgreSQL image configuration  
+     postgresql_image_registry: docker.io
+     postgresql_image_repository: postgres
+     postgresql_image_tag: "11"
+-    # PostgreSQL user/group IDs for the official postgres image (UID/GID 999)
++    # PostgreSQL user/group IDs for the postgres:11 image (UID/GID 999)
+     # This must match the securityContext in keycloak-values.yaml
+     postgresql_uid: "999"
+     postgresql_gid: "999"
+@@ -99,6 +100,7 @@
            register: infra_node_detect
            changed_when: false
            failed_when: false
@@ -10,7 +32,7 @@ index 79cb02b..d7a1b89 100644
  
          - name: Fallback to first schedulable node if no control-plane found
            shell: |
-@@ -106,6 +107,7 @@
+@@ -106,6 +108,7 @@
            register: infra_node_fallback
            changed_when: false
            when: infra_node_detect.stdout == ""
@@ -18,7 +40,7 @@ index 79cb02b..d7a1b89 100644
  
          - name: Set infra_node variable
            set_fact:
-@@ -130,6 +132,7 @@
+@@ -130,6 +133,7 @@
        environment:
          KUBECONFIG: /etc/kubernetes/admin.conf
        changed_when: false
@@ -26,7 +48,7 @@ index 79cb02b..d7a1b89 100644
  
      - name: Create identity data directories for persistent storage
        file:
-@@ -151,6 +154,7 @@
+@@ -151,6 +155,7 @@
        register: uncordon_result
        failed_when: false
        changed_when: false
@@ -34,7 +56,7 @@ index 79cb02b..d7a1b89 100644
  
      - name: Deploy StorageClass for Keycloak PostgreSQL (idempotent)
        shell: kubectl apply -f {{ storage_class_manifest }}
-@@ -158,6 +162,7 @@
+@@ -158,6 +163,7 @@
          KUBECONFIG: /etc/kubernetes/admin.conf
        register: storage_class_apply
        changed_when: "'created' in storage_class_apply.stdout or 'configured' in storage_class_apply.stdout"
@@ -42,15 +64,25 @@ index 79cb02b..d7a1b89 100644
  
      - name: Deploy PersistentVolume for Keycloak PostgreSQL (idempotent)
        shell: kubectl apply -f {{ keycloak_pv_manifest }}
-@@ -165,6 +170,7 @@
+@@ -165,6 +171,17 @@
          KUBECONFIG: /etc/kubernetes/admin.conf
        register: keycloak_pv_apply
        changed_when: "'created' in keycloak_pv_apply.stdout or 'configured' in keycloak_pv_apply.stdout"
 +      become: true
++
++    - name: Clear claimRef from Keycloak PostgreSQL PV if it's Released
++      shell: >-
++        KUBECONFIG=/etc/kubernetes/admin.conf kubectl patch pv keycloak-postgresql-pv 
++        --type=json -p='[{"op":"remove","path":"/spec/claimRef"}]'
++      when: keycloak_pv_apply.rc == 0
++      register: pv_claim_clear
++      failed_when: false
++      changed_when: "'patched' in pv_claim_clear.stdout"
++      become: true
  
      - name: Optionally fix hostPath ownership for PostgreSQL via privileged Job
        when: (enable_postgres_chown | default(false) | bool) or (identity_force_replace | default(false) | bool)
-@@ -209,6 +215,7 @@
+@@ -209,6 +226,7 @@
              KUBECONFIG: /etc/kubernetes/admin.conf
            register: chown_job_apply
            changed_when: "'created' in chown_job_apply.stdout or 'configured' in chown_job_apply.stdout"
@@ -58,7 +90,7 @@ index 79cb02b..d7a1b89 100644
  
          - name: Wait for chown Job completion
            shell: kubectl -n {{ namespace_identity }} wait --for=condition=complete job/postgres-chown-job --timeout=120s
-@@ -216,6 +223,7 @@
+@@ -216,6 +234,7 @@
              KUBECONFIG: /etc/kubernetes/admin.conf
            register: chown_job_wait
            failed_when: chown_job_wait.rc != 0
@@ -66,7 +98,7 @@ index 79cb02b..d7a1b89 100644
  
          - name: Delete chown Job
            shell: kubectl -n {{ namespace_identity }} delete job/postgres-chown-job --ignore-not-found
-@@ -223,6 +231,7 @@
+@@ -223,6 +242,7 @@
              KUBECONFIG: /etc/kubernetes/admin.conf
            changed_when: false
            failed_when: false
@@ -74,7 +106,7 @@ index 79cb02b..d7a1b89 100644
  
      - name: Optionally fix hostPath ownership for FreeIPA via privileged Job
        when: (enable_freeipa_chown | default(false) | bool) or (identity_force_replace | default(false) | bool)
-@@ -267,6 +276,7 @@
+@@ -267,6 +287,7 @@
              KUBECONFIG: /etc/kubernetes/admin.conf
            register: freeipa_chown_job_apply
            changed_when: "'created' in freeipa_chown_job_apply.stdout or 'configured' in freeipa_chown_job_apply.stdout"
@@ -82,7 +114,7 @@ index 79cb02b..d7a1b89 100644
  
          - name: Wait for FreeIPA chown Job completion
            shell: kubectl -n {{ namespace_identity }} wait --for=condition=complete job/freeipa-chown-job --timeout=120s
-@@ -274,6 +284,7 @@
+@@ -274,6 +295,7 @@
              KUBECONFIG: /etc/kubernetes/admin.conf
            register: freeipa_chown_job_wait
            failed_when: freeipa_chown_job_wait.rc != 0
@@ -90,7 +122,7 @@ index 79cb02b..d7a1b89 100644
  
          - name: Delete FreeIPA chown Job
            shell: kubectl -n {{ namespace_identity }} delete job/freeipa-chown-job --ignore-not-found
-@@ -281,23 +292,25 @@
+@@ -281,23 +303,25 @@
              KUBECONFIG: /etc/kubernetes/admin.conf
            changed_when: false
            failed_when: false
@@ -124,7 +156,7 @@ index 79cb02b..d7a1b89 100644
  
          - name: Get current timestamp for backup filename
            shell: date -u +%Y%m%dT%H%M%SZ
-@@ -366,28 +379,33 @@
+@@ -366,28 +390,33 @@
            shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} scale sts freeipa --replicas=0 --timeout=60s || true
            register: scale_down_freeipa
            failed_when: false
@@ -158,15 +190,25 @@ index 79cb02b..d7a1b89 100644
  
      - name: Deploy FreeIPA from manifest (if available)
        shell: kubectl apply -f {{ freeipa_manifest }}
-@@ -396,6 +414,7 @@
+@@ -396,6 +425,17 @@
          KUBECONFIG: /etc/kubernetes/admin.conf
        register: freeipa_apply
        changed_when: "'created' in freeipa_apply.stdout or 'configured' in freeipa_apply.stdout"
 +      become: true
++
++    - name: Clear claimRef from FreeIPA PV if it's Released
++      shell: >-
++        KUBECONFIG=/etc/kubernetes/admin.conf kubectl patch pv freeipa-data-pv 
++        --type=json -p='[{"op":"remove","path":"/spec/claimRef"}]'
++      when: freeipa_apply is defined and freeipa_apply.rc == 0
++      register: freeipa_pv_claim_clear
++      failed_when: false
++      changed_when: "'patched' in freeipa_pv_claim_clear.stdout"
++      become: true
  
      - name: Set nodeSelector for FreeIPA StatefulSet
        shell: |
-@@ -405,6 +424,7 @@
+@@ -405,6 +445,7 @@
          KUBECONFIG: /etc/kubernetes/admin.conf
        register: freeipa_node_selector
        failed_when: false
@@ -174,7 +216,7 @@ index 79cb02b..d7a1b89 100644
  
      - name: Inform about missing FreeIPA manifest
        debug:
-@@ -423,6 +443,7 @@
+@@ -423,6 +464,7 @@
          KUBECONFIG: /etc/kubernetes/admin.conf
        register: keycloak_apply
        changed_when: "'created' in keycloak_apply.stdout or 'configured' in keycloak_apply.stdout"
@@ -182,15 +224,73 @@ index 79cb02b..d7a1b89 100644
  
      - name: Check if Keycloak values file has placeholder passwords
        shell: |
-@@ -491,6 +512,7 @@
+@@ -468,12 +510,20 @@
+           ============================================================
+       when: freeipa_password_check is defined and freeipa_password_check.stdout != ""
+ 
++    - name: Deploy PostgreSQL StatefulSet for Keycloak
++      shell: kubectl apply -f {{ postgresql_manifest }}
++      environment:
++        KUBECONFIG: /etc/kubernetes/admin.conf
++      register: postgresql_apply
++      changed_when: "'created' in postgresql_apply.stdout or 'configured' in postgresql_apply.stdout"
++      become: true
++
+     - name: Check if Keycloak values file exists
+       stat:
+         path: "{{ keycloak_values_file }}"
+       register: keycloak_values_stat
+ 
+-    - name: Install/upgrade Keycloak via Helm
++    - name: Install/upgrade Keycloak via Helm (PostgreSQL disabled)
+       shell: >-
+         helm repo add codecentric https://codecentric.github.io/helm-charts >/dev/null 2>&1 || true;
+         helm repo update >/dev/null 2>&1;
+@@ -481,18 +531,38 @@
+         -n {{ namespace_identity }} 
+         -f {{ keycloak_values_file }} 
+         --create-namespace 
+-        --set postgresql.image.registry={{ postgresql_image_registry }}
+-        --set postgresql.image.repository={{ postgresql_image_repository }}
+-        --set postgresql.image.tag={{ postgresql_image_tag }}
+-        --set postgresql.image.pullPolicy=IfNotPresent
++        --set postgresql.enabled=false
+         --set keycloak.nodeSelector."kubernetes\.io/hostname"={{ infra_node }}
+-        --set postgresql.nodeSelector."kubernetes\.io/hostname"={{ infra_node }}
+       when: keycloak_values_stat.stat.exists
        environment:
          KUBECONFIG: /etc/kubernetes/admin.conf
        register: keycloak_helm_install
 +      become: true
  
++    - name: Patch Keycloak StatefulSet with PostgreSQL environment variables
++      shell: >-
++        KUBECONFIG=/etc/kubernetes/admin.conf kubectl patch statefulset keycloak -n {{ namespace_identity }} 
++        --type=json -p='[{"op":"add","path":"/spec/template/spec/containers/0/env","value":[
++        {"name":"DB_VENDOR","value":"postgres"},
++        {"name":"DB_ADDR","value":"keycloak-postgresql"},
++        {"name":"DB_PORT","value":"5432"},
++        {"name":"DB_DATABASE","value":"keycloak"},
++        {"name":"DB_USER","value":"keycloak"},
++        {"name":"DB_PASSWORD","value":"CHANGEME_DB_PASSWORD"}
++        ]}]'
++      register: keycloak_env_patch
++      failed_when: false
++      changed_when: "'patched' in keycloak_env_patch.stdout"
++      become: true
  
++    - name: Patch Keycloak StatefulSet with nodeSelector for masternode
++      shell: >-
++        KUBECONFIG=/etc/kubernetes/admin.conf kubectl patch statefulset keycloak -n {{ namespace_identity }} 
++        -p '{"spec":{"template":{"spec":{"nodeSelector":{"kubernetes.io/hostname":"{{ infra_node }}"}}}}}'
++      register: keycloak_node_patch
++      failed_when: false
++      changed_when: "'patched' in keycloak_node_patch.stdout"
++      become: true
  
-@@ -502,6 +524,7 @@
+     - name: Wait for Keycloak PostgreSQL PVC to be created
+       shell: >-
+@@ -502,6 +572,7 @@
        retries: 30
        delay: 2
        failed_when: false
@@ -198,7 +298,7 @@ index 79cb02b..d7a1b89 100644
  
      - name: Check Keycloak PostgreSQL PVC status
        shell: >-
-@@ -509,6 +532,7 @@
+@@ -509,6 +580,7 @@
        register: keycloak_postgres_pvc_phase
        changed_when: false
        failed_when: false
@@ -206,7 +306,7 @@ index 79cb02b..d7a1b89 100644
  
      - name: Find Available PVs labeled for Keycloak PostgreSQL
        shell: >-
-@@ -516,6 +540,7 @@
+@@ -516,6 +588,7 @@
        register: keycloak_postgres_available_pvs
        changed_when: false
        failed_when: false
@@ -214,7 +314,7 @@ index 79cb02b..d7a1b89 100644
  
      - name: Bind an Available PV to Keycloak PVC when PVC is Pending
        shell: >-
-@@ -528,6 +553,7 @@
+@@ -528,6 +601,7 @@
        register: keycloak_pv_bind
        environment:
          KUBECONFIG: /etc/kubernetes/admin.conf
@@ -222,7 +322,7 @@ index 79cb02b..d7a1b89 100644
  
      - name: Log PV binding result
        debug:
-@@ -540,6 +566,7 @@
+@@ -540,6 +614,7 @@
        register: keycloak_postgres_pvc_verify
        changed_when: false
        failed_when: false
@@ -230,7 +330,7 @@ index 79cb02b..d7a1b89 100644
  
      - name: Display PVC status
        debug:
-@@ -559,6 +586,7 @@
+@@ -559,6 +634,7 @@
              -n {{ namespace_identity }} --timeout={{ rollout_wait_timeout }}s
            register: keycloak_pg_rollout
            failed_when: keycloak_pg_rollout.rc != 0
@@ -238,7 +338,7 @@ index 79cb02b..d7a1b89 100644
  
        rescue:
          - name: Handle PostgreSQL rollout timeout
-@@ -579,6 +607,12 @@
+@@ -579,6 +655,12 @@
                    kubectl -n {{ namespace_identity }} describe $pod || true
                  done
                  echo ""
@@ -251,7 +351,7 @@ index 79cb02b..d7a1b89 100644
                  echo "=== PVC Status ==="
                  kubectl -n {{ namespace_identity }} get pvc -o yaml || true
                  echo ""
-@@ -590,6 +624,7 @@
+@@ -590,6 +672,7 @@
                register: pg_diagnostics
                environment:
                  KUBECONFIG: /etc/kubernetes/admin.conf
@@ -259,7 +359,7 @@ index 79cb02b..d7a1b89 100644
  
              - name: Save PostgreSQL diagnostics
                copy:
-@@ -621,10 +656,12 @@
+@@ -621,10 +704,12 @@
                  - name: Scale down PostgreSQL StatefulSet
                    shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} scale sts keycloak-postgresql --replicas=0 --timeout=60s
                    failed_when: false
@@ -272,7 +372,7 @@ index 79cb02b..d7a1b89 100644
  
                  - name: Wait for pod removal
                    pause:
-@@ -633,12 +670,14 @@
+@@ -633,12 +718,14 @@
                  - name: Scale up PostgreSQL StatefulSet
                    shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} scale sts keycloak-postgresql --replicas=1
                    failed_when: false
@@ -287,7 +387,7 @@ index 79cb02b..d7a1b89 100644
  
              - name: Fail with diagnostics notice if recovery not attempted
                fail:
-@@ -653,6 +692,7 @@
+@@ -653,6 +740,7 @@
              -n {{ namespace_identity }} --timeout={{ rollout_wait_timeout }}s
            register: keycloak_rollout
            failed_when: keycloak_rollout.rc != 0
@@ -295,7 +395,7 @@ index 79cb02b..d7a1b89 100644
  
        rescue:
          - name: Handle Keycloak rollout timeout
-@@ -673,11 +713,18 @@
+@@ -673,11 +761,18 @@
                    kubectl -n {{ namespace_identity }} describe $pod || true
                  done
                  echo ""
@@ -314,7 +414,7 @@ index 79cb02b..d7a1b89 100644
  
              - name: Save Keycloak diagnostics
                copy:
-@@ -699,6 +746,7 @@
+@@ -699,6 +794,7 @@
          KUBECONFIG: /etc/kubernetes/admin.conf
        register: certmgr_crds
        changed_when: "'created' in certmgr_crds.stdout or 'configured' in certmgr_crds.stdout"
@@ -322,15 +422,35 @@ index 79cb02b..d7a1b89 100644
  
      - name: Add cert-manager Helm repo
        shell: |
-@@ -715,6 +763,7 @@
+@@ -715,6 +811,27 @@
          --set installCRDs=false
          --set nodeSelector."kubernetes\.io/hostname"={{ infra_node }}
        register: certmgr_helm
 +      become: true
++
++    - name: Patch cert-manager cainjector with nodeSelector for masternode
++      shell: >-
++        KUBECONFIG=/etc/kubernetes/admin.conf kubectl patch deployment cert-manager-cainjector 
++        -n {{ namespace_cert_manager }} 
++        -p '{"spec":{"template":{"spec":{"nodeSelector":{"kubernetes.io/hostname":"{{ infra_node }}"}}}}}'
++      register: certmgr_cainjector_patch
++      failed_when: false
++      changed_when: "'patched' in certmgr_cainjector_patch.stdout"
++      become: true
++
++    - name: Patch cert-manager webhook with nodeSelector for masternode
++      shell: >-
++        KUBECONFIG=/etc/kubernetes/admin.conf kubectl patch deployment cert-manager-webhook 
++        -n {{ namespace_cert_manager }} 
++        -p '{"spec":{"template":{"spec":{"nodeSelector":{"kubernetes.io/hostname":"{{ infra_node }}"}}}}}'
++      register: certmgr_webhook_patch
++      failed_when: false
++      changed_when: "'patched' in certmgr_webhook_patch.stdout"
++      become: true
  
      - name: Wait for cert-manager deployments to be ready (with diagnostics on failure)
        block:
-@@ -725,6 +774,7 @@
+@@ -725,6 +842,7 @@
            failed_when: certmgr_rollout_controller.rc != 0
            environment:
              KUBECONFIG: /etc/kubernetes/admin.conf
@@ -338,7 +458,7 @@ index 79cb02b..d7a1b89 100644
  
          - name: Wait for cert-manager webhook rollout
            shell: >-
-@@ -733,6 +783,7 @@
+@@ -733,6 +851,7 @@
            failed_when: certmgr_rollout_webhook.rc != 0
            environment:
              KUBECONFIG: /etc/kubernetes/admin.conf
@@ -346,7 +466,7 @@ index 79cb02b..d7a1b89 100644
  
          - name: Wait for cert-manager cainjector rollout
            shell: >-
-@@ -741,6 +792,7 @@
+@@ -741,6 +860,7 @@
            failed_when: certmgr_rollout_cainjector.rc != 0
            environment:
              KUBECONFIG: /etc/kubernetes/admin.conf
@@ -354,7 +474,7 @@ index 79cb02b..d7a1b89 100644
  
        rescue:
          - name: Get UTC timestamp for diagnostics filename
-@@ -752,6 +804,7 @@
+@@ -752,6 +872,7 @@
            shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_cert_manager }} get pods -o wide
            register: certmgr_pods
            changed_when: false
@@ -362,7 +482,7 @@ index 79cb02b..d7a1b89 100644
  
          - name: Describe cert-manager namespace pods
            shell: |
-@@ -763,22 +816,25 @@
+@@ -763,22 +884,25 @@
            changed_when: false
            environment:
              KUBECONFIG: /etc/kubernetes/admin.conf
@@ -392,7 +512,7 @@ index 79cb02b..d7a1b89 100644
  
          - name: Save cert-manager diagnostics to root backup dir
            copy:
-@@ -807,19 +863,21 @@
+@@ -807,19 +931,21 @@
        register: crd_check
        failed_when: crd_check.rc != 0
        changed_when: false
@@ -415,7 +535,18 @@ index 79cb02b..d7a1b89 100644
  
      - name: Backup CA material to root backup (cert and key if present)
        shell: >-
-@@ -837,6 +895,7 @@
+@@ -831,12 +957,16 @@
+       register: backup_run
+       changed_when: backup_run.rc == 0
+ 
+-    - name: Create or update Kubernetes Secret with CA
++    - name: Create or update Kubernetes Secret with CA (tls.crt and tls.key format for cert-manager)
+       shell: >-
+-        kubectl create secret generic {{ secret_name }} --namespace {{ namespace_cert_manager }} --from-file=ca.crt={{ ca_cert_src }} --dry-run=client -o yaml | kubectl apply -f -
++        kubectl create secret generic {{ secret_name }} --namespace {{ namespace_cert_manager }} 
++        --from-file=tls.crt={{ ca_cert_src }} 
++        --from-file=tls.key={{ ca_key_src }} 
++        --dry-run=client -o yaml | kubectl apply -f -
        environment:
          KUBECONFIG: /etc/kubernetes/admin.conf
        register: secret_apply
@@ -423,11 +554,154 @@ index 79cb02b..d7a1b89 100644
  
      - name: Render ClusterIssuer template
        template:
-@@ -848,6 +907,7 @@
+@@ -848,6 +978,150 @@
        environment:
          KUBECONFIG: /etc/kubernetes/admin.conf
        register: issuer_apply
 +      become: true
++
++    - name: Deploy Keycloak NodePort Service for desktop access
++      shell: >-
++        cat <<EOF | kubectl apply -f -
++        apiVersion: v1
++        kind: Service
++        metadata:
++          name: keycloak-nodeport
++          namespace: {{ namespace_identity }}
++          labels:
++            app: keycloak
++            component: nodeport
++          annotations:
++            description: "NodePort service for desktop access to Keycloak"
++        spec:
++          type: NodePort
++          ports:
++            - name: http
++              port: 80
++              targetPort: 8080
++              nodePort: 30080
++              protocol: TCP
++            - name: https
++              port: 8443
++              targetPort: 8443
++              nodePort: 30443
++              protocol: TCP
++          selector:
++            app.kubernetes.io/name: keycloak
++        EOF
++      environment:
++        KUBECONFIG: /etc/kubernetes/admin.conf
++      register: keycloak_nodeport_apply
++      changed_when: "'created' in keycloak_nodeport_apply.stdout or 'configured' in keycloak_nodeport_apply.stdout"
++      become: true
++
++    - name: Setup Keycloak admin user and desktop access
++      block:
++        - name: Generate secure admin password if not provided
++          shell: openssl rand -base64 32
++          register: generated_admin_password
++          when: keycloak_admin_password is not defined or keycloak_admin_password == ''
++          changed_when: false
++
++        - name: Set admin password variable
++          set_fact:
++            admin_password: "{{ keycloak_admin_password | default(generated_admin_password.stdout) }}"
++
++        - name: Wait for Keycloak pod to be ready
++          shell: >-
++            KUBECONFIG=/etc/kubernetes/admin.conf kubectl wait --for=condition=ready 
++            pod/keycloak-0 -n {{ namespace_identity }} --timeout=300s
++          register: keycloak_ready
++          failed_when: keycloak_ready.rc != 0
++          become: true
++
++        - name: Check if admin user exists in Keycloak
++          shell: >-
++            KUBECONFIG=/etc/kubernetes/admin.conf kubectl exec -n {{ namespace_identity }} keycloak-0 -- 
++            /opt/jboss/keycloak/bin/kcadm.sh get users -r master --fields username 2>/dev/null | 
++            grep -c '"admin"' || echo "0"
++          register: admin_user_check
++          changed_when: false
++          failed_when: false
++          become: true
++
++        - name: Create Keycloak admin user
++          shell: >-
++            KUBECONFIG=/etc/kubernetes/admin.conf kubectl exec -n {{ namespace_identity }} keycloak-0 -- 
++            /opt/jboss/keycloak/bin/add-user-keycloak.sh 
++            -r master -u admin -p "{{ admin_password }}"
++          when: admin_user_check.stdout == "0"
++          register: admin_user_create
++          become: true
++
++        - name: Restart Keycloak pod to apply admin user
++          shell: >-
++            KUBECONFIG=/etc/kubernetes/admin.conf kubectl delete pod keycloak-0 -n {{ namespace_identity }}
++          when: admin_user_check.stdout == "0" and admin_user_create.rc == 0
++          register: keycloak_restart
++          become: true
++
++        - name: Wait for Keycloak pod restart
++          shell: >-
++            KUBECONFIG=/etc/kubernetes/admin.conf kubectl wait --for=condition=ready 
++            pod/keycloak-0 -n {{ namespace_identity }} --timeout=300s
++          when: keycloak_restart is defined and keycloak_restart.rc == 0
++          register: keycloak_reready
++          become: true
++
++        - name: Get cluster node IPs for access URLs
++          shell: >-
++            KUBECONFIG=/etc/kubernetes/admin.conf kubectl get nodes 
++            -o jsonpath='{.items[*].status.addresses[?(@.type=="InternalIP")].address}'
++          register: node_ips
++          changed_when: false
++          become: true
++
++        - name: Save Keycloak admin credentials to secure location
++          copy:
++            dest: "{{ backup_dir }}/keycloak-admin-credentials.txt"
++            content: |
++              Keycloak Admin Credentials
++              Generated: {{ ansible_date_time.iso8601 }}
++              
++              Username: admin
++              Password: {{ admin_password }}
++              
++              Access URLs (from desktop):
++              {% for ip in node_ips.stdout.split() %}
++              - http://{{ ip }}:30080/auth
++              {% endfor %}
++              
++              Admin Console:
++              {% for ip in node_ips.stdout.split() %}
++              - http://{{ ip }}:30080/auth/admin
++              {% endfor %}
++            owner: root
++            group: root
++            mode: '0600'
++          become: true
++
++        - name: Display Keycloak access information
++          debug:
++            msg: |
++              ============================================================
++              Keycloak Admin Setup Complete!
++              ============================================================
++              Username: admin
++              Password: {{ admin_password }}
++              
++              Access from desktop:
++              {% for ip in node_ips.stdout.split() %}
++              - http://{{ ip }}:30080/auth
++              {% endfor %}
++              
++              Admin Console:
++              {% for ip in node_ips.stdout.split() %}
++              - http://{{ ip }}:30080/auth/admin
++              {% endfor %}
++              
++              Credentials saved to: {{ backup_dir }}/keycloak-admin-credentials.txt
++              ============================================================
  
      - name: Display backup files and checksums (if created)
        block:

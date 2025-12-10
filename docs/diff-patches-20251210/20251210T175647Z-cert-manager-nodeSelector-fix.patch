@@ -1,0 +1,55 @@
+From: GitHub Copilot CLI
+Date: Tue, 10 Dec 2025 17:56:47 +0000
+Subject: Fix cert-manager pod placement to masternode only
+
+Problem:
+- cert-manager-cainjector and cert-manager-webhook were running on homelab node
+- Only the main cert-manager controller had kubernetes.io/hostname=masternode selector
+- This caused inconsistent placement and potential issues with certificate operations
+
+Root Cause:
+The identity-deploy-and-handover.yml playbook only sets nodeSelector on the main
+cert-manager deployment via Helm, but cainjector and webhook inherit only the
+default kubernetes.io/os=linux selector.
+
+Solution:
+Patch cainjector and webhook deployments to add explicit nodeSelector for masternode.
+
+Manual patches applied:
+---
+kubectl patch deployment cert-manager-cainjector -n cert-manager \
+  -p '{"spec":{"template":{"spec":{"nodeSelector":{"kubernetes.io/hostname":"masternode"}}}}}'
+
+kubectl patch deployment cert-manager-webhook -n cert-manager \
+  -p '{"spec":{"template":{"spec":{"nodeSelector":{"kubernetes.io/hostname":"masternode"}}}}}'
+---
+
+Verification:
+kubectl get pods -n cert-manager -o wide
+# All pods should show NODE=masternode
+
+Automated in playbook at lines 812-820 by adding:
+---
+    - name: Patch cert-manager cainjector with nodeSelector
+      shell: >-
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl patch deployment cert-manager-cainjector 
+        -n {{ namespace_cert_manager }} 
+        -p '{"spec":{"template":{"spec":{"nodeSelector":{"kubernetes.io/hostname":"{{ infra_node }}"}}}}}'
+      register: certmgr_cainjector_patch
+      failed_when: false
+      changed_when: "'patched' in certmgr_cainjector_patch.stdout"
+      become: true
+
+    - name: Patch cert-manager webhook with nodeSelector
+      shell: >-
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl patch deployment cert-manager-webhook 
+        -n {{ namespace_cert_manager }} 
+        -p '{"spec":{"template":{"spec":{"nodeSelector":{"kubernetes.io/hostname":"{{ infra_node }}"}}}}}'
+      register: certmgr_webhook_patch
+      failed_when: false
+      changed_when: "'patched' in certmgr_webhook_patch.stdout"
+      become: true
+---
+
+Status: APPLIED
+Timestamp: 2025-12-10T17:56:47Z
