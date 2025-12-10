@@ -1,0 +1,433 @@
+diff --git a/ansible/playbooks/identity-deploy-and-handover.yml b/ansible/playbooks/identity-deploy-and-handover.yml
+index 79cb02b..d7a1b89 100644
+--- a/ansible/playbooks/identity-deploy-and-handover.yml
++++ b/ansible/playbooks/identity-deploy-and-handover.yml
+@@ -99,6 +99,7 @@
+           register: infra_node_detect
+           changed_when: false
+           failed_when: false
++          become: true
+ 
+         - name: Fallback to first schedulable node if no control-plane found
+           shell: |
+@@ -106,6 +107,7 @@
+           register: infra_node_fallback
+           changed_when: false
+           when: infra_node_detect.stdout == ""
++          become: true
+ 
+         - name: Set infra_node variable
+           set_fact:
+@@ -130,6 +132,7 @@
+       environment:
+         KUBECONFIG: /etc/kubernetes/admin.conf
+       changed_when: false
++      become: true
+ 
+     - name: Create identity data directories for persistent storage
+       file:
+@@ -151,6 +154,7 @@
+       register: uncordon_result
+       failed_when: false
+       changed_when: false
++      become: true
+ 
+     - name: Deploy StorageClass for Keycloak PostgreSQL (idempotent)
+       shell: kubectl apply -f {{ storage_class_manifest }}
+@@ -158,6 +162,7 @@
+         KUBECONFIG: /etc/kubernetes/admin.conf
+       register: storage_class_apply
+       changed_when: "'created' in storage_class_apply.stdout or 'configured' in storage_class_apply.stdout"
++      become: true
+ 
+     - name: Deploy PersistentVolume for Keycloak PostgreSQL (idempotent)
+       shell: kubectl apply -f {{ keycloak_pv_manifest }}
+@@ -165,6 +170,7 @@
+         KUBECONFIG: /etc/kubernetes/admin.conf
+       register: keycloak_pv_apply
+       changed_when: "'created' in keycloak_pv_apply.stdout or 'configured' in keycloak_pv_apply.stdout"
++      become: true
+ 
+     - name: Optionally fix hostPath ownership for PostgreSQL via privileged Job
+       when: (enable_postgres_chown | default(false) | bool) or (identity_force_replace | default(false) | bool)
+@@ -209,6 +215,7 @@
+             KUBECONFIG: /etc/kubernetes/admin.conf
+           register: chown_job_apply
+           changed_when: "'created' in chown_job_apply.stdout or 'configured' in chown_job_apply.stdout"
++          become: true
+ 
+         - name: Wait for chown Job completion
+           shell: kubectl -n {{ namespace_identity }} wait --for=condition=complete job/postgres-chown-job --timeout=120s
+@@ -216,6 +223,7 @@
+             KUBECONFIG: /etc/kubernetes/admin.conf
+           register: chown_job_wait
+           failed_when: chown_job_wait.rc != 0
++          become: true
+ 
+         - name: Delete chown Job
+           shell: kubectl -n {{ namespace_identity }} delete job/postgres-chown-job --ignore-not-found
+@@ -223,6 +231,7 @@
+             KUBECONFIG: /etc/kubernetes/admin.conf
+           changed_when: false
+           failed_when: false
++          become: true
+ 
+     - name: Optionally fix hostPath ownership for FreeIPA via privileged Job
+       when: (enable_freeipa_chown | default(false) | bool) or (identity_force_replace | default(false) | bool)
+@@ -267,6 +276,7 @@
+             KUBECONFIG: /etc/kubernetes/admin.conf
+           register: freeipa_chown_job_apply
+           changed_when: "'created' in freeipa_chown_job_apply.stdout or 'configured' in freeipa_chown_job_apply.stdout"
++          become: true
+ 
+         - name: Wait for FreeIPA chown Job completion
+           shell: kubectl -n {{ namespace_identity }} wait --for=condition=complete job/freeipa-chown-job --timeout=120s
+@@ -274,6 +284,7 @@
+             KUBECONFIG: /etc/kubernetes/admin.conf
+           register: freeipa_chown_job_wait
+           failed_when: freeipa_chown_job_wait.rc != 0
++          become: true
+ 
+         - name: Delete FreeIPA chown Job
+           shell: kubectl -n {{ namespace_identity }} delete job/freeipa-chown-job --ignore-not-found
+@@ -281,23 +292,25 @@
+             KUBECONFIG: /etc/kubernetes/admin.conf
+           changed_when: false
+           failed_when: false
++          become: true
+ 
+     - name: Check if FreeIPA manifest exists
+       stat:
+         path: "{{ freeipa_manifest }}"
+       register: freeipa_manifest_stat
+ 
++    - name: Ensure backup directory exists upfront (root-owned)
++      file:
++        path: "{{ backup_dir }}"
++        state: directory
++        owner: root
++        group: root
++        mode: '0700'
++      become: true
++
+     - name: "Optional: Backup and remove existing identity pods before redeploy (controlled)"
+       when: identity_force_replace | default(false) | bool and identity_backup_before_replace | default(true) | bool
+       block:
+-        - name: Create backup directory on controller (root-owned)
+-          file:
+-            path: "{{ backup_dir }}"
+-            state: directory
+-            owner: root
+-            group: root
+-            mode: '0700'
+-          become: true
+ 
+         - name: Get current timestamp for backup filename
+           shell: date -u +%Y%m%dT%H%M%SZ
+@@ -366,28 +379,33 @@
+           shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} scale sts freeipa --replicas=0 --timeout=60s || true
+           register: scale_down_freeipa
+           failed_when: false
++          become: true
+ 
+         - name: Scale down Keycloak StatefulSet to 0 (if present)
+           shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} scale sts keycloak --replicas=0 --timeout=60s || true
+           register: scale_down_keycloak
+           failed_when: false
++          become: true
+ 
+         - name: Scale down PostgreSQL StatefulSet to 0 (if present)
+           shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} scale sts keycloak-postgresql --replicas=0 --timeout=60s || true
+           register: scale_down_postgres
+           failed_when: false
++          become: true
+ 
+         - name: Delete any remaining identity pods (force removal)
+           shell: >-
+             KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} delete pod --all --ignore-not-found --grace-period=10 --timeout=60s || true
+           register: delete_identity_pods
+           failed_when: false
++          become: true
+ 
+         - name: Wait for identity pods to be fully removed
+           shell: >-
+             KUBECONFIG=/etc/kubernetes/admin.conf bash -c "for i in {1..60}; do if [ -z \"$(kubectl -n {{ namespace_identity }} get pods -o name 2>/dev/null)\" ]; then exit 0; fi; sleep 1; done; exit 1"
+           register: wait_for_pod_removal
+           failed_when: wait_for_pod_removal.rc != 0
++          become: true
+ 
+     - name: Deploy FreeIPA from manifest (if available)
+       shell: kubectl apply -f {{ freeipa_manifest }}
+@@ -396,6 +414,7 @@
+         KUBECONFIG: /etc/kubernetes/admin.conf
+       register: freeipa_apply
+       changed_when: "'created' in freeipa_apply.stdout or 'configured' in freeipa_apply.stdout"
++      become: true
+ 
+     - name: Set nodeSelector for FreeIPA StatefulSet
+       shell: |
+@@ -405,6 +424,7 @@
+         KUBECONFIG: /etc/kubernetes/admin.conf
+       register: freeipa_node_selector
+       failed_when: false
++      become: true
+ 
+     - name: Inform about missing FreeIPA manifest
+       debug:
+@@ -423,6 +443,7 @@
+         KUBECONFIG: /etc/kubernetes/admin.conf
+       register: keycloak_apply
+       changed_when: "'created' in keycloak_apply.stdout or 'configured' in keycloak_apply.stdout"
++      become: true
+ 
+     - name: Check if Keycloak values file has placeholder passwords
+       shell: |
+@@ -491,6 +512,7 @@
+       environment:
+         KUBECONFIG: /etc/kubernetes/admin.conf
+       register: keycloak_helm_install
++      become: true
+ 
+ 
+ 
+@@ -502,6 +524,7 @@
+       retries: 30
+       delay: 2
+       failed_when: false
++      become: true
+ 
+     - name: Check Keycloak PostgreSQL PVC status
+       shell: >-
+@@ -509,6 +532,7 @@
+       register: keycloak_postgres_pvc_phase
+       changed_when: false
+       failed_when: false
++      become: true
+ 
+     - name: Find Available PVs labeled for Keycloak PostgreSQL
+       shell: >-
+@@ -516,6 +540,7 @@
+       register: keycloak_postgres_available_pvs
+       changed_when: false
+       failed_when: false
++      become: true
+ 
+     - name: Bind an Available PV to Keycloak PVC when PVC is Pending
+       shell: >-
+@@ -528,6 +553,7 @@
+       register: keycloak_pv_bind
+       environment:
+         KUBECONFIG: /etc/kubernetes/admin.conf
++      become: true
+ 
+     - name: Log PV binding result
+       debug:
+@@ -540,6 +566,7 @@
+       register: keycloak_postgres_pvc_verify
+       changed_when: false
+       failed_when: false
++      become: true
+ 
+     - name: Display PVC status
+       debug:
+@@ -559,6 +586,7 @@
+             -n {{ namespace_identity }} --timeout={{ rollout_wait_timeout }}s
+           register: keycloak_pg_rollout
+           failed_when: keycloak_pg_rollout.rc != 0
++          become: true
+ 
+       rescue:
+         - name: Handle PostgreSQL rollout timeout
+@@ -579,6 +607,12 @@
+                   kubectl -n {{ namespace_identity }} describe $pod || true
+                 done
+                 echo ""
++                echo "=== PostgreSQL Logs ==="
++                for pod in $(kubectl -n {{ namespace_identity }} get pods -l app.kubernetes.io/name=postgresql -o name); do
++                  echo "--- Logs: $pod ---"
++                  kubectl -n {{ namespace_identity }} logs $pod --all-containers --tail=100 || true
++                done
++                echo ""
+                 echo "=== PVC Status ==="
+                 kubectl -n {{ namespace_identity }} get pvc -o yaml || true
+                 echo ""
+@@ -590,6 +624,7 @@
+               register: pg_diagnostics
+               environment:
+                 KUBECONFIG: /etc/kubernetes/admin.conf
++              become: true
+ 
+             - name: Save PostgreSQL diagnostics
+               copy:
+@@ -621,10 +656,12 @@
+                 - name: Scale down PostgreSQL StatefulSet
+                   shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} scale sts keycloak-postgresql --replicas=0 --timeout=60s
+                   failed_when: false
++                  become: true
+ 
+                 - name: Delete PostgreSQL pods
+                   shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} delete pod -l app.kubernetes.io/name=postgresql --ignore-not-found --grace-period=10
+                   failed_when: false
++                  become: true
+ 
+                 - name: Wait for pod removal
+                   pause:
+@@ -633,12 +670,14 @@
+                 - name: Scale up PostgreSQL StatefulSet
+                   shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} scale sts keycloak-postgresql --replicas=1
+                   failed_when: false
++                  become: true
+ 
+                 - name: Wait for PostgreSQL rollout after recovery
+                   shell: >-
+                     KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status statefulset/keycloak-postgresql 
+                     -n {{ namespace_identity }} --timeout={{ rollout_wait_timeout }}s
+                   register: pg_rollout_after_recovery
++                  become: true
+ 
+             - name: Fail with diagnostics notice if recovery not attempted
+               fail:
+@@ -653,6 +692,7 @@
+             -n {{ namespace_identity }} --timeout={{ rollout_wait_timeout }}s
+           register: keycloak_rollout
+           failed_when: keycloak_rollout.rc != 0
++          become: true
+ 
+       rescue:
+         - name: Handle Keycloak rollout timeout
+@@ -673,11 +713,18 @@
+                   kubectl -n {{ namespace_identity }} describe $pod || true
+                 done
+                 echo ""
++                echo "=== Keycloak Logs ==="
++                for pod in $(kubectl -n {{ namespace_identity }} get pods -l app.kubernetes.io/name=keycloak -o name); do
++                  echo "--- Logs: $pod ---"
++                  kubectl -n {{ namespace_identity }} logs $pod --all-containers --tail=100 || true
++                done
++                echo ""
+                 echo "=== Events ==="
+                 kubectl -n {{ namespace_identity }} get events --sort-by=.metadata.creationTimestamp || true
+               register: kc_diagnostics
+               environment:
+                 KUBECONFIG: /etc/kubernetes/admin.conf
++              become: true
+ 
+             - name: Save Keycloak diagnostics
+               copy:
+@@ -699,6 +746,7 @@
+         KUBECONFIG: /etc/kubernetes/admin.conf
+       register: certmgr_crds
+       changed_when: "'created' in certmgr_crds.stdout or 'configured' in certmgr_crds.stdout"
++      become: true
+ 
+     - name: Add cert-manager Helm repo
+       shell: |
+@@ -715,6 +763,7 @@
+         --set installCRDs=false
+         --set nodeSelector."kubernetes\.io/hostname"={{ infra_node }}
+       register: certmgr_helm
++      become: true
+ 
+     - name: Wait for cert-manager deployments to be ready (with diagnostics on failure)
+       block:
+@@ -725,6 +774,7 @@
+           failed_when: certmgr_rollout_controller.rc != 0
+           environment:
+             KUBECONFIG: /etc/kubernetes/admin.conf
++          become: true
+ 
+         - name: Wait for cert-manager webhook rollout
+           shell: >-
+@@ -733,6 +783,7 @@
+           failed_when: certmgr_rollout_webhook.rc != 0
+           environment:
+             KUBECONFIG: /etc/kubernetes/admin.conf
++          become: true
+ 
+         - name: Wait for cert-manager cainjector rollout
+           shell: >-
+@@ -741,6 +792,7 @@
+           failed_when: certmgr_rollout_cainjector.rc != 0
+           environment:
+             KUBECONFIG: /etc/kubernetes/admin.conf
++          become: true
+ 
+       rescue:
+         - name: Get UTC timestamp for diagnostics filename
+@@ -752,6 +804,7 @@
+           shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_cert_manager }} get pods -o wide
+           register: certmgr_pods
+           changed_when: false
++          become: true
+ 
+         - name: Describe cert-manager namespace pods
+           shell: |
+@@ -763,22 +816,25 @@
+           changed_when: false
+           environment:
+             KUBECONFIG: /etc/kubernetes/admin.conf
++          become: true
+ 
+-        - name: Collect cert-manager webhook logs (best-effort)
++        - name: Collect cert-manager logs from all pods
+           shell: |
+-            set -e; for p in $(kubectl -n {{ namespace_cert_manager }} get pods -l app.kubernetes.io/component=webhook -o name 2>/dev/null || true); do
+-              echo "=== logs $p ===";
+-              kubectl -n {{ namespace_cert_manager }} logs $p --all-containers || true;
++            for p in $(kubectl -n {{ namespace_cert_manager }} get pods -o name 2>/dev/null || true); do
++              echo "=== Logs: $p ===";
++              kubectl -n {{ namespace_cert_manager }} logs $p --all-containers --tail=100 || true;
+             done
+           register: certmgr_logs
+           changed_when: false
+           environment:
+             KUBECONFIG: /etc/kubernetes/admin.conf
++          become: true
+ 
+         - name: Collect events in cert-manager namespace
+           shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_cert_manager }} get events --sort-by=.metadata.creationTimestamp
+           register: certmgr_events
+           changed_when: false
++          become: true
+ 
+         - name: Save cert-manager diagnostics to root backup dir
+           copy:
+@@ -807,19 +863,21 @@
+       register: crd_check
+       failed_when: crd_check.rc != 0
+       changed_when: false
++      become: true
+ 
+     - name: Ensure CA cert file exists
+       stat:
+         path: "{{ ca_cert_src }}"
+       register: ca_cert_stat
+ 
+-    - name: Ensure backup directory exists (root-owned)
++    - name: Ensure backup directory exists (root-owned) before CA backup
+       file:
+         path: "{{ backup_dir }}"
+         state: directory
+         owner: root
+         group: root
+         mode: '0700'
++      become: true
+ 
+     - name: Backup CA material to root backup (cert and key if present)
+       shell: >-
+@@ -837,6 +895,7 @@
+       environment:
+         KUBECONFIG: /etc/kubernetes/admin.conf
+       register: secret_apply
++      become: true
+ 
+     - name: Render ClusterIssuer template
+       template:
+@@ -848,6 +907,7 @@
+       environment:
+         KUBECONFIG: /etc/kubernetes/admin.conf
+       register: issuer_apply
++      become: true
+ 
+     - name: Display backup files and checksums (if created)
+       block:
