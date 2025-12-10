@@ -1025,7 +1025,7 @@
 
         - name: Set admin password variable
           set_fact:
-            admin_password: "{{ keycloak_admin_password | default(generated_admin_password.stdout) }}"
+            admin_password: "{{ keycloak_admin_password if (keycloak_admin_password is defined and keycloak_admin_password != '') else generated_admin_password.stdout }}"
 
         - name: Wait for Keycloak pod to be ready
           shell: >-
