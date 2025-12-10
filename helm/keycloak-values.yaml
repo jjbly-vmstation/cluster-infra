@@ -22,6 +22,19 @@ replicaCount: 1
 keycloak:
   adminUser: "admin"
   adminPassword: "CHANGEME_ADMIN_PASSWORD"
+  extraEnv:
+    - name: DB_VENDOR
+      value: postgres
+    - name: DB_ADDR
+      value: keycloak-postgresql
+    - name: DB_PORT
+      value: "5432"
+    - name: DB_DATABASE
+      value: keycloak
+    - name: DB_USER
+      value: keycloak
+    - name: DB_PASSWORD
+      value: CHANGEME_DB_PASSWORD
 
 # Service exposure
 service:
@@ -31,10 +44,15 @@ service:
 # Use PostgreSQL (recommended for production)
 database:
   vendor: postgres
+  hostname: keycloak-postgresql
+  port: 5432
+  database: keycloak
+  username: keycloak
+  password: "CHANGEME_DB_PASSWORD"
 
-# PostgreSQL subchart configuration
+# PostgreSQL subchart configuration (disabled - we use standalone StatefulSet)
 postgresql:
-  enabled: true
+  enabled: false
   auth:
     username: keycloak
     password: "CHANGEME_DB_PASSWORD"
@@ -46,19 +64,15 @@ postgresql:
     repository: postgres
     tag: "11"
     pullPolicy: IfNotPresent
-  # The official postgres:11 image does not support the Bitnami volumePermissions
-  # initContainer pattern. Instead, the playbook pre-creates the hostPath directory
-  # with ownership set to UID 999 (postgres user in the official image).
+  # Disable volumePermissions since the playbook handles directory ownership
+  # The playbook pre-creates the hostPath with correct UID/GID (999:999)
   volumePermissions:
     enabled: false
-  # The official postgres:11 image runs as user 'postgres' (UID 999).
-  # Set fsGroup to 999 so Kubernetes adjusts group ownership on the volume mount,
-  # allowing the postgres process to write to the data directory.
+  # The postgres:11 image runs as root initially then switches to postgres (UID 999).
+  # Don't set runAsUser/fsGroup - let the image handle user switching.
   # NOTE: If changing the PostgreSQL image, verify the user ID and update both
-  # runAsUser/fsGroup here and postgresql_uid/postgresql_gid in the playbook.
-  securityContext:
-    runAsUser: 999  # Official postgres image user ID
-    fsGroup: 999    # Must match runAsUser
+  # postgresql_uid/postgresql_gid in the playbook.
+  securityContext: {}
   primary:
     persistence:
       enabled: true
