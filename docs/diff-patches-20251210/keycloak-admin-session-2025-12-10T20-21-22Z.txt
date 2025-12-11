@@ -1,0 +1,57 @@
+Keycloak admin recovery session notes
+Timestamp: 2025-12-10T20:21:22.473Z
+
+Goal:
+- Ensure Keycloak admin account exists so administrators can log in; produce a reproducible set of steps to automate in future.
+
+Actions performed (commands run):
+1) Inspect pods and image:
+   sudo kubectl -n identity get pods -o wide --show-labels
+   sudo kubectl -n identity get pod keycloak-0 -o jsonpath='{.spec.containers[0].image}'
+
+2) Check for admin utility binaries inside the Keycloak pod:
+   sudo kubectl -n identity exec keycloak-0 -- bash -lc "ls -la /opt/jboss/keycloak/bin 2>/dev/null || true; ls -la /opt/keycloak/bin 2>/dev/null || true"
+
+3) View recent Keycloak logs to understand state and errors:
+   sudo kubectl -n identity logs keycloak-0 --tail=500
+
+4) Add/reset admin user (non-destructive):
+   - Generated a random password locally (omitted here) and used add-user-keycloak.sh when present.
+   - Command used:
+     sudo kubectl -n identity exec keycloak-0 -- /opt/jboss/keycloak/bin/add-user-keycloak.sh -r master -u admin -p "<REDACTED>"
+   - The add-user script wrote to:
+     /opt/jboss/keycloak/standalone/configuration/keycloak-add-user.json (inside the container)
+
+5) Restarted the Keycloak pod to apply the change:
+   sudo kubectl -n identity delete pod keycloak-0
+   sudo kubectl -n identity wait --for=condition=ready pod/keycloak-0 --timeout=300s
+
+Observations and rationale:
+- The container image present (Keycloak 17.x WildFly distribution) includes add-user-keycloak.sh in /opt/jboss/keycloak/bin, so using that script is the safest non-destructive method to create/update the admin account.
+- The change is written inside the container's filesystem (configuration JSON), not to the external database unless Keycloak persists users to the DB on restart; for this pod the DB is PostgreSQL (keycloak-postgresql) so the "add-user" entry triggers server to create user on startup.
+- No host file edits were made; nothing was written to /opt/vmstation-org/diff-patches on the host during the run.
+
+Automation suggestions (idempotent and safe):
+- Preferred: Provide KEYCLOAK_ADMIN and KEYCLOAK_ADMIN_PASSWORD via Helm values or env (chart supports keycloak.adminUser/keycloak.adminPassword or set KEYCLOAK_ADMIN/_PASSWORD env vars) at install/upgrade time.
+- If Keycloak is already running and DB must be preserved, automate exec+add-user approach:
+  1) Generate or retrieve admin password from vault/secret manager.
+  2) kubectl -n identity exec keycloak-0 -- /opt/jboss/keycloak/bin/add-user-keycloak.sh -r master -u admin -p "$PASSWORD"
+  3) kubectl -n identity delete pod keycloak-0 && kubectl -n identity wait --for=condition=ready pod/keycloak-0 --timeout=300s
+- If DB can be reinitialized (destructive), set helm keycloak.adminPassword and redeploy to let chart initialize admin on first boot.
+
+Files changed by session:
+- Container: /opt/jboss/keycloak/standalone/configuration/keycloak-add-user.json (inside keycloak-0)
+- Host: created this session note in /opt/vmstation-org/diff-patches/
+
+References in repo:
+- helm/keycloak-values.yaml shows keycloak.adminUser/adminPassword example.
+- docs/diff-patches-20251210/20251210T175647Z-keycloak-admin-setup.sh contains an automated script for adding/updating admin via kubectl and kcadm/kcadm.sh logic.
+
+Next steps to automate fully:
+- Create a small idempotent script in /opt/vmstation-org/diff-patches/ that:
+  * Accepts ADMIN_USER and ADMIN_PASSWORD (or reads from vault)
+  * Detects keycloak pod name (label selector)
+  * Chooses add-user path available in container (/opt/jboss/keycloak/bin/add-user-keycloak.sh or kcadm.sh)
+  * Executes add/update and restarts pod, with retries and readiness checks.
+
+End of notes.

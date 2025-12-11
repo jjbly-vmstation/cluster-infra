@@ -9,6 +9,11 @@
   hosts: monitoring_nodes:storage_nodes
   gather_facts: false
   become: true
+  vars:
+    # Set to true to remove containerd images/state (destructive)
+    reset_remove_containerd_state: false
+    # Set to true to flush nftables rules (if your system uses nft)
+    reset_flush_nft: false
   tasks:
     - name: "Display reset banner"
       ansible.builtin.debug:
@@ -28,6 +33,23 @@
       ansible.builtin.systemd:
         name: kubelet
         state: stopped
+      failed_when: false
+
+    - name: "Disable kubelet to avoid auto-start"
+      ansible.builtin.systemd:
+        name: kubelet
+        enabled: false
+        state: stopped
+      failed_when: false
+
+    - name: "Remove kubelet systemd drop-in directory"
+      ansible.builtin.file:
+        path: /etc/systemd/system/kubelet.service.d
+        state: absent
+      failed_when: false
+
+    - name: "Reload systemd daemon and reset failed units"
+      ansible.builtin.shell: systemctl daemon-reload && systemctl reset-failed
       failed_when: false
 
     - name: "Stop containerd service"
@@ -61,6 +83,15 @@
         - /opt/cni/bin
         - /root/.kube
 
+    - name: "Remove additional CNI and Calico state if present"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /var/lib/cni
+        - /var/run/calico
+      failed_when: false
+
     # Remove CNI interfaces
     - name: "Remove CNI network interfaces"
       ansible.builtin.shell: |
@@ -78,12 +109,24 @@
         iptables -X || true
       failed_when: false
 
+    - name: "Flush nftables rules (optional)"
+      ansible.builtin.shell: nft flush ruleset || true
+      when: reset_flush_nft | bool
+      failed_when: false
+
     # Restart containerd
     - name: "Restart containerd service"
       ansible.builtin.systemd:
         name: containerd
         state: restarted
         enabled: true
+      failed_when: false
+
+    - name: "Remove containerd state (destructive, optional)"
+      ansible.builtin.file:
+        path: /var/lib/containerd
+        state: absent
+      when: reset_remove_containerd_state | bool
       failed_when: false
 
     - name: "Display reset complete message"
