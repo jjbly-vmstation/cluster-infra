@@ -71,6 +71,30 @@
         pkill -9 -f etcd || true
       failed_when: false
 
+    - name: "Kill processes using /var/lib/kubelet (if any)"
+      ansible.builtin.shell: |
+        # kill processes keeping mounts or files busy under /var/lib/kubelet
+        if command -v fuser >/dev/null 2>&1; then
+          fuser -km /var/lib/kubelet || true
+        else
+          # fallback: find pids with open fds under the path
+          for pid in $(lsof +D /var/lib/kubelet 2>/dev/null | awk 'NR>1 {print $2}' | sort -u); do
+            kill -9 "$pid" || true
+          done
+        fi
+      failed_when: false
+
+    - name: "Unmount mounts under /var/lib/kubelet (lazy)"
+      ansible.builtin.shell: |
+        # prefer findmnt for recursive, ordered unmounting; fall back to mount parsing
+        if command -v findmnt >/dev/null 2>&1; then
+          # list targets under /var/lib/kubelet, reverse order, lazy unmount each
+          findmnt -R /var/lib/kubelet -o TARGET -n 2>/dev/null | tac | xargs -r -n1 umount -l || true
+        else
+          mount | awk '/\/var\/lib\/kubelet/ {print $3}' | tac | xargs -r -n1 umount -l || true
+        fi
+      failed_when: false
+
     # Remove Kubernetes directories
     - name: "Remove Kubernetes configuration"
       ansible.builtin.file:
