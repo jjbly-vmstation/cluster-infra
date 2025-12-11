@@ -6,7 +6,8 @@
 # =============================================================================
 
 - name: "Cluster Reset - Debian Nodes"
-  hosts: monitoring_nodes:storage_nodes
+  # Allow overriding target hosts via -e reset_hosts=... when running ansible-playbook
+  hosts: "{{ reset_hosts | default('monitoring_nodes:storage_nodes') }}"
   gather_facts: false
   become: true
   vars:
