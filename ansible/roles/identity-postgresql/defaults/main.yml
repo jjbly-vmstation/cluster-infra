@@ -1,0 +1,4 @@
+---
+# Default variables for identity-postgresql role
+postgresql_manifest: "{{ repo_root }}/manifests/identity/postgresql-statefulset.yaml"
+rollout_wait_timeout: 120

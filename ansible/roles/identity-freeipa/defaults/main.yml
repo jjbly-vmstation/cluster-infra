@@ -1,0 +1,3 @@
+---
+# Default variables for identity-freeipa role
+freeipa_manifest: "{{ repo_root }}/manifests/identity/freeipa.yaml"

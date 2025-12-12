@@ -1,0 +1,123 @@
+---
+# Tasks for identity-certmanager role
+# Installs cert-manager and creates ClusterIssuer
+
+- name: Ensure cert-manager CRDs are installed (idempotent)
+  shell: >-
+    kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.3/cert-manager.crds.yaml
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: certmgr_crds
+  changed_when: "'created' in certmgr_crds.stdout or 'configured' in certmgr_crds.stdout"
+  become: true
+
+- name: Add cert-manager Helm repo
+  shell: |
+    helm repo add jetstack https://charts.jetstack.io 2>&1 || true
+    helm repo update
+  changed_when: false
+  register: helm_repo_add
+
+- name: Install/upgrade cert-manager Helm chart with node affinity
+  shell: >-
+    KUBECONFIG=/etc/kubernetes/admin.conf helm upgrade --install cert-manager jetstack/cert-manager 
+    --namespace {{ namespace_cert_manager }} 
+    --create-namespace 
+    --set installCRDs=false
+    --set nodeSelector."node-role\.kubernetes\.io/control-plane"=""
+    --set tolerations[0].key=node-role.kubernetes.io/control-plane
+    --set tolerations[0].operator=Exists
+    --set tolerations[0].effect=NoSchedule
+    --set webhook.nodeSelector."node-role\.kubernetes\.io/control-plane"=""
+    --set webhook.tolerations[0].key=node-role.kubernetes.io/control-plane
+    --set webhook.tolerations[0].operator=Exists
+    --set webhook.tolerations[0].effect=NoSchedule
+    --set cainjector.nodeSelector."node-role\.kubernetes\.io/control-plane"=""
+    --set cainjector.tolerations[0].key=node-role.kubernetes.io/control-plane
+    --set cainjector.tolerations[0].operator=Exists
+    --set cainjector.tolerations[0].effect=NoSchedule
+  register: certmgr_helm
+  become: true
+
+- name: Wait for cert-manager controller rollout
+  shell: >-
+    KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status deployment/cert-manager -n {{ namespace_cert_manager }} --timeout=180s
+  register: certmgr_rollout_controller
+  failed_when: certmgr_rollout_controller.rc != 0
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  become: true
+
+- name: Wait for cert-manager webhook rollout
+  shell: >-
+    KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status deployment/cert-manager-webhook -n {{ namespace_cert_manager }} --timeout=180s
+  register: certmgr_rollout_webhook
+  failed_when: certmgr_rollout_webhook.rc != 0
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  become: true
+
+- name: Wait for cert-manager cainjector rollout
+  shell: >-
+    KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status deployment/cert-manager-cainjector -n {{ namespace_cert_manager }} --timeout=180s
+  register: certmgr_rollout_cainjector
+  failed_when: certmgr_rollout_cainjector.rc != 0
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  become: true
+
+- name: Ensure ClusterIssuer CRD exists before creating ClusterIssuer
+  shell: >-
+    KUBECONFIG=/etc/kubernetes/admin.conf kubectl get crd clusterissuers.cert-manager.io
+  register: crd_check
+  failed_when: crd_check.rc != 0
+  changed_when: false
+  become: true
+
+- name: Ensure CA cert file exists
+  stat:
+    path: "{{ ca_cert_src }}"
+  register: ca_cert_stat
+
+- name: Ensure backup directory exists (root-owned) before CA backup
+  file:
+    path: "{{ backup_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  become: true
+
+- name: Backup CA material to root backup (cert and key if present)
+  shell: >-
+    set -e;
+    cp -f {{ ca_cert_src }} {{ backup_dir }}/ca.cert.pem || true;
+    if [ -f "{{ ca_key_src }}" ]; then cp -f {{ ca_key_src }} {{ backup_dir }}/ca.key.pem; fi;
+    tar -C {{ backup_dir }} -czf {{ backup_dir }}/identity-ca-backup.tar.gz --remove-files $(ls {{ backup_dir }} | grep -E 'ca.(cert|key).pem' || true) >/dev/null 2>&1 || true;
+  when: ca_cert_stat.stat.exists
+  register: backup_run
+  changed_when: backup_run.rc == 0
+  become: true
+
+- name: Create or update Kubernetes Secret with CA (tls.crt and tls.key format for cert-manager)
+  shell: >-
+    kubectl create secret generic {{ secret_name }} --namespace {{ namespace_cert_manager }} 
+    --from-file=tls.crt={{ ca_cert_src }} 
+    --from-file=tls.key={{ ca_key_src }} 
+    --dry-run=client -o yaml | kubectl apply -f -
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: secret_apply
+  become: true
+
+- name: Render ClusterIssuer template
+  template:
+    src: "clusterissuer-freeipa.yml.j2"
+    dest: "{{ template_dest }}"
+
+- name: Apply ClusterIssuer to cluster
+  shell: kubectl apply -f {{ template_dest }}
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: issuer_apply
+  become: true

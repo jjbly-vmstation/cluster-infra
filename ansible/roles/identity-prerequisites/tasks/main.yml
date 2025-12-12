@@ -1,0 +1,65 @@
+---
+# Tasks for identity-prerequisites role
+# Ensures required binaries exist, detects infra node, and creates namespaces
+
+- name: Ensure required binaries are present (kubectl, helm)
+  shell: which {{ item }}
+  register: which_out
+  failed_when: which_out.rc != 0
+  changed_when: false
+  loop:
+    - kubectl
+    - helm
+
+- name: Detect infra node (control-plane/masternode) for infra scheduling
+  block:
+    - name: Attempt to detect control-plane node
+      shell: |
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl get nodes -l node-role.kubernetes.io/control-plane -o jsonpath='{.items[0].metadata.name}'
+      register: infra_node_detect
+      changed_when: false
+      failed_when: false
+      become: true
+
+    - name: Fallback to first schedulable node if no control-plane found
+      shell: |
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl get nodes -o jsonpath='{.items[?(@.spec.taints[*].effect!="NoSchedule")].metadata.name}' | awk '{print $1}'
+      register: infra_node_fallback
+      changed_when: false
+      when: infra_node_detect.stdout == ""
+      become: true
+
+    - name: Set infra_node variable
+      set_fact:
+        infra_node: "{{ infra_node_detect.stdout if infra_node_detect.stdout != '' else infra_node_fallback.stdout }}"
+
+    - name: Fail if no infra node detected
+      fail:
+        msg: "No suitable infra node detected. Please ensure at least one schedulable node exists."
+      when: infra_node == ""
+
+    - name: Display detected infra node
+      debug:
+        msg: "Detected infra node: {{ infra_node }}"
+
+- name: Ensure identity-related namespaces exist
+  shell: >-
+    kubectl create namespace {{ item }} --dry-run=client -o yaml | kubectl apply -f -
+  loop:
+    - "{{ namespace_cert_manager }}"
+    - "{{ namespace_identity }}"
+    - "{{ namespace_platform }}"
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  changed_when: false
+  become: true
+
+- name: Ensure nodes are schedulable (uncordon all nodes)
+  shell: |
+    kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes --no-headers | awk '{print $1}' | xargs -n1 kubectl --kubeconfig=/etc/kubernetes/admin.conf uncordon
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: uncordon_result
+  failed_when: false
+  changed_when: false
+  become: true

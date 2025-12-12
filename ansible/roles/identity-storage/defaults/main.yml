@@ -1,0 +1,9 @@
+---
+# Default variables for identity-storage role
+identity_data_dir: /srv/identity_data
+postgresql_uid: "999"
+postgresql_gid: "999"
+enable_postgres_chown: true
+enable_freeipa_chown: true
+storage_class_manifest: "{{ repo_root }}/manifests/identity/storage-class-manual.yaml"
+keycloak_pv_manifest: "{{ repo_root }}/manifests/identity/keycloak-postgresql-pv.yaml"
