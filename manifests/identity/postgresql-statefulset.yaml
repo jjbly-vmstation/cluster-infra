@@ -60,8 +60,13 @@ spec:
         app: keycloak
         component: postgresql
     spec:
+      # Schedule on control-plane node (masternode) only - always on
       nodeSelector:
-        kubernetes.io/hostname: masternode
+        node-role.kubernetes.io/control-plane: ""
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
       containers:
       - name: postgresql
         image: docker.io/postgres:11
