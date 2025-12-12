@@ -12,7 +12,7 @@
 # STORAGE CONFIGURATION:
 # The identity-deploy-and-handover.yml playbook creates:
 # - A 'manual' StorageClass for manual PV provisioning
-# - A PersistentVolume (keycloak-postgresql-pv) at /srv/identity_data/postgresql
+# - A PersistentVolume (keycloak-postgresql-pv) at /srv/monitoring-data/postgresql
 # This resolves the "PVC data-keycloak-postgresql-0 Pending" issue by providing
 # storage for the PostgreSQL database used by Keycloak.
 

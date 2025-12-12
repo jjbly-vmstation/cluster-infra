@@ -21,7 +21,7 @@ spec:
   persistentVolumeReclaimPolicy: Retain
   storageClassName: manual
   hostPath:
-    path: /srv/identity_data/postgresql
+    path: /srv/monitoring-data/postgresql
     type: DirectoryOrCreate
   nodeAffinity:
     required:

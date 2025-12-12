@@ -17,7 +17,7 @@ spec:
   persistentVolumeReclaimPolicy: Retain
   storageClassName: manual
   hostPath:
-    path: /srv/identity_data/freeipa
+    path: /srv/monitoring-data/freeipa
     type: DirectoryOrCreate
   nodeAffinity:
     required:
@@ -234,5 +234,5 @@ data:
     
     ## Storage
     
-    FreeIPA data is stored at /srv/identity_data/freeipa on the infra node.
+    FreeIPA data is stored at /srv/monitoring-data/freeipa on the infra node.
     Ensure this directory has adequate space (20Gi minimum).

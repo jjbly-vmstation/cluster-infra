@@ -86,12 +86,12 @@ else
     fi
 fi
 
-# Test 4: Check if /srv/identity_data/postgresql exists on infra node
-log_info "Test 4: Checking if /srv/identity_data/postgresql directory exists..."
-if [ -d "/srv/identity_data/postgresql" ]; then
-    test_pass "/srv/identity_data/postgresql exists"
+# Test 4: Check if /srv/monitoring-data/postgresql exists on infra node
+log_info "Test 4: Checking if /srv/monitoring-data/postgresql directory exists..."
+if [ -d "/srv/monitoring-data/postgresql" ]; then
+    test_pass "/srv/monitoring-data/postgresql exists"
 else
-    test_fail "/srv/identity_data/postgresql does not exist"
+    test_fail "/srv/monitoring-data/postgresql does not exist"
 fi
 
 # Test 5: Check StorageClass

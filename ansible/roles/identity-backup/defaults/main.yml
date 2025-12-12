@@ -1,4 +1,4 @@
 ---
 # Default variables for identity-backup role
 backup_dir: /root/identity-backup
-identity_data_dir: /srv/identity_data
+identity_data_dir: /srv/monitoring-data

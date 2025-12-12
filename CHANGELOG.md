@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed - Storage Location (2025-12-12)
+
+- **Storage path migration**: Changed identity data storage from `/srv/identity_data` to `/srv/monitoring-data`
+  - PostgreSQL data: `/srv/monitoring-data/postgresql`
+  - FreeIPA data: `/srv/monitoring-data/freeipa`
+  - Updated all manifests, templates, documentation, and test scripts
+- **Cleanup script**: Added `scripts/cleanup-identity-stack.sh` for manual cleanup of PV/PVCs and pods
+  - Backs up data before deletion (timestamped backups)
+  - Recreates clean directories with proper permissions
+  - Interactive confirmation to prevent accidental data loss
+- **Documentation**: Added `scripts/README.md` documenting all management scripts
+
 ### Fixed - PostgreSQL Rollout Timeout (2025-12-09)
 
 - **PostgreSQL configuration compatibility**: Fixed incompatibility between official `postgres:11` image and Bitnami-specific Helm chart settings
@@ -20,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Infrastructure
 - **Infra node detection**: Automatic detection of control-plane node with fallback to first schedulable node
-- **HostPath management**: Automated creation of `/srv/identity_data/postgresql` and `/srv/identity_data/freeipa` directories with proper permissions
+- **HostPath management**: Automated creation of `/srv/monitoring-data/postgresql` and `/srv/monitoring-data/freeipa` directories with proper permissions
 - **FreeIPA manifest**: Added complete FreeIPA deployment manifest for Kerberos, LDAP, and CA services at `manifests/identity/freeipa.yaml`
 
 #### Helm Deployments
@@ -32,8 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Backup & Recovery
 - **Opt-in destructive replace**: New playbook variables `identity_force_replace` (default: false) and `identity_backup_before_replace` (default: true)
 - **Automated backups**: When `identity_force_replace=true`, creates timestamped backups of:
-  - PostgreSQL hostPath data (`/srv/identity_data/postgresql`)
-  - FreeIPA hostPath data (`/srv/identity_data/freeipa`)
+  - PostgreSQL hostPath data (`/srv/monitoring-data/postgresql`)
+  - FreeIPA hostPath data (`/srv/monitoring-data/freeipa`)
   - CA certificates and keys (if available)
 - **Checksum verification**: SHA256 checksums computed and stored for all backup archives
 - **Backup location**: All backups stored in `/root/identity-backup` with mode 0700
