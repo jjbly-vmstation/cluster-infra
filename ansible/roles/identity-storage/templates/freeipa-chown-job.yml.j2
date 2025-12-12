@@ -9,10 +9,10 @@ spec:
     metadata:
       name: freeipa-chown
     spec:
-      {%- if infra_node is defined and infra_node != '' %}
+      {%- if infra_node is defined and infra_node != '' -%}
       nodeSelector:
         kubernetes.io/hostname: {{ infra_node }}
-      {%- endif %}
+      {%- endif -%}
       tolerations:
         - key: node-role.kubernetes.io/control-plane
           operator: Exists

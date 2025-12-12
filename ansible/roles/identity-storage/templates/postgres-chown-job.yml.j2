@@ -21,14 +21,14 @@ spec:
       containers:
         - name: chown
           image: busybox:1.36
-          command: ["/bin/sh", "-c", "chown -R {{ postgresql_uid }}:{{ postgresql_gid }} {{ identity_data_dir }}/postgresql && ls -ld {{ identity_data_dir }}/postgresql && echo DONE"]
+          command: ["/bin/sh", "-c", "chown -R 999:999 {{ identity_data_dir }}/postgresql && ls -ld {{ identity_data_dir }}/postgresql && echo DONE"]
           securityContext:
             privileged: true
           volumeMounts:
-            - name: host-postgres
+            - name: host-postgresql
               mountPath: {{ identity_data_dir }}/postgresql
       volumes:
-        - name: host-postgres
+        - name: host-postgresql
           hostPath:
             path: {{ identity_data_dir }}/postgresql
             type: DirectoryOrCreate
