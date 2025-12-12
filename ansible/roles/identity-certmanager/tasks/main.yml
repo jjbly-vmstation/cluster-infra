@@ -275,3 +275,24 @@
   debug:
     msg: "ClusterIssuer '{{ clusterissuer_name }}' created successfully with CA from {{ ca_cert_src }}"
   when: issuer_apply is defined and issuer_apply is succeeded
+
+- name: Deploy TLS certificates for identity services
+  shell: kubectl apply -f {{ repo_root }}/manifests/identity/certificates/keycloak-certificate.yaml
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: keycloak_cert_apply
+  changed_when: "'created' in keycloak_cert_apply.stdout or 'configured' in keycloak_cert_apply.stdout"
+  become: true
+  when: issuer_apply is defined and issuer_apply is succeeded
+
+- name: Deploy TLS certificates for monitoring services
+  shell: kubectl apply -f {{ item }}
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  loop:
+    - "{{ repo_root }}/manifests/identity/certificates/grafana-certificate.yaml"
+    - "{{ repo_root }}/manifests/identity/certificates/prometheus-certificate.yaml"
+  register: monitoring_certs_apply
+  changed_when: "'created' in monitoring_certs_apply.stdout or 'configured' in monitoring_certs_apply.stdout"
+  become: true
+  when: issuer_apply is defined and issuer_apply is succeeded

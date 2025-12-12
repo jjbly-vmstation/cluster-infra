@@ -18,17 +18,38 @@ cluster-infra/
 │   │       └── secrets.yml.example
 │   ├── playbooks/
 │   │   ├── deploy-cluster.yaml     # Kubernetes deployment
+│   │   ├── identity-deploy-and-handover.yml  # Identity stack deployment
 │   │   ├── reset-cluster.yaml      # Cluster cleanup
 │   │   ├── cleanup-homelab.yml     # Homelab cleanup
 │   │   ├── run-preflight-rhel10.yml# RHEL10 preparation
 │   │   ├── verify-cluster.yaml     # Cluster verification
 │   │   └── README.md
 │   └── roles/
+│       ├── identity-admin/         # Administrator account creation
+│       ├── identity-backup/        # Identity data backup
+│       ├── identity-certmanager/   # cert-manager with FreeIPA CA
+│       ├── identity-freeipa/       # FreeIPA LDAP server
+│       ├── identity-freeipa-ldap-client/  # FreeIPA client for nodes
+│       ├── identity-keycloak/      # Keycloak SSO server
+│       ├── identity-postgresql/    # PostgreSQL for Keycloak
+│       ├── identity-prerequisites/ # Identity stack prerequisites
+│       ├── identity-storage/       # Persistent storage setup
 │       └── preflight-rhel10/       # RHEL10 preflight role
 ├── config/
 │   └── kubespray-defaults.env      # Kubespray configuration
 ├── docs/
+│   ├── IDENTITY-SSO-SETUP.md       # Identity stack and SSO setup guide
+│   ├── KEYCLOAK-INTEGRATION.md     # Application SSO integration guide
 │   └── KUBESPRAY_DEPLOYMENT.md     # Kubespray deployment guide
+├── helm/
+│   └── keycloak-values.yaml        # Keycloak Helm chart values
+├── manifests/
+│   └── identity/
+│       ├── certificates/           # TLS certificates for services
+│       ├── freeipa.yaml            # FreeIPA StatefulSet
+│       ├── keycloak-postgresql-pv.yaml  # PostgreSQL persistent volume
+│       ├── postgresql-statefulset.yaml  # PostgreSQL for Keycloak
+│       └── storage-class-manual.yaml    # Manual storage class
 ├── inventory/
 │   ├── production/                 # Production inventory
 │   │   ├── /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml               # Single source of truth
@@ -43,6 +64,9 @@ cluster-infra/
 │   ├── activate-kubespray-env.sh   # Environment activation
 │   ├── ops-kubespray-automation.sh # CI/CD automation
 │   ├── validate-kubespray-setup.sh # Validate environment
+│   ├── verify-identity-deployment.sh  # Identity stack verification
+│   ├── verify-ldap-integration.sh  # LDAP connectivity testing
+│   ├── verify-sso-integration.sh   # SSO configuration verification
 │   ├── test-inventory.sh           # Validate inventory
 │   ├── dry-run-deployment.sh       # Test deployment
 │   └── lib/
@@ -148,6 +172,79 @@ The `deploy-cluster.yaml` playbook implements 8 phases:
 7. **Phase 6: Cluster Validation** - Verify nodes Ready
 8. **Phase 7: Application Deployment** - Deploy monitoring stack
 9. **Phase 8: Wake-on-LAN Validation** (Optional)
+
+## Identity Stack & SSO
+
+The cluster includes a comprehensive identity management solution for cluster-wide Single Sign-On (SSO):
+
+### Architecture
+
+```
+┌────────────────────────────────────────────────────────────┐
+│                    Identity Stack                          │
+│                                                             │
+│  ┌─────────────┐      ┌─────────────┐                     │
+│  │  FreeIPA    │─────▶│  Keycloak   │                     │
+│  │  LDAP/CA    │      │  SSO/OIDC   │                     │
+│  └──────┬──────┘      └──────┬──────┘                     │
+│         │                     │                             │
+│         │                     ▼                             │
+│         │         ┌───────────────────┐                    │
+│         │         │  OIDC Clients     │                    │
+│         │         │  - Grafana        │                    │
+│         │         │  - Prometheus     │                    │
+│         │         │  - Loki           │                    │
+│         │         └───────────────────┘                    │
+│         │                                                   │
+│         ▼                                                   │
+│  ┌─────────────┐                                           │
+│  │cert-manager │                                           │
+│  │ClusterIssuer│                                           │
+│  └─────────────┘                                           │
+│                                                             │
+│  All Nodes: FreeIPA LDAP Client + SSSD                    │
+└────────────────────────────────────────────────────────────┘
+```
+
+### Components
+
+- **FreeIPA**: LDAP directory, Kerberos, and Certificate Authority
+- **Keycloak**: Identity and Access Management, OIDC/SAML SSO provider
+- **cert-manager**: Automated TLS certificate management with FreeIPA CA
+- **PostgreSQL**: Database backend for Keycloak
+
+### Deployment
+
+```bash
+# Deploy complete identity stack
+ansible-playbook ansible/playbooks/identity-deploy-and-handover.yml
+
+# Verify deployment
+./scripts/verify-identity-deployment.sh
+./scripts/verify-sso-integration.sh
+./scripts/verify-ldap-integration.sh
+```
+
+### Access Points
+
+- **Keycloak Admin**: `http://192.168.4.63:30080/auth/admin/`
+- **FreeIPA Web UI**: `https://ipa.vmstation.local`
+- **Credentials**: `/root/identity-backup/cluster-admin-credentials.txt`
+
+### Documentation
+
+- [Identity SSO Setup Guide](docs/IDENTITY-SSO-SETUP.md) - Complete deployment and configuration guide
+- [Keycloak Integration](docs/KEYCLOAK-INTEGRATION.md) - How to integrate applications with SSO
+
+### Features
+
+✅ Cluster-wide Single Sign-On (SSO)  
+✅ LDAP authentication on all nodes  
+✅ Automated TLS certificate management  
+✅ Pre-configured OIDC clients for monitoring stack  
+✅ FreeIPA CA integration with cert-manager  
+✅ Role-based access control (RBAC)  
+✅ Secure credential management  
 
 ## Kubespray Integration
 

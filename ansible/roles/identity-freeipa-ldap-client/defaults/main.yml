@@ -1,0 +1,8 @@
+---
+# Default variables for identity-freeipa-ldap-client role
+freeipa_server_hostname: "ipa.vmstation.local"
+freeipa_domain: "vmstation.local"
+freeipa_realm: "VMSTATION.LOCAL"
+freeipa_server_ip: "192.168.4.63"  # masternode IP
+freeipa_admin_password: "CHANGEME_IPA_ADMIN_PASSWORD"
+freeipa_client_install: true

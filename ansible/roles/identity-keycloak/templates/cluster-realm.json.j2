@@ -1,0 +1,83 @@
+{
+  "realm": "{{ keycloak_realm | default('cluster-services') }}",
+  "enabled": true,
+  "displayName": "Cluster Services",
+  "displayNameHtml": "<div>Cluster Services SSO</div>",
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "rememberMe": true,
+  "loginTheme": "keycloak",
+  "clients": [
+    {
+      "clientId": "grafana",
+      "name": "Grafana Monitoring",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "redirectUris": [
+        "https://grafana.vmstation.local/*",
+        "http://grafana.vmstation.local/*",
+        "http://192.168.4.63:30300/*"
+      ],
+      "webOrigins": ["+"],
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "authorizationServicesEnabled": false,
+      "fullScopeAllowed": true
+    },
+    {
+      "clientId": "prometheus",
+      "name": "Prometheus Monitoring",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "redirectUris": [
+        "https://prometheus.vmstation.local/*",
+        "http://prometheus.vmstation.local/*",
+        "http://192.168.4.63:30900/*"
+      ],
+      "webOrigins": ["+"],
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "authorizationServicesEnabled": false,
+      "fullScopeAllowed": true
+    },
+    {
+      "clientId": "loki",
+      "name": "Loki Logging",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "redirectUris": [
+        "https://loki.vmstation.local/*",
+        "http://loki.vmstation.local/*"
+      ],
+      "webOrigins": ["+"],
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "authorizationServicesEnabled": false,
+      "fullScopeAllowed": true
+    }
+  ],
+  "roles": {
+    "realm": [
+      {
+        "name": "cluster-admin",
+        "description": "Cluster administrator role"
+      },
+      {
+        "name": "cluster-user",
+        "description": "Cluster user role"
+      }
+    ]
+  }
+}

@@ -1,0 +1,21 @@
+---
+# Certificate for Prometheus monitoring service
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: prometheus-tls
+  namespace: monitoring
+spec:
+  secretName: prometheus-tls-secret
+  issuerRef:
+    name: freeipa-ca-issuer
+    kind: ClusterIssuer
+  commonName: prometheus.vmstation.local
+  dnsNames:
+    - prometheus.vmstation.local
+    - prometheus
+    - prometheus.monitoring
+    - prometheus.monitoring.svc
+    - prometheus.monitoring.svc.cluster.local
+  duration: 2160h  # 90 days
+  renewBefore: 360h  # 15 days

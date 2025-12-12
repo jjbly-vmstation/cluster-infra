@@ -5,6 +5,8 @@
 #
 # The control-plane taint issue has been resolved by ensuring all StatefulSets
 # have appropriate tolerations for node-role.kubernetes.io/control-plane:NoSchedule.
+#
+# Enhanced with SSO capabilities: FreeIPA LDAP client integration and Keycloak SSO configuration
 
 - name: Deploy identity stack and hand over CA to cert-manager
   hosts: localhost
@@ -71,7 +73,13 @@
         name: identity-certmanager
       tags: [certmanager, ca]
     
-    # Phase 8: Final summary
+    # Phase 8: Create administrator account
+    - name: Create cluster administrator account
+      include_role:
+        name: identity-admin
+      tags: [admin, credentials]
+    
+    # Phase 9: Final summary
     - name: Display deployment summary
       debug:
         msg: |
@@ -86,14 +94,46 @@
             - FreeIPA: {{ 'Deployed' if freeipa_manifest_stat is defined and freeipa_manifest_stat.stat.exists else 'Skipped' }}
             - cert-manager: Installed
             - ClusterIssuer: Created
+            - TLS Certificates: Deployed for Keycloak, Grafana, Prometheus
+            - SSO Configuration: Prepared (requires manual completion)
           
           Access Keycloak:
             Run: kubectl get nodes -o wide
             Then access: http://<node-ip>:30080/auth
           
           Backup Location: /root/identity-backup
+          Credentials: /root/identity-backup/cluster-admin-credentials.txt
+          SSO Realm Config: /tmp/cluster-realm.json
+          
+          Next Steps for SSO:
+            1. Access Keycloak admin console
+            2. Import realm from /tmp/cluster-realm.json
+            3. Configure LDAP user federation with FreeIPA
+            4. Create OIDC client secrets for Grafana/Prometheus
+            5. Deploy FreeIPA LDAP clients to cluster nodes (see playbook comments)
           
           To re-run with destructive replace:
             ansible-playbook {{ playbook_dir }}/identity-deploy-and-handover.yml -e identity_force_replace=true
           ============================================================
       tags: [always]
+
+# Phase 10: Configure FreeIPA LDAP clients on all cluster nodes
+# Note: This phase is commented out by default as it requires:
+# 1. A running FreeIPA server (deployed in Phase 6)
+# 2. Proper network connectivity to FreeIPA from all nodes
+# 3. FreeIPA admin credentials
+# Uncomment and configure when ready to enable cluster-wide LDAP authentication
+#
+# - name: Configure FreeIPA LDAP clients on all nodes
+#   hosts: all  # Requires inventory with masternode, storagenodet3500, homelab
+#   become: true
+#   gather_facts: true
+#   vars:
+#     freeipa_server_hostname: "ipa.vmstation.local"
+#     freeipa_domain: "vmstation.local"
+#     freeipa_realm: "VMSTATION.LOCAL"
+#     freeipa_server_ip: "192.168.4.63"
+#     freeipa_admin_password: "{{ lookup('env', 'FREEIPA_ADMIN_PASSWORD') | default('CHANGEME_IPA_ADMIN_PASSWORD') }}"
+#   roles:
+#     - identity-freeipa-ldap-client
+#   tags: [freeipa-client, ldap]

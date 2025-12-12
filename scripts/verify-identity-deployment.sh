@@ -121,7 +121,23 @@ echo "-------------------------"
 check_resource clusterissuer "" freeipa-ca-issuer
 echo ""
 
-echo "8. Checking Node Scheduling"
+echo "8. Checking TLS Certificates"
+echo "-----------------------------"
+if check_resource certificate $NAMESPACE_IDENTITY keycloak-tls; then
+    echo "  Status: $(kubectl --kubeconfig=$KUBECONFIG -n $NAMESPACE_IDENTITY get certificate keycloak-tls -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo 'Unknown')"
+fi
+echo ""
+
+echo "9. Checking SSO Configuration"
+echo "------------------------------"
+if [ -f /tmp/cluster-realm.json ]; then
+    echo "✓ Keycloak realm configuration exists"
+else
+    echo "⚠ Realm configuration not found (will be created on first run)"
+fi
+echo ""
+
+echo "10. Checking Node Scheduling"
 echo "---------------------------"
 echo "Control-plane node(s):"
 kubectl --kubeconfig=$KUBECONFIG get nodes -l node-role.kubernetes.io/control-plane -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints
@@ -131,7 +147,7 @@ echo "Identity pods distribution:"
 kubectl --kubeconfig=$KUBECONFIG -n $NAMESPACE_IDENTITY get pods -o custom-columns=NAME:.metadata.name,NODE:.spec.nodeName,STATUS:.status.phase
 echo ""
 
-echo "9. Verification Summary"
+echo "11. Verification Summary"
 echo "-----------------------"
 ERRORS=0
 
