@@ -76,6 +76,8 @@
     # FreeIPA image to deploy (explicit tag - avoid :latest)
     # Example: freeipa/freeipa-server:almalinux-10-4.12.2
     freeipa_image: "freeipa/freeipa-server:almalinux-10-4.12.2"
+    # FreeIPA admin password (should be set via variables or vault, defaults to CHANGEME_IPA_ADMIN_PASSWORD)
+    freeipa_admin_password: "{{ freeipa_admin_password | default('CHANGEME_IPA_ADMIN_PASSWORD') }}"
     # Optional registry credentials (leave undefined to skip secret creation)
     # freeipa_registry_server: "https://index.docker.io/v1/"
     # freeipa_registry_username: "myuser"
@@ -1223,23 +1225,25 @@
         - name: Create FreeIPA test user
           shell: >-
             KUBECONFIG=/etc/kubernetes/admin.conf kubectl exec -n {{ namespace_identity }} sts/freeipa -- bash -c '
-            echo "CHANGEME_IPA_ADMIN_PASSWORD" | kinit admin &&
-            ipa user-add {{ freeipa_test_username }} --first=Test --last=User --email={{ freeipa_test_username }}@vmstation.local --password || true
+            echo "{{ freeipa_admin_password }}" | kinit admin &&
+            ipa user-add {{ freeipa_test_username }} --first=Test --last=User --email={{ freeipa_test_username }}@vmstation.local --password
             '
           when: freeipa_status.stdout == "active"
           register: freeipa_user_create
-          failed_when: false
+          failed_when: freeipa_user_create.rc != 0 and 'user with name' not in freeipa_user_create.stderr
+          no_log: true
           become: true
 
         - name: Set FreeIPA test user password
-          shell: >-
+          shell: |
             KUBECONFIG=/etc/kubernetes/admin.conf kubectl exec -n {{ namespace_identity }} sts/freeipa -- bash -c '
-            echo -e "{{ freeipa_test_password }}\n{{ freeipa_test_password }}" | ipa user-mod {{ freeipa_test_username }} --password
+            echo "{{ freeipa_admin_password }}" | kinit admin &&
+            echo "{{ freeipa_test_password }}" | ipa user-mod {{ freeipa_test_username }} --password
             '
-          when: freeipa_status.stdout == "active" and freeipa_user_create is defined
+          when: freeipa_status.stdout == "active" and freeipa_user_create is defined and freeipa_user_create.rc == 0
           register: freeipa_user_password
           no_log: true
-          failed_when: false
+          failed_when: freeipa_user_password.rc != 0 and 'no modifications' not in freeipa_user_password.stderr
           become: true
 
         - name: Save FreeIPA test user credentials

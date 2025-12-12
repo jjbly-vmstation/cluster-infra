@@ -220,6 +220,8 @@ if kubectl get pods -n identity -o wide &> /dev/null; then
     IDENTITY_PODS_NODES=$(kubectl get pods -n identity -o jsonpath='{.items[*].spec.nodeName}' | tr ' ' '\n' | sort -u)
     if [ -n "$IDENTITY_PODS_NODES" ]; then
         ALL_ON_CONTROL_PLANE=true
+        # INFRA_NODE is the control-plane node detected in Test 3
+        # All identity pods should be scheduled on this node (which is always on)
         for node in $IDENTITY_PODS_NODES; do
             if [ "$node" != "$INFRA_NODE" ]; then
                 ALL_ON_CONTROL_PLANE=false
@@ -229,7 +231,7 @@ if kubectl get pods -n identity -o wide &> /dev/null; then
         if [ "$ALL_ON_CONTROL_PLANE" = true ]; then
             test_pass "All identity pods are scheduled on control-plane node ($INFRA_NODE)"
         else
-            test_fail "Some identity pods are not scheduled on control-plane node (nodes: $IDENTITY_PODS_NODES)"
+            test_fail "Some identity pods are not scheduled on control-plane node (nodes: $IDENTITY_PODS_NODES, expected: $INFRA_NODE)"
         fi
     else
         log_warn "No identity pods found"
