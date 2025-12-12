@@ -1,0 +1,58 @@
+---
+# Tasks for identity-postgresql role
+# Deploys and manages PostgreSQL StatefulSet for Keycloak
+
+- name: Deploy PostgreSQL StatefulSet for Keycloak
+  shell: kubectl apply -f {{ postgresql_manifest }}
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: postgresql_apply
+  changed_when: "'created' in postgresql_apply.stdout or 'configured' in postgresql_apply.stdout"
+  become: true
+
+- name: Wait for Keycloak PostgreSQL PVC to be created
+  shell: >-
+    KUBECONFIG=/etc/kubernetes/admin.conf kubectl get pvc data-keycloak-postgresql-0 -n {{ namespace_identity }} -o name
+  register: pvc_exists_check
+  until: pvc_exists_check.rc == 0
+  retries: 30
+  delay: 2
+  failed_when: false
+  become: true
+
+- name: Check Keycloak PostgreSQL PVC status
+  shell: >-
+    KUBECONFIG=/etc/kubernetes/admin.conf kubectl get pvc data-keycloak-postgresql-0 -n {{ namespace_identity }} -o jsonpath='{.status.phase}'
+  register: keycloak_postgres_pvc_phase
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Find Available PVs labeled for Keycloak PostgreSQL
+  shell: >-
+    KUBECONFIG=/etc/kubernetes/admin.conf kubectl get pv -l app=keycloak,component=postgresql -o jsonpath='{range .items[?(@.status.phase=="Available")]}{.metadata.name}{"\n"}{end}'
+  register: keycloak_postgres_available_pvs
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Bind an Available PV to Keycloak PVC when PVC is Pending
+  shell: >-
+    KUBECONFIG=/etc/kubernetes/admin.conf kubectl patch pv {{ item }} 
+    -p '{"spec":{"claimRef":{"namespace":"{{ namespace_identity }}","name":"data-keycloak-postgresql-0"}}}'
+  loop: "{{ keycloak_postgres_available_pvs.stdout_lines }}"
+  when: 
+    - keycloak_postgres_pvc_phase.stdout == 'Pending'
+    - keycloak_postgres_available_pvs.stdout != ''
+  register: keycloak_pv_bind
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  become: true
+
+- name: Wait for Keycloak PostgreSQL rollout
+  shell: >-
+    KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status statefulset/keycloak-postgresql 
+    -n {{ namespace_identity }} --timeout={{ rollout_wait_timeout }}s
+  register: keycloak_pg_rollout
+  failed_when: keycloak_pg_rollout.rc != 0
+  become: true

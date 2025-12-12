@@ -1,0 +1,55 @@
+---
+# Tasks for identity-backup role
+# Handles backup operations for identity components
+
+- name: Ensure backup directory exists upfront (root-owned)
+  file:
+    path: "{{ backup_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  become: true
+
+- name: Get current timestamp for backup filename
+  shell: date -u +%Y%m%dT%H%M%SZ
+  register: backup_timestamp
+  changed_when: false
+
+- name: Backup PostgreSQL hostPath data
+  shell: >-
+    set -e;
+    if [ -d "{{ identity_data_dir }}/postgresql" ]; then
+      tar -C "{{ identity_data_dir }}" -czf "{{ backup_dir }}/identity-postgres-data-{{ backup_timestamp.stdout }}.tar.gz" postgresql;
+      echo "Backup created: {{ backup_dir }}/identity-postgres-data-{{ backup_timestamp.stdout }}.tar.gz";
+    else
+      echo "No hostPath data to back up at {{ identity_data_dir }}/postgresql";
+    fi
+  become: true
+  register: postgres_backup
+
+- name: Backup FreeIPA hostPath data (if exists)
+  shell: >-
+    set -e;
+    if [ -d "{{ identity_data_dir }}/freeipa" ]; then
+      tar -C "{{ identity_data_dir }}" -czf "{{ backup_dir }}/identity-freeipa-data-{{ backup_timestamp.stdout }}.tar.gz" freeipa;
+      echo "Backup created: {{ backup_dir }}/identity-freeipa-data-{{ backup_timestamp.stdout }}.tar.gz";
+    else
+      echo "No FreeIPA data to back up at {{ identity_data_dir }}/freeipa";
+    fi
+  become: true
+  register: freeipa_backup
+
+- name: Compute SHA256 checksums for backup files
+  shell: >-
+    cd {{ backup_dir }} && sha256sum identity-*.tar.gz > SHA256SUMS 2>/dev/null || true
+  become: true
+  register: backup_checksums
+
+- name: Display backup information
+  debug:
+    msg: |
+      Backups created in {{ backup_dir }}:
+      {{ postgres_backup.stdout }}
+      {{ freeipa_backup.stdout }}
+      Checksums saved to {{ backup_dir }}/SHA256SUMS

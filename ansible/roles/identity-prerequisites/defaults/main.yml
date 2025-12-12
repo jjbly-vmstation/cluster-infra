@@ -1,0 +1,5 @@
+---
+# Default variables for identity-prerequisites role
+namespace_cert_manager: cert-manager
+namespace_identity: identity
+namespace_platform: platform

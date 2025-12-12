@@ -1,0 +1,107 @@
+---
+# Tasks for identity-storage role
+# Manages storage classes, PVs, PVCs, and hostPath ownership
+
+- name: Create identity data directories for persistent storage
+  file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: "{{ item.mode }}"
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+  become: true
+  loop:
+    - { path: "{{ identity_data_dir }}/postgresql", mode: '0755', owner: "{{ postgresql_uid }}", group: "{{ postgresql_gid }}" }
+    - { path: "{{ identity_data_dir }}/freeipa", mode: '0755', owner: 'root', group: 'root' }
+
+- name: Deploy StorageClass for Keycloak PostgreSQL (idempotent)
+  shell: kubectl apply -f {{ storage_class_manifest }}
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: storage_class_apply
+  changed_when: "'created' in storage_class_apply.stdout or 'configured' in storage_class_apply.stdout"
+  become: true
+
+- name: Deploy PersistentVolume for Keycloak PostgreSQL (idempotent)
+  shell: kubectl apply -f {{ keycloak_pv_manifest }}
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: keycloak_pv_apply
+  changed_when: "'created' in keycloak_pv_apply.stdout or 'configured' in keycloak_pv_apply.stdout"
+  become: true
+
+- name: Clear claimRef from Keycloak PostgreSQL PV if it's Released
+  shell: >-
+    KUBECONFIG=/etc/kubernetes/admin.conf kubectl patch pv keycloak-postgresql-pv 
+    --type=json -p='[{"op":"remove","path":"/spec/claimRef"}]'
+  when: keycloak_pv_apply.rc == 0
+  register: pv_claim_clear
+  failed_when: false
+  changed_when: "'patched' in pv_claim_clear.stdout"
+  become: true
+
+- name: Fix hostPath ownership for PostgreSQL via privileged Job
+  when: enable_postgres_chown | default(false) | bool
+  block:
+    - name: Render chown job manifest from template
+      template:
+        src: postgres-chown-job.yml.j2
+        dest: /tmp/postgres-chown-job.yml
+      become: true
+
+    - name: Apply chown Job manifest
+      shell: kubectl apply -f /tmp/postgres-chown-job.yml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: chown_job_apply
+      changed_when: "'created' in chown_job_apply.stdout or 'configured' in chown_job_apply.stdout"
+      become: true
+
+    - name: Wait for chown Job completion
+      shell: kubectl -n {{ namespace_identity }} wait --for=condition=complete job/postgres-chown-job --timeout=120s
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: chown_job_wait
+      failed_when: chown_job_wait.rc != 0
+      become: true
+
+    - name: Delete chown Job
+      shell: kubectl -n {{ namespace_identity }} delete job/postgres-chown-job --ignore-not-found
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      changed_when: false
+      failed_when: false
+      become: true
+
+- name: Fix hostPath ownership for FreeIPA via privileged Job
+  when: enable_freeipa_chown | default(false) | bool
+  block:
+    - name: Render FreeIPA chown job manifest from template
+      template:
+        src: freeipa-chown-job.yml.j2
+        dest: /tmp/freeipa-chown-job.yml
+      become: true
+
+    - name: Apply FreeIPA chown Job manifest
+      shell: kubectl apply -f /tmp/freeipa-chown-job.yml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: freeipa_chown_job_apply
+      changed_when: "'created' in freeipa_chown_job_apply.stdout or 'configured' in freeipa_chown_job_apply.stdout"
+      become: true
+
+    - name: Wait for FreeIPA chown Job completion
+      shell: kubectl -n {{ namespace_identity }} wait --for=condition=complete job/freeipa-chown-job --timeout=120s
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: freeipa_chown_job_wait
+      failed_when: freeipa_chown_job_wait.rc != 0
+      become: true
+
+    - name: Delete FreeIPA chown Job
+      shell: kubectl -n {{ namespace_identity }} delete job/freeipa-chown-job --ignore-not-found
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      changed_when: false
+      failed_when: false
+      become: true

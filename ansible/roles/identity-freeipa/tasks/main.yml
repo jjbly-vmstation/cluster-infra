@@ -1,0 +1,32 @@
+---
+# Tasks for identity-freeipa role
+# Deploys and manages FreeIPA StatefulSet
+
+- name: Check if FreeIPA manifest exists
+  stat:
+    path: "{{ freeipa_manifest }}"
+  register: freeipa_manifest_stat
+
+- name: Deploy FreeIPA from manifest (if available)
+  shell: kubectl apply -f {{ freeipa_manifest }}
+  when: freeipa_manifest_stat.stat.exists
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: freeipa_apply
+  changed_when: "'created' in freeipa_apply.stdout or 'configured' in freeipa_apply.stdout"
+  become: true
+
+- name: Clear claimRef from FreeIPA PV if it's Released
+  shell: >-
+    KUBECONFIG=/etc/kubernetes/admin.conf kubectl patch pv freeipa-data-pv 
+    --type=json -p='[{"op":"remove","path":"/spec/claimRef"}]'
+  when: freeipa_apply is defined and freeipa_apply.rc == 0
+  register: freeipa_pv_claim_clear
+  failed_when: false
+  changed_when: "'patched' in freeipa_pv_claim_clear.stdout"
+  become: true
+
+- name: Inform about missing FreeIPA manifest
+  debug:
+    msg: "FreeIPA manifest {{ freeipa_manifest }} not found. FreeIPA will not be deployed. To deploy FreeIPA, ensure the manifest exists."
+  when: not freeipa_manifest_stat.stat.exists
