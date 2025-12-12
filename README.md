@@ -246,6 +246,79 @@ cd ansible
 ansible-playbook playbooks/deploy-cluster.yaml --check -e "manifests_path=/tmp/manifests"
 ```
 
+## Identity Stack Deployment
+
+The identity stack (Keycloak, PostgreSQL, FreeIPA, cert-manager) can be deployed using the refactored modular playbook.
+
+### Quick Start
+
+```bash
+# Standard deployment
+ansible-playbook ansible/playbooks/identity-deploy-and-handover.yml
+
+# With destructive replace (includes backup)
+ansible-playbook ansible/playbooks/identity-deploy-and-handover.yml -e identity_force_replace=true
+```
+
+### Components
+
+The identity deployment includes:
+- **PostgreSQL**: Database for Keycloak (hostPath storage on control-plane)
+- **Keycloak**: Identity and access management
+- **FreeIPA**: Optional LDAP/Kerberos/CA (hostPath storage on control-plane)
+- **cert-manager**: Certificate management with custom CA integration
+
+### Modular Roles
+
+The deployment is organized into 7 modular roles:
+- `identity-prerequisites`: Binary checks, node detection, namespaces
+- `identity-storage`: Storage classes, PVs, hostPath ownership
+- `identity-postgresql`: PostgreSQL StatefulSet management
+- `identity-keycloak`: Keycloak Helm deployment
+- `identity-freeipa`: FreeIPA StatefulSet management (optional)
+- `identity-certmanager`: cert-manager installation and CA setup
+- `identity-backup`: Backup operations
+
+### Control-Plane Scheduling
+
+All identity components are configured to tolerate the control-plane taint and can schedule on masternode:
+
+```yaml
+tolerations:
+- key: node-role.kubernetes.io/control-plane
+  operator: Exists
+  effect: NoSchedule
+```
+
+### Selective Deployment
+
+Use tags to deploy specific components:
+
+```bash
+# Only PostgreSQL and Keycloak
+ansible-playbook ansible/playbooks/identity-deploy-and-handover.yml --tags postgresql,keycloak
+
+# Skip FreeIPA
+ansible-playbook ansible/playbooks/identity-deploy-and-handover.yml --skip-tags freeipa
+```
+
+### Verification
+
+```bash
+# Run verification script
+./scripts/verify-identity-deployment.sh
+
+# Manual verification
+kubectl get pods -n identity -o wide
+kubectl get pv,pvc -n identity
+```
+
+### Documentation
+
+- [Identity Refactoring Guide](docs/IDENTITY_REFACTORING.md) - Detailed refactoring documentation
+- [Control-Plane Taint Fix](docs/CONTROL_PLANE_TAINT_FIX.md) - Taint resolution details
+- [Roles README](ansible/roles/README.md) - Role documentation
+
 ## Related Repositories
 
 - [vmstation](https://github.com/jjbly-vmstation/vmstation) - Main VMStation repository with manifests
