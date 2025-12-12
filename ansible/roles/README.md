@@ -66,17 +66,30 @@ The identity deployment has been refactored from a monolithic 1300+ line playboo
 **Variables:** See `defaults/main.yml`
 
 ### identity-certmanager
-**Purpose:** Installs cert-manager and creates ClusterIssuer.
+**Purpose:** Installs cert-manager and creates ClusterIssuer with intelligent CA handling.
 
 **Key Tasks:**
 - Install cert-manager CRDs
 - Add cert-manager Helm repo
 - Install cert-manager with node affinity and tolerations
 - Wait for cert-manager deployments
-- Create CA secret from existing certificates
+- Check for existing CA files or backups
+- Restore CA from backup if available
+- Generate self-signed CA if missing (when enabled)
+- Create CA secret from certificates
 - Create ClusterIssuer for cert-manager
 
+**CA File Handling:**
+The role intelligently handles CA certificates with the following priority:
+1. **Existing CA files**: If CA cert/key exist at `/opt/vmstation-org/cluster-setup/scripts/certs/`, use them
+2. **Backup restoration**: If primary files are missing but backup exists at `/root/identity-backup/identity-ca-backup.tar.gz`, restore from backup
+3. **Auto-generation**: If no CA files or backups exist and `identity_generate_ca: true` (default), generate a new self-signed CA
+4. **Skip gracefully**: If no CA and `identity_generate_ca: false`, skip Secret/ClusterIssuer creation with warning
+
 **Variables:** See `defaults/main.yml`
+- `identity_generate_ca`: (default: true) Auto-generate self-signed CA if missing
+- `ca_validity_days`: (default: 3650) CA certificate validity in days
+- `ca_subject`: CA subject DN for generated certificates
 
 **Templates:**
 - `clusterissuer-freeipa.yml.j2` - ClusterIssuer manifest
@@ -134,12 +147,27 @@ ansible-playbook ansible/playbooks/identity-deploy-and-handover.yml --tags postg
 ansible-playbook ansible/playbooks/identity-deploy-and-handover.yml --tags certmanager
 ```
 
+### CA certificate handling:
+```bash
+# Default: Auto-generate CA if missing (recommended for most deployments)
+ansible-playbook ansible/playbooks/identity-deploy-and-handover.yml
+
+# Disable CA auto-generation (requires manual CA provisioning)
+ansible-playbook ansible/playbooks/identity-deploy-and-handover.yml -e identity_generate_ca=false
+
+# The role will automatically:
+# 1. Use existing CA files if present at /opt/vmstation-org/cluster-setup/scripts/certs/
+# 2. Restore from backup if files missing but backup exists
+# 3. Generate new self-signed CA if nothing exists and identity_generate_ca=true
+```
+
 ## Variables
 
 Key variables that can be overridden:
 
 - `identity_force_replace`: (default: false) Enable destructive replace workflow
 - `identity_backup_before_replace`: (default: true) Backup before replace
+- `identity_generate_ca`: (default: true) Auto-generate self-signed CA if missing
 - `repo_root`: Auto-detected repository root
 - `namespace_identity`: (default: identity) Identity namespace
 - `namespace_cert_manager`: (default: cert-manager) cert-manager namespace
