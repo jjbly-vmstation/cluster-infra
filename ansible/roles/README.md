@@ -143,7 +143,7 @@ Key variables that can be overridden:
 - `repo_root`: Auto-detected repository root
 - `namespace_identity`: (default: identity) Identity namespace
 - `namespace_cert_manager`: (default: cert-manager) cert-manager namespace
-- `identity_data_dir`: (default: /srv/identity_data) Host path for data
+- `identity_data_dir`: (default: /srv/monitoring-data) Host path for data
 - `enable_postgres_chown`: (default: true) Fix PostgreSQL directory ownership
 - `enable_freeipa_chown`: (default: true) Fix FreeIPA directory ownership
 

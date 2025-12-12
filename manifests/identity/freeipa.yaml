@@ -234,5 +234,5 @@ data:
     
     ## Storage
     
-    FreeIPA data is stored at /srv/identity_data/freeipa on the infra node.
+    FreeIPA data is stored at /srv/monitoring-data/freeipa on the infra node.
     Ensure this directory has adequate space (20Gi minimum).

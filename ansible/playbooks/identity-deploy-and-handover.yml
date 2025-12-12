@@ -22,7 +22,7 @@
     # Role variable pass-through (roles will use their defaults if not specified)
     # namespace_identity: identity
     # namespace_cert_manager: cert-manager
-    # identity_data_dir: /srv/identity_data
+    # identity_data_dir: /srv/monitoring-data
     # enable_postgres_chown: true
     # enable_freeipa_chown: true
     

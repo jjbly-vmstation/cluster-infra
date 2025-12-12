@@ -13,7 +13,7 @@ The PersistentVolumes (PVs) have node affinity requiring the control-plane node,
 
 Kubernetes control-plane nodes are tainted by default to prevent regular workloads from running on them. However, our identity stack components need to run on the control-plane node because:
 
-1. The PVs use hostPath storage located at `/srv/identity_data/` on the control-plane node
+1. The PVs use hostPath storage located at `/srv/monitoring-data/` on the control-plane node
 2. The PV `nodeAffinity` explicitly requires `node-role.kubernetes.io/control-plane`
 3. Running infrastructure services (identity, storage) on the control-plane is acceptable for single-node or small cluster setups
 

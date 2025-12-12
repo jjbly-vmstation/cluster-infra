@@ -43,7 +43,7 @@
     backup_dir: /root/identity-backup
     
     # Identity data storage location (for PostgreSQL and FreeIPA persistent data)
-    identity_data_dir: /srv/identity_data
+    identity_data_dir: /srv/monitoring-data
     
     # Control destructive replacement behavior. Set to true to back up and remove
     # existing identity pods before installing/upgrading. Disabled by default to
