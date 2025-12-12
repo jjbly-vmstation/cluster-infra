@@ -18,14 +18,14 @@ Creates a PersistentVolume for Keycloak's PostgreSQL database using hostPath sto
 - **Capacity**: 10Gi
 - **Access Mode**: ReadWriteOnce
 - **Storage Class**: `manual`
-- **Path**: `/srv/identity_data/postgresql`
+- **Path**: `/srv/monitoring-data/postgresql`
 - **Node Affinity**: Control plane nodes only
 
 ## Deployment
 
 These manifests are automatically deployed by the `identity-deploy-and-handover.yml` playbook in the following order:
 
-1. Create storage directory: `/srv/identity_data/postgresql`
+1. Create storage directory: `/srv/monitoring-data/postgresql`
 2. Deploy StorageClass: `storage-class-manual.yaml`
 3. Deploy PersistentVolume: `keycloak-postgresql-pv.yaml`
 4. Deploy Keycloak (which creates the PVC that binds to the PV)
@@ -48,7 +48,7 @@ If the PVC `data-keycloak-postgresql-0` remains in Pending state:
 
 3. Verify the storage directory exists on the control plane node:
    ```bash
-   ls -la /srv/identity_data/postgresql
+   ls -la /srv/monitoring-data/postgresql
    ```
 
 4. Check PVC status and events:
@@ -65,7 +65,7 @@ The PV is configured with node affinity to control plane nodes. If you need to s
 
 ## Storage Considerations
 
-- **Backup**: The data in `/srv/identity_data/postgresql` should be backed up regularly
+- **Backup**: The data in `/srv/monitoring-data/postgresql` should be backed up regularly
 - **Capacity**: Monitor disk usage; expand the PV if needed (requires cluster downtime)
 - **Performance**: hostPath storage is suitable for single-node or small deployments. For production, consider using a proper storage solution like NFS, Ceph, or cloud-provided block storage.
 

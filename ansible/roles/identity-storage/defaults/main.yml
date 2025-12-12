@@ -1,6 +1,6 @@
 ---
 # Default variables for identity-storage role
-identity_data_dir: /srv/identity_data
+identity_data_dir: /srv/monitoring-data
 postgresql_uid: "999"
 postgresql_gid: "999"
 enable_postgres_chown: true

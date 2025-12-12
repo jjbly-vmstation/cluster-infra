@@ -17,7 +17,7 @@ spec:
   persistentVolumeReclaimPolicy: Retain
   storageClassName: manual
   hostPath:
-    path: /srv/identity_data/freeipa
+    path: /srv/monitoring-data/freeipa
     type: DirectoryOrCreate
   nodeAffinity:
     required:
