@@ -161,6 +161,7 @@
 
     # Note: Private key is unencrypted for automation purposes
     # Permissions (0600) and root ownership provide file-level security
+    # This task runs only when CA files don't exist (per block condition)
     - name: Generate CA private key
       shell: >-
         openssl genrsa -out {{ ca_key_src }} 4096
@@ -207,17 +208,32 @@
     - (not ca_cert_stat.stat.exists or not ca_key_stat.stat.exists)
     - ca_backup_files.matched == 0
 
-- name: Backup CA material to root backup (cert and key if present)
-  shell: >-
-    cp -f {{ ca_cert_src }} {{ backup_dir }}/ca.cert.pem &&
-    cp -f {{ ca_key_src }} {{ backup_dir }}/ca.key.pem &&
-    tar -C {{ backup_dir }} -czf {{ backup_dir }}/identity-ca-backup.tar.gz
-    --remove-files ca.cert.pem ca.key.pem
+- name: Copy CA cert to backup directory
+  copy:
+    src: "{{ ca_cert_src }}"
+    dest: "{{ backup_dir }}/ca.cert.pem"
+    remote_src: true
+  when: ca_cert_stat.stat.exists
+  become: true
+
+- name: Copy CA key to backup directory
+  copy:
+    src: "{{ ca_key_src }}"
+    dest: "{{ backup_dir }}/ca.key.pem"
+    remote_src: true
+  when: ca_key_stat.stat.exists
+  become: true
+
+- name: Create CA backup archive
+  archive:
+    path:
+      - "{{ backup_dir }}/ca.cert.pem"
+      - "{{ backup_dir }}/ca.key.pem"
+    dest: "{{ backup_dir }}/identity-ca-backup.tar.gz"
+    remove: true
   when: ca_cert_stat.stat.exists and ca_key_stat.stat.exists
   register: backup_run
-  changed_when: backup_run.rc == 0
   become: true
-  failed_when: false
 
 - name: Display warning if CA files still missing
   debug:
