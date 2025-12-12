@@ -153,8 +153,12 @@ if [ $ERRORS -eq 0 ]; then
     echo "✓ All critical components are deployed and running!"
     echo ""
     echo "Access Keycloak:"
-    NODE_IP=$(kubectl --kubeconfig=$KUBECONFIG get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
-    echo "  http://$NODE_IP:30080/auth"
+    NODE_IP=$(kubectl --kubeconfig=$KUBECONFIG get nodes -o jsonpath='{.items[*].status.addresses[?(@.type=="InternalIP")].address}' | awk '{print $1}')
+    if [ -n "$NODE_IP" ]; then
+        echo "  http://$NODE_IP:30080/auth"
+    else
+        echo "  Unable to determine node IP. Check 'kubectl get nodes -o wide' for node IPs"
+    fi
     echo ""
     echo "Credentials location:"
     echo "  /root/identity-backup/keycloak-admin-credentials.txt"

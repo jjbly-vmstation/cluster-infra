@@ -32,8 +32,9 @@
 
 - name: Clear claimRef from Keycloak PostgreSQL PV if it's Released
   shell: >-
-    KUBECONFIG=/etc/kubernetes/admin.conf kubectl patch pv keycloak-postgresql-pv 
-    --type=json -p='[{"op":"remove","path":"/spec/claimRef"}]'
+    KUBECONFIG=/etc/kubernetes/admin.conf kubectl get pv keycloak-postgresql-pv -o jsonpath='{.spec.claimRef}' > /dev/null 2>&1 &&
+    kubectl --kubeconfig=/etc/kubernetes/admin.conf patch pv keycloak-postgresql-pv 
+    --type=json -p='[{"op":"remove","path":"/spec/claimRef"}]' || true
   when: keycloak_pv_apply.rc == 0
   register: pv_claim_clear
   failed_when: false
