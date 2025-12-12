@@ -103,8 +103,10 @@
 - name: Restore CA from backup if primary files missing but backup exists
   block:
     - name: Extract CA backup
-      shell: >-
-        cd {{ backup_dir }} && tar -xzf identity-ca-backup.tar.gz
+      unarchive:
+        src: "{{ backup_dir }}/identity-ca-backup.tar.gz"
+        dest: "{{ backup_dir }}"
+        remote_src: true
       become: true
       register: ca_restore
 
@@ -121,13 +123,13 @@
       shell: >-
         cp -f {{ backup_dir }}/ca.cert.pem {{ ca_cert_src }}
       become: true
-      when: ca_restore.rc == 0
+      when: ca_restore is succeeded
 
     - name: Copy restored CA key to primary location
       shell: >-
         cp -f {{ backup_dir }}/ca.key.pem {{ ca_key_src }}
       become: true
-      when: ca_restore.rc == 0
+      when: ca_restore is succeeded
 
     - name: Re-check CA cert file after restore
       stat:
@@ -157,6 +159,8 @@
         mode: '0755'
       become: true
 
+    # Note: Private key is unencrypted for automation purposes
+    # Permissions (0600) and root ownership provide file-level security
     - name: Generate CA private key
       shell: >-
         openssl genrsa -out {{ ca_key_src }} 4096
@@ -170,7 +174,7 @@
         -out {{ ca_cert_src }}
         -subj "{{ ca_subject }}"
       become: true
-      when: ca_key_gen.rc == 0
+      when: ca_key_gen is succeeded
       register: ca_cert_gen
 
     - name: Set proper permissions on CA files
