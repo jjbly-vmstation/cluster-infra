@@ -203,6 +203,10 @@
                   spec:
                     nodeSelector:
                       kubernetes.io/hostname: {{ infra_node | default('') }}
+                    tolerations:
+                      - key: node-role.kubernetes.io/control-plane
+                        operator: Exists
+                        effect: NoSchedule
                     restartPolicy: OnFailure
                     containers:
                       - name: chown
@@ -264,6 +268,10 @@
                   spec:
                     nodeSelector:
                       kubernetes.io/hostname: {{ infra_node | default('') }}
+                    tolerations:
+                      - key: node-role.kubernetes.io/control-plane
+                        operator: Exists
+                        effect: NoSchedule
                     restartPolicy: OnFailure
                     containers:
                       - name: chown
