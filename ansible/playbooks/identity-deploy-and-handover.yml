@@ -1332,6 +1332,11 @@
             - cert-manager: {{ 'Installed' if certmgr_helm.rc == 0 else 'Failed' }}
             - ClusterIssuer: {{ 'Applied' if issuer_apply is defined and issuer_apply.rc == 0 else 'Skipped' }}
           
+          Test Accounts:
+            - Keycloak Test User: {{ test_username | default('Not created') }}
+            - FreeIPA Test User: {{ freeipa_test_username | default('Not created') }}
+            - Credentials Location: {{ backup_dir }}/
+          
           Verification:
             Run: {{ repo_root }}/tests/verify-identity-deploy.sh
           
@@ -1355,5 +1360,10 @@
           3. Run acceptance tests: {{ repo_root }}/tests/verify-identity-deploy.sh
           4. Replace CHANGEME passwords in {{ keycloak_values_file }} before production use
           5. Configure FreeIPA (if deployed) and integrate with Keycloak LDAP
+          
+          Test Accounts:
+          - Keycloak test user credentials: {{ backup_dir }}/keycloak-test-user-credentials.txt
+          - FreeIPA test user credentials: {{ backup_dir }}/freeipa-test-user-credentials.txt
+          - Admin credentials: {{ backup_dir }}/keycloak-admin-credentials.txt
           
           For issues, check diagnostics in {{ backup_dir }}/
