@@ -187,7 +187,7 @@
         - "{{ ca_cert_src }}"
         - "{{ ca_key_src }}"
       become: true
-      when: ca_cert_gen is succeeded
+      when: ca_cert_gen is defined and ca_cert_gen is succeeded
 
     - name: Re-check CA cert file after generation
       stat:
@@ -245,7 +245,7 @@
   template:
     src: "clusterissuer-freeipa.yml.j2"
     dest: "{{ template_dest }}"
-  when: ca_secret_created is succeeded
+  when: ca_secret_created is defined and ca_secret_created is succeeded
 
 - name: Apply ClusterIssuer to cluster
   shell: kubectl apply -f {{ template_dest }}
@@ -253,9 +253,9 @@
     KUBECONFIG: /etc/kubernetes/admin.conf
   register: issuer_apply
   become: true
-  when: ca_secret_created is succeeded
+  when: ca_secret_created is defined and ca_secret_created is succeeded
 
 - name: Display ClusterIssuer creation status
   debug:
     msg: "ClusterIssuer '{{ clusterissuer_name }}' created successfully with CA from {{ ca_cert_src }}"
-  when: issuer_apply is succeeded
+  when: issuer_apply is defined and issuer_apply is succeeded
