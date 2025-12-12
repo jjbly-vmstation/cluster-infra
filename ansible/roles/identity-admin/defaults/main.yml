@@ -1,0 +1,5 @@
+---
+# Default variables for identity-admin role
+cluster_admin_username: "clusteradmin"
+cluster_admin_password: "CHANGEME_CLUSTER_ADMIN_PASSWORD"
+backup_dir: "/root/identity-backup"

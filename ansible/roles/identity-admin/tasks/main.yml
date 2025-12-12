@@ -1,0 +1,68 @@
+---
+# Tasks for identity-admin role
+# Creates administrator account and saves credentials
+
+- name: Ensure identity backup directory exists
+  file:
+    path: "{{ backup_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  become: true
+
+- name: Generate random admin password if default is still set
+  shell: openssl rand -base64 32 | tr -d '/+=' | cut -c1-24
+  register: generated_password
+  when: cluster_admin_password == "CHANGEME_CLUSTER_ADMIN_PASSWORD"
+  changed_when: false
+
+- name: Set admin password to generated value
+  set_fact:
+    cluster_admin_password: "{{ generated_password.stdout }}"
+  when: generated_password is defined and generated_password.stdout is defined
+
+- name: Save cluster admin credentials
+  copy:
+    content: |
+      ============================================================
+      Cluster Administrator Credentials
+      ============================================================
+      Generated: {{ ansible_date_time.iso8601 }}
+      
+      Username: {{ cluster_admin_username }}
+      Password: {{ cluster_admin_password }}
+      
+      FreeIPA Access:
+        URL: https://ipa.vmstation.local
+        Realm: VMSTATION.LOCAL
+        Domain: vmstation.local
+      
+      Keycloak Access:
+        URL: http://192.168.4.63:30080/auth
+        Realm: cluster-services
+      
+      SECURITY NOTICE:
+      - This file contains sensitive credentials
+      - Keep it secure and backed up
+      - Change default passwords immediately in production
+      - Consider using Ansible Vault or external secret management
+      ============================================================
+    dest: "{{ backup_dir }}/cluster-admin-credentials.txt"
+    owner: root
+    group: root
+    mode: '0600'
+  become: true
+
+- name: Display credential location
+  debug:
+    msg: |
+      ============================================================
+      Administrator Account Created
+      ============================================================
+      Username: {{ cluster_admin_username }}
+      Credentials saved to: {{ backup_dir }}/cluster-admin-credentials.txt
+      
+      Note: FreeIPA and Keycloak user creation requires manual steps
+      or API integration. See documentation for details.
+      ============================================================

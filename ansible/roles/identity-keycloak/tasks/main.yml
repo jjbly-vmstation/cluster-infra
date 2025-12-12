@@ -64,3 +64,89 @@
   register: keycloak_nodeport_apply
   changed_when: "'created' in keycloak_nodeport_apply.stdout or 'configured' in keycloak_nodeport_apply.stdout"
   become: true
+
+- name: Ensure keycloak-startup configmap has configured node identifier (remove stop-embedded-server)
+  shell: >-
+    cat <<'CM' | kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f -
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: keycloak-startup
+      namespace: {{ namespace_identity }}
+    data:
+      keycloak.cli: |
+        embed-server --server-config=standalone-ha.xml --std-out=echo
+        batch
+
+        echo Configuring node identifier
+
+        ## Sets the node identifier to the node name (= pod name). Node identifiers have to be unique. They can have a
+        ## maximum length of 23 characters. Thus, the chart's fullname template truncates its length accordingly.
+        /subsystem=transactions:write-attribute(name=node-identifier, value=${jboss.node.name})
+
+        echo Finished configuring node identifier
+
+        run-batch
+    CM
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  become: true
+  register: keycloak_startup_cm
+  changed_when: "'configured' in keycloak_startup_cm.stdout or 'created' in keycloak_startup_cm.stdout"
+
+- name: Restart Keycloak pod to pick up new configmap
+  shell: >-
+    KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} delete pod keycloak-0 || true
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  become: true
+  changed_when: false
+
+- name: Wait for Keycloak pod to be ready after restart
+  shell: >-
+    KUBECONFIG=/etc/kubernetes/admin.conf kubectl wait --for=condition=ready pod/keycloak-0 
+    -n {{ namespace_identity }} --timeout=300s
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  become: true
+  register: keycloak_pod_ready
+  failed_when: false
+
+- name: Create monitoring namespace for SSO client secrets
+  shell: >-
+    KUBECONFIG=/etc/kubernetes/admin.conf kubectl create namespace {{ namespace_monitoring }} --dry-run=client -o yaml | kubectl apply -f -
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  become: true
+  changed_when: false
+
+- name: Render cluster realm configuration
+  template:
+    src: cluster-realm.json.j2
+    dest: /tmp/cluster-realm.json
+  become: true
+  when: keycloak_configure_sso | default(true) | bool
+
+- name: Display SSO configuration note
+  debug:
+    msg: |
+      ============================================================
+      Keycloak SSO Configuration
+      ============================================================
+      
+      The cluster-realm configuration has been prepared at /tmp/cluster-realm.json
+      
+      To complete SSO setup:
+      1. Access Keycloak admin console at http://192.168.4.63:30080/auth
+      2. Login with admin credentials from /root/identity-backup/keycloak-admin-credentials.txt
+      3. Import realm from /tmp/cluster-realm.json or use Keycloak API to create realm
+      4. Configure LDAP user federation:
+         - Provider: Red Hat Directory Server / FreeIPA
+         - Connection URL: ldap://freeipa.identity.svc.cluster.local:389
+         - Users DN: cn=users,cn=accounts,dc=vmstation,dc=local
+         - Bind DN: uid=admin,cn=users,cn=accounts,dc=vmstation,dc=local
+      5. Create OIDC client secrets and export to Kubernetes
+      
+      For automated configuration via API, install keycloak-admin CLI or use REST API.
+      ============================================================
+  when: keycloak_configure_sso | default(true) | bool

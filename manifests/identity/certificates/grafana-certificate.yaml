@@ -1,0 +1,21 @@
+---
+# Certificate for Grafana monitoring service
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: grafana-tls
+  namespace: monitoring
+spec:
+  secretName: grafana-tls-secret
+  issuerRef:
+    name: freeipa-ca-issuer
+    kind: ClusterIssuer
+  commonName: grafana.vmstation.local
+  dnsNames:
+    - grafana.vmstation.local
+    - grafana
+    - grafana.monitoring
+    - grafana.monitoring.svc
+    - grafana.monitoring.svc.cluster.local
+  duration: 2160h  # 90 days
+  renewBefore: 360h  # 15 days

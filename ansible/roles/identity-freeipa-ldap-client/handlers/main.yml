@@ -1,0 +1,8 @@
+---
+# Handlers for identity-freeipa-ldap-client role
+
+- name: restart sssd
+  service:
+    name: sssd
+    state: restarted
+  become: true

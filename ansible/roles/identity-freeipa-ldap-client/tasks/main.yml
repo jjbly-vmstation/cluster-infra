@@ -1,0 +1,89 @@
+---
+# Tasks for identity-freeipa-ldap-client role
+# Configures FreeIPA LDAP client on all cluster nodes
+
+- name: Add FreeIPA server to /etc/hosts
+  lineinfile:
+    path: /etc/hosts
+    line: "{{ freeipa_server_ip }} {{ freeipa_server_hostname }}"
+    state: present
+    regexp: "^{{ freeipa_server_ip }}.*{{ freeipa_server_hostname }}"
+  become: true
+
+- name: Check if node is already joined to FreeIPA domain
+  stat:
+    path: /etc/ipa/default.conf
+  register: ipa_client_configured
+  become: true
+
+- name: Install FreeIPA client packages (RHEL/AlmaLinux)
+  package:
+    name:
+      - ipa-client
+      - sssd
+      - sssd-client
+    state: present
+  become: true
+  when:
+    - not ipa_client_configured.stat.exists
+    - ansible_os_family == "RedHat"
+
+- name: Install FreeIPA client packages (Debian/Ubuntu)
+  package:
+    name:
+      - freeipa-client
+      - sssd
+      - sssd-tools
+    state: present
+  become: true
+  when:
+    - not ipa_client_configured.stat.exists
+    - ansible_os_family == "Debian"
+
+- name: Join node to FreeIPA domain
+  shell: >-
+    ipa-client-install --unattended
+    --server={{ freeipa_server_hostname }}
+    --domain={{ freeipa_domain }}
+    --realm={{ freeipa_realm }}
+    --principal=admin
+    --password={{ freeipa_admin_password }}
+    --no-ntp
+    --force-join
+    --mkhomedir
+  become: true
+  when:
+    - not ipa_client_configured.stat.exists
+    - freeipa_client_install | bool
+  register: ipa_client_join
+  failed_when: ipa_client_join.rc != 0 and ipa_client_join.rc != 3
+  changed_when: ipa_client_join.rc == 0
+
+- name: Ensure SSSD service is enabled and started
+  service:
+    name: sssd
+    state: started
+    enabled: true
+  become: true
+
+- name: Configure SSSD for FreeIPA
+  lineinfile:
+    path: /etc/sssd/sssd.conf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    state: present
+  loop:
+    - { regexp: '^ldap_uri', line: 'ldap_uri = ldap://{{ freeipa_server_hostname }}' }
+    - { regexp: '^ldap_search_base', line: 'ldap_search_base = dc={{ freeipa_domain.split(".")[0] }},dc={{ freeipa_domain.split(".")[1] }}' }
+  become: true
+  notify: restart sssd
+  when: ipa_client_configured.stat.exists
+
+- name: Display FreeIPA client configuration status
+  debug:
+    msg: |
+      FreeIPA LDAP client configured on {{ inventory_hostname }}
+      Server: {{ freeipa_server_hostname }}
+      Domain: {{ freeipa_domain }}
+      Realm: {{ freeipa_realm }}
+      Status: {{ 'Already configured' if ipa_client_configured.stat.exists else 'Newly joined' }}
