@@ -20,9 +20,9 @@
 
 - name: Install/upgrade cert-manager Helm chart with node affinity
   shell: >-
-    KUBECONFIG=/etc/kubernetes/admin.conf helm upgrade --install cert-manager jetstack/cert-manager 
-    --namespace {{ namespace_cert_manager }} 
-    --create-namespace 
+    KUBECONFIG=/etc/kubernetes/admin.conf helm upgrade --install cert-manager jetstack/cert-manager
+    --namespace {{ namespace_cert_manager }}
+    --create-namespace
     --set installCRDs=false
     --set nodeSelector."node-role\.kubernetes\.io/control-plane"=""
     --set tolerations[0].key=node-role.kubernetes.io/control-plane
@@ -142,7 +142,7 @@
     - name: Display restoration message
       debug:
         msg: "CA files restored from backup: {{ backup_dir }}/identity-ca-backup.tar.gz"
-  when: 
+  when:
     - (not ca_cert_stat.stat.exists or not ca_key_stat.stat.exists)
     - ca_backup_files.matched > 0
 
@@ -165,9 +165,9 @@
 
     - name: Generate CA certificate
       shell: >-
-        openssl req -x509 -new -nodes -key {{ ca_key_src }} 
-        -sha256 -days {{ ca_validity_days }} 
-        -out {{ ca_cert_src }} 
+        openssl req -x509 -new -nodes -key {{ ca_key_src }}
+        -sha256 -days {{ ca_validity_days }}
+        -out {{ ca_cert_src }}
         -subj "{{ ca_subject }}"
       become: true
       when: ca_key_gen.rc == 0
@@ -219,15 +219,15 @@
       WARNING: CA files not found and could not be generated/restored.
       - CA cert: {{ ca_cert_src }}
       - CA key: {{ ca_key_src }}
-      ClusterIssuer will NOT be created. 
+      ClusterIssuer will NOT be created.
       To fix: Provide CA files at the paths above or set identity_generate_ca=true
   when: not ca_cert_stat.stat.exists or not ca_key_stat.stat.exists
 
 - name: Create or update Kubernetes Secret with CA (tls.crt and tls.key format for cert-manager)
   shell: >-
-    kubectl create secret generic {{ secret_name }} --namespace {{ namespace_cert_manager }} 
-    --from-file=tls.crt={{ ca_cert_src }} 
-    --from-file=tls.key={{ ca_key_src }} 
+    kubectl create secret generic {{ secret_name }} --namespace {{ namespace_cert_manager }}
+    --from-file=tls.crt={{ ca_cert_src }}
+    --from-file=tls.key={{ ca_key_src }}
     --dry-run=client -o yaml | kubectl apply -f -
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
