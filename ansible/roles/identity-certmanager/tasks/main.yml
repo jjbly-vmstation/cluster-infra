@@ -74,12 +74,17 @@
   changed_when: false
   become: true
 
-- name: Ensure CA cert file exists
+- name: Check if CA cert file exists
   stat:
     path: "{{ ca_cert_src }}"
   register: ca_cert_stat
 
-- name: Ensure backup directory exists (root-owned) before CA backup
+- name: Check if CA key file exists
+  stat:
+    path: "{{ ca_key_src }}"
+  register: ca_key_stat
+
+- name: Ensure backup directory exists (root-owned)
   file:
     path: "{{ backup_dir }}"
     state: directory
@@ -88,16 +93,135 @@
     mode: '0700'
   become: true
 
+- name: Check for CA backup files
+  find:
+    paths: "{{ backup_dir }}"
+    patterns: "identity-ca-backup.tar.gz"
+  register: ca_backup_files
+  become: true
+
+- name: Restore CA from backup if primary files missing but backup exists
+  block:
+    - name: Extract CA backup
+      shell: >-
+        cd {{ backup_dir }} && tar -xzf identity-ca-backup.tar.gz
+      become: true
+      register: ca_restore
+
+    - name: Ensure CA directory exists
+      file:
+        path: "{{ ca_cert_src | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      become: true
+
+    - name: Copy restored CA cert to primary location
+      shell: >-
+        cp -f {{ backup_dir }}/ca.cert.pem {{ ca_cert_src }}
+      become: true
+      when: ca_restore.rc == 0
+
+    - name: Copy restored CA key to primary location
+      shell: >-
+        cp -f {{ backup_dir }}/ca.key.pem {{ ca_key_src }}
+      become: true
+      when: ca_restore.rc == 0
+
+    - name: Re-check CA cert file after restore
+      stat:
+        path: "{{ ca_cert_src }}"
+      register: ca_cert_stat
+
+    - name: Re-check CA key file after restore
+      stat:
+        path: "{{ ca_key_src }}"
+      register: ca_key_stat
+
+    - name: Display restoration message
+      debug:
+        msg: "CA files restored from backup: {{ backup_dir }}/identity-ca-backup.tar.gz"
+  when: 
+    - (not ca_cert_stat.stat.exists or not ca_key_stat.stat.exists)
+    - ca_backup_files.matched > 0
+
+- name: Generate self-signed CA if missing and generation is enabled
+  block:
+    - name: Ensure CA directory exists
+      file:
+        path: "{{ ca_cert_src | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      become: true
+
+    - name: Generate CA private key
+      shell: >-
+        openssl genrsa -out {{ ca_key_src }} 4096
+      become: true
+      register: ca_key_gen
+
+    - name: Generate CA certificate
+      shell: >-
+        openssl req -x509 -new -nodes -key {{ ca_key_src }} 
+        -sha256 -days {{ ca_validity_days }} 
+        -out {{ ca_cert_src }} 
+        -subj "{{ ca_subject }}"
+      become: true
+      when: ca_key_gen.rc == 0
+      register: ca_cert_gen
+
+    - name: Set proper permissions on CA files
+      file:
+        path: "{{ item }}"
+        owner: root
+        group: root
+        mode: '0600'
+      loop:
+        - "{{ ca_cert_src }}"
+        - "{{ ca_key_src }}"
+      become: true
+
+    - name: Re-check CA cert file after generation
+      stat:
+        path: "{{ ca_cert_src }}"
+      register: ca_cert_stat
+
+    - name: Re-check CA key file after generation
+      stat:
+        path: "{{ ca_key_src }}"
+      register: ca_key_stat
+
+    - name: Display generation message
+      debug:
+        msg: "Self-signed CA generated at {{ ca_cert_src }} and {{ ca_key_src }}"
+  when:
+    - identity_generate_ca | default(true) | bool
+    - (not ca_cert_stat.stat.exists or not ca_key_stat.stat.exists)
+    - ca_backup_files.matched == 0
+
 - name: Backup CA material to root backup (cert and key if present)
   shell: >-
     set -e;
     cp -f {{ ca_cert_src }} {{ backup_dir }}/ca.cert.pem || true;
     if [ -f "{{ ca_key_src }}" ]; then cp -f {{ ca_key_src }} {{ backup_dir }}/ca.key.pem; fi;
     tar -C {{ backup_dir }} -czf {{ backup_dir }}/identity-ca-backup.tar.gz --remove-files $(ls {{ backup_dir }} | grep -E 'ca.(cert|key).pem' || true) >/dev/null 2>&1 || true;
-  when: ca_cert_stat.stat.exists
+  when: ca_cert_stat.stat.exists and ca_key_stat.stat.exists
   register: backup_run
   changed_when: backup_run.rc == 0
   become: true
+
+- name: Display warning if CA files still missing
+  debug:
+    msg: |
+      WARNING: CA files not found and could not be generated/restored.
+      - CA cert: {{ ca_cert_src }}
+      - CA key: {{ ca_key_src }}
+      ClusterIssuer will NOT be created. 
+      To fix: Provide CA files at the paths above or set identity_generate_ca=true
+  when: not ca_cert_stat.stat.exists or not ca_key_stat.stat.exists
 
 - name: Create or update Kubernetes Secret with CA (tls.crt and tls.key format for cert-manager)
   shell: >-
@@ -107,13 +231,15 @@
     --dry-run=client -o yaml | kubectl apply -f -
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
-  register: secret_apply
+  register: ca_secret_created
   become: true
+  when: ca_cert_stat.stat.exists and ca_key_stat.stat.exists
 
 - name: Render ClusterIssuer template
   template:
     src: "clusterissuer-freeipa.yml.j2"
     dest: "{{ template_dest }}"
+  when: ca_secret_created is defined and ca_secret_created.rc == 0
 
 - name: Apply ClusterIssuer to cluster
   shell: kubectl apply -f {{ template_dest }}
@@ -121,3 +247,9 @@
     KUBECONFIG: /etc/kubernetes/admin.conf
   register: issuer_apply
   become: true
+  when: ca_secret_created is defined and ca_secret_created.rc == 0
+
+- name: Display ClusterIssuer creation status
+  debug:
+    msg: "ClusterIssuer '{{ clusterissuer_name }}' created successfully with CA from {{ ca_cert_src }}"
+  when: issuer_apply is defined and issuer_apply.rc == 0

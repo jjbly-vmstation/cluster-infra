@@ -6,3 +6,10 @@ secret_name: freeipa-ca
 clusterissuer_name: freeipa-ca-issuer
 template_dest: "/tmp/clusterissuer-freeipa.yml"
 backup_dir: /root/identity-backup
+
+# If true, automatically generate self-signed CA if not found and no backup exists
+identity_generate_ca: true
+
+# CA generation parameters for self-signed certificates
+ca_validity_days: 3650  # 10 years
+ca_subject: "/C=US/ST=State/L=City/O=VMStation/OU=Infrastructure/CN=VMStation Root CA"
