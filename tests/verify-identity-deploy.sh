@@ -200,6 +200,44 @@ else
     log_warn "Backup directory /root/identity-backup does not exist (created only during backup operations)"
 fi
 
+# Test 14: Check test user credentials files
+log_info "Test 14: Checking if test user credentials files exist..."
+if [ -f "/root/identity-backup/keycloak-test-user-credentials.txt" ]; then
+    test_pass "Keycloak test user credentials file exists"
+else
+    log_warn "Keycloak test user credentials file does not exist (test user may not be created yet)"
+fi
+
+if [ -f "/root/identity-backup/freeipa-test-user-credentials.txt" ]; then
+    test_pass "FreeIPA test user credentials file exists"
+else
+    log_warn "FreeIPA test user credentials file does not exist (test user may not be created yet)"
+fi
+
+# Test 15: Check if identity pods are scheduled on control-plane node
+log_info "Test 15: Checking if identity pods are scheduled on control-plane node..."
+if kubectl get pods -n identity -o wide &> /dev/null; then
+    IDENTITY_PODS_NODES=$(kubectl get pods -n identity -o jsonpath='{.items[*].spec.nodeName}' | tr ' ' '\n' | sort -u)
+    if [ -n "$IDENTITY_PODS_NODES" ]; then
+        ALL_ON_CONTROL_PLANE=true
+        # INFRA_NODE is the control-plane node detected in Test 3
+        # All identity pods should be scheduled on this node (which is always on)
+        for node in $IDENTITY_PODS_NODES; do
+            if [ "$node" != "$INFRA_NODE" ]; then
+                ALL_ON_CONTROL_PLANE=false
+                break
+            fi
+        done
+        if [ "$ALL_ON_CONTROL_PLANE" = true ]; then
+            test_pass "All identity pods are scheduled on control-plane node ($INFRA_NODE)"
+        else
+            test_fail "Some identity pods are not scheduled on control-plane node (nodes: $IDENTITY_PODS_NODES, expected: $INFRA_NODE)"
+        fi
+    else
+        log_warn "No identity pods found"
+    fi
+fi
+
 # Summary
 echo ""
 log_info "==== Verification Summary ===="

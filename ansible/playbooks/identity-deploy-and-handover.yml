@@ -76,6 +76,8 @@
     # FreeIPA image to deploy (explicit tag - avoid :latest)
     # Example: freeipa/freeipa-server:almalinux-10-4.12.2
     freeipa_image: "freeipa/freeipa-server:almalinux-10-4.12.2"
+    # FreeIPA admin password (should be set via variables or vault, defaults to CHANGEME_IPA_ADMIN_PASSWORD)
+    freeipa_admin_password: "{{ freeipa_admin_password | default('CHANGEME_IPA_ADMIN_PASSWORD') }}"
     # Optional registry credentials (leave undefined to skip secret creation)
     # freeipa_registry_server: "https://index.docker.io/v1/"
     # freeipa_registry_username: "myuser"
@@ -445,16 +447,6 @@
       changed_when: "'patched' in freeipa_pv_claim_clear.stdout"
       become: true
 
-    - name: Set nodeSelector for FreeIPA StatefulSet
-      shell: |
-        KUBECONFIG=/etc/kubernetes/admin.conf kubectl patch statefulset freeipa -n {{ namespace_identity }} -p '{"spec":{"template":{"spec":{"nodeSelector":{"kubernetes.io/hostname":"{{ infra_node }}"}}}}}' || true
-      when: freeipa_manifest_stat.stat.exists
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
-      register: freeipa_node_selector
-      failed_when: false
-      become: true
-
     - name: Inform about missing FreeIPA manifest
       debug:
         msg: "FreeIPA manifest {{ freeipa_manifest }} not found. FreeIPA will not be deployed. To deploy FreeIPA, ensure the manifest exists."
@@ -540,7 +532,6 @@
         -f {{ keycloak_values_file }} 
         --create-namespace 
         --set postgresql.enabled=false
-        --set keycloak.nodeSelector."kubernetes\.io/hostname"={{ infra_node }}
       when: keycloak_values_stat.stat.exists
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
@@ -561,15 +552,6 @@
       register: keycloak_env_patch
       failed_when: false
       changed_when: "'patched' in keycloak_env_patch.stdout"
-      become: true
-
-    - name: Patch Keycloak StatefulSet with nodeSelector for masternode
-      shell: >-
-        KUBECONFIG=/etc/kubernetes/admin.conf kubectl patch statefulset keycloak -n {{ namespace_identity }} 
-        -p '{"spec":{"template":{"spec":{"nodeSelector":{"kubernetes.io/hostname":"{{ infra_node }}"}}}}}'
-      register: keycloak_node_patch
-      failed_when: false
-      changed_when: "'patched' in keycloak_node_patch.stdout"
       become: true
 
     - name: Wait for Keycloak PostgreSQL PVC to be created
@@ -817,28 +799,19 @@
         --namespace {{ namespace_cert_manager }} 
         --create-namespace 
         --set installCRDs=false
-        --set nodeSelector."kubernetes\.io/hostname"={{ infra_node }}
+        --set nodeSelector."node-role\.kubernetes\.io/control-plane"=""
+        --set tolerations[0].key=node-role.kubernetes.io/control-plane
+        --set tolerations[0].operator=Exists
+        --set tolerations[0].effect=NoSchedule
+        --set webhook.nodeSelector."node-role\.kubernetes\.io/control-plane"=""
+        --set webhook.tolerations[0].key=node-role.kubernetes.io/control-plane
+        --set webhook.tolerations[0].operator=Exists
+        --set webhook.tolerations[0].effect=NoSchedule
+        --set cainjector.nodeSelector."node-role\.kubernetes\.io/control-plane"=""
+        --set cainjector.tolerations[0].key=node-role.kubernetes.io/control-plane
+        --set cainjector.tolerations[0].operator=Exists
+        --set cainjector.tolerations[0].effect=NoSchedule
       register: certmgr_helm
-      become: true
-
-    - name: Patch cert-manager cainjector with nodeSelector for masternode
-      shell: >-
-        KUBECONFIG=/etc/kubernetes/admin.conf kubectl patch deployment cert-manager-cainjector 
-        -n {{ namespace_cert_manager }} 
-        -p '{"spec":{"template":{"spec":{"nodeSelector":{"kubernetes.io/hostname":"{{ infra_node }}"}}}}}'
-      register: certmgr_cainjector_patch
-      failed_when: false
-      changed_when: "'patched' in certmgr_cainjector_patch.stdout"
-      become: true
-
-    - name: Patch cert-manager webhook with nodeSelector for masternode
-      shell: >-
-        KUBECONFIG=/etc/kubernetes/admin.conf kubectl patch deployment cert-manager-webhook 
-        -n {{ namespace_cert_manager }} 
-        -p '{"spec":{"template":{"spec":{"nodeSelector":{"kubernetes.io/hostname":"{{ infra_node }}"}}}}}'
-      register: certmgr_webhook_patch
-      failed_when: false
-      changed_when: "'patched' in certmgr_webhook_patch.stdout"
       become: true
 
     - name: Wait for cert-manager deployments to be ready (with diagnostics on failure)
@@ -1132,6 +1105,194 @@
               Credentials saved to: {{ backup_dir }}/keycloak-admin-credentials.txt
               ============================================================
 
+    - name: Create Keycloak test user account
+      when: keycloak_helm_install is defined and keycloak_helm_install.rc == 0
+      block:
+        - name: Generate secure test user password if not provided
+          shell: openssl rand -base64 16
+          register: generated_test_password
+          when: keycloak_test_user_password is not defined or keycloak_test_user_password == ''
+          changed_when: false
+
+        - name: Set test user password variable
+          set_fact:
+            test_user_password: "{{ keycloak_test_user_password if (keycloak_test_user_password is defined and keycloak_test_user_password != '') else generated_test_password.stdout }}"
+            test_username: "{{ keycloak_test_username | default('testuser') }}"
+
+        - name: Wait for Keycloak to be fully ready
+          shell: >-
+            KUBECONFIG=/etc/kubernetes/admin.conf kubectl wait --for=condition=ready 
+            pod/keycloak-0 -n {{ namespace_identity }} --timeout=300s
+          register: keycloak_test_ready
+          failed_when: keycloak_test_ready.rc != 0
+          become: true
+
+        - name: Check if Keycloak test user exists
+          shell: >-
+            KUBECONFIG=/etc/kubernetes/admin.conf kubectl exec -n {{ namespace_identity }} keycloak-0 -- 
+            /opt/jboss/keycloak/bin/kcadm.sh config credentials --server http://localhost:8080/auth --realm master --user admin --password "{{ admin_password }}" 2>/dev/null &&
+            /opt/jboss/keycloak/bin/kcadm.sh get users -r master --fields username 2>/dev/null | 
+            grep -c '"{{ test_username }}"' || echo "0"
+          register: test_user_check
+          changed_when: false
+          failed_when: false
+          no_log: true
+          become: true
+
+        - name: Create Keycloak test user
+          shell: >-
+            KUBECONFIG=/etc/kubernetes/admin.conf kubectl exec -n {{ namespace_identity }} keycloak-0 -- bash -c '
+            /opt/jboss/keycloak/bin/kcadm.sh config credentials --server http://localhost:8080/auth --realm master --user admin --password "{{ admin_password }}" &&
+            /opt/jboss/keycloak/bin/kcadm.sh create users -r master -s username={{ test_username }} -s enabled=true -s email={{ test_username }}@vmstation.local -s firstName=Test -s lastName=User &&
+            /opt/jboss/keycloak/bin/kcadm.sh set-password -r master --username {{ test_username }} --new-password "{{ test_user_password }}"
+            '
+          when: test_user_check.stdout == "0"
+          register: test_user_create
+          no_log: true
+          failed_when: false
+          become: true
+
+        - name: Save Keycloak test user credentials
+          copy:
+            dest: "{{ backup_dir }}/keycloak-test-user-credentials.txt"
+            content: |
+              Keycloak Test User Credentials
+              Generated: {{ ansible_date_time.iso8601 }}
+              
+              Username: {{ test_username }}
+              Password: {{ test_user_password }}
+              Email: {{ test_username }}@vmstation.local
+              
+              Test Login URLs (from desktop):
+              {% for ip in node_ips.stdout.split() %}
+              - http://{{ ip }}:30080/auth/realms/master/account
+              {% endfor %}
+            owner: root
+            group: root
+            mode: '0600'
+          become: true
+
+        - name: Display test user information
+          debug:
+            msg: |
+              ============================================================
+              Keycloak Test User Created!
+              ============================================================
+              Username: {{ test_username }}
+              Password: {{ test_user_password }}
+              Email: {{ test_username }}@vmstation.local
+              
+              Test Login:
+              {% for ip in node_ips.stdout.split() %}
+              - http://{{ ip }}:30080/auth/realms/master/account
+              {% endfor %}
+              
+              Credentials saved to: {{ backup_dir }}/keycloak-test-user-credentials.txt
+              ============================================================
+          when: test_user_create is defined and test_user_create.rc == 0
+
+    - name: Setup FreeIPA test user account
+      when: freeipa_manifest_stat.stat.exists
+      block:
+        - name: Generate secure FreeIPA test user password if not provided
+          shell: openssl rand -base64 16
+          register: generated_freeipa_test_password
+          when: freeipa_test_user_password is not defined or freeipa_test_user_password == ''
+          changed_when: false
+
+        - name: Set FreeIPA test user password variable
+          set_fact:
+            freeipa_test_password: "{{ freeipa_test_user_password if (freeipa_test_user_password is defined and freeipa_test_user_password != '') else generated_freeipa_test_password.stdout }}"
+            freeipa_test_username: "{{ freeipa_test_username | default('testuser') }}"
+
+        - name: Wait for FreeIPA to be ready
+          shell: >-
+            KUBECONFIG=/etc/kubernetes/admin.conf kubectl wait --for=condition=ready 
+            pod -l app=freeipa -n {{ namespace_identity }} --timeout=600s
+          register: freeipa_test_ready
+          failed_when: false
+          become: true
+
+        - name: Check if FreeIPA is properly initialized
+          shell: >-
+            KUBECONFIG=/etc/kubernetes/admin.conf kubectl exec -n {{ namespace_identity }} sts/freeipa -- 
+            /usr/bin/systemctl is-active ipa
+          register: freeipa_status
+          changed_when: false
+          failed_when: false
+          become: true
+
+        - name: Create FreeIPA test user
+          shell: >-
+            KUBECONFIG=/etc/kubernetes/admin.conf kubectl exec -n {{ namespace_identity }} sts/freeipa -- bash -c '
+            echo "{{ freeipa_admin_password }}" | kinit admin &&
+            ipa user-add {{ freeipa_test_username }} --first=Test --last=User --email={{ freeipa_test_username }}@vmstation.local --password
+            '
+          when: freeipa_status.stdout == "active"
+          register: freeipa_user_create
+          failed_when: freeipa_user_create.rc != 0 and 'user with name' not in freeipa_user_create.stderr
+          no_log: true
+          become: true
+
+        - name: Set FreeIPA test user password
+          shell: |
+            KUBECONFIG=/etc/kubernetes/admin.conf kubectl exec -n {{ namespace_identity }} sts/freeipa -- bash -c '
+            echo "{{ freeipa_admin_password }}" | kinit admin &&
+            echo "{{ freeipa_test_password }}" | ipa user-mod {{ freeipa_test_username }} --password
+            '
+          when: freeipa_status.stdout == "active" and freeipa_user_create is defined and freeipa_user_create.rc == 0
+          register: freeipa_user_password
+          no_log: true
+          failed_when: freeipa_user_password.rc != 0 and 'no modifications' not in freeipa_user_password.stderr
+          become: true
+
+        - name: Save FreeIPA test user credentials
+          copy:
+            dest: "{{ backup_dir }}/freeipa-test-user-credentials.txt"
+            content: |
+              FreeIPA Test User Credentials
+              Generated: {{ ansible_date_time.iso8601 }}
+              
+              Username: {{ freeipa_test_username }}
+              Password: {{ freeipa_test_password }}
+              Email: {{ freeipa_test_username }}@vmstation.local
+              
+              FreeIPA Web UI (from desktop):
+              {% for ip in node_ips.stdout.split() %}
+              - https://{{ ip }}:30443 (or configure DNS for ipa.vmstation.local)
+              {% endfor %}
+              
+              Note: You may need to change the password on first login.
+            owner: root
+            group: root
+            mode: '0600'
+          when: freeipa_status.stdout == "active"
+          become: true
+
+        - name: Display FreeIPA test user information
+          debug:
+            msg: |
+              ============================================================
+              FreeIPA Test User Setup
+              ============================================================
+              {% if freeipa_status.stdout == "active" %}
+              Username: {{ freeipa_test_username }}
+              Password: {{ freeipa_test_password }}
+              Email: {{ freeipa_test_username }}@vmstation.local
+              
+              FreeIPA Web UI:
+              {% for ip in node_ips.stdout.split() %}
+              - https://{{ ip }}:30443
+              {% endfor %}
+              
+              Note: You may need to change the password on first login.
+              Credentials saved to: {{ backup_dir }}/freeipa-test-user-credentials.txt
+              {% else %}
+              FreeIPA is not active yet. Test user creation skipped.
+              Run this playbook again after FreeIPA initialization completes.
+              {% endif %}
+              ============================================================
+
     - name: Display backup files and checksums (if created)
       block:
         - name: Read backup directory contents
@@ -1175,6 +1336,11 @@
             - cert-manager: {{ 'Installed' if certmgr_helm.rc == 0 else 'Failed' }}
             - ClusterIssuer: {{ 'Applied' if issuer_apply is defined and issuer_apply.rc == 0 else 'Skipped' }}
           
+          Test Accounts:
+            - Keycloak Test User: {{ test_username | default('Not created') }}
+            - FreeIPA Test User: {{ freeipa_test_username | default('Not created') }}
+            - Credentials Location: {{ backup_dir }}/
+          
           Verification:
             Run: {{ repo_root }}/tests/verify-identity-deploy.sh
           
@@ -1198,5 +1364,10 @@
           3. Run acceptance tests: {{ repo_root }}/tests/verify-identity-deploy.sh
           4. Replace CHANGEME passwords in {{ keycloak_values_file }} before production use
           5. Configure FreeIPA (if deployed) and integrate with Keycloak LDAP
+          
+          Test Accounts:
+          - Keycloak test user credentials: {{ backup_dir }}/keycloak-test-user-credentials.txt
+          - FreeIPA test user credentials: {{ backup_dir }}/freeipa-test-user-credentials.txt
+          - Admin credentials: {{ backup_dir }}/keycloak-admin-credentials.txt
           
           For issues, check diagnostics in {{ backup_dir }}/

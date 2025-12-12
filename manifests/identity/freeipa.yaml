@@ -98,10 +98,13 @@ spec:
       labels:
         app: freeipa
     spec:
-      # Schedule on infra node (control-plane)
-      # The playbook will set this via nodeSelector
-      # nodeSelector:
-      #   kubernetes.io/hostname: your-masternode
+      # Schedule on control-plane node (masternode) only - always on
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
       containers:
       - name: freeipa-server
         image: freeipa/freeipa-server:almalinux-10-4.12.2
