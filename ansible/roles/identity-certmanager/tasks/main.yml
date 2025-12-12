@@ -183,6 +183,7 @@
         - "{{ ca_cert_src }}"
         - "{{ ca_key_src }}"
       become: true
+      when: ca_cert_gen is succeeded
 
     - name: Re-check CA cert file after generation
       stat:
@@ -204,14 +205,15 @@
 
 - name: Backup CA material to root backup (cert and key if present)
   shell: >-
-    set -e;
-    cp -f {{ ca_cert_src }} {{ backup_dir }}/ca.cert.pem || true;
-    if [ -f "{{ ca_key_src }}" ]; then cp -f {{ ca_key_src }} {{ backup_dir }}/ca.key.pem; fi;
-    tar -C {{ backup_dir }} -czf {{ backup_dir }}/identity-ca-backup.tar.gz --remove-files $(ls {{ backup_dir }} | grep -E 'ca.(cert|key).pem' || true) >/dev/null 2>&1 || true;
+    cp -f {{ ca_cert_src }} {{ backup_dir }}/ca.cert.pem &&
+    cp -f {{ ca_key_src }} {{ backup_dir }}/ca.key.pem &&
+    tar -C {{ backup_dir }} -czf {{ backup_dir }}/identity-ca-backup.tar.gz
+    --remove-files ca.cert.pem ca.key.pem
   when: ca_cert_stat.stat.exists and ca_key_stat.stat.exists
   register: backup_run
   changed_when: backup_run.rc == 0
   become: true
+  failed_when: false
 
 - name: Display warning if CA files still missing
   debug:
@@ -239,7 +241,7 @@
   template:
     src: "clusterissuer-freeipa.yml.j2"
     dest: "{{ template_dest }}"
-  when: ca_secret_created is defined and ca_secret_created.rc == 0
+  when: ca_secret_created is succeeded
 
 - name: Apply ClusterIssuer to cluster
   shell: kubectl apply -f {{ template_dest }}
@@ -247,9 +249,9 @@
     KUBECONFIG: /etc/kubernetes/admin.conf
   register: issuer_apply
   become: true
-  when: ca_secret_created is defined and ca_secret_created.rc == 0
+  when: ca_secret_created is succeeded
 
 - name: Display ClusterIssuer creation status
   debug:
     msg: "ClusterIssuer '{{ clusterissuer_name }}' created successfully with CA from {{ ca_cert_src }}"
-  when: issuer_apply is defined and issuer_apply.rc == 0
+  when: issuer_apply is succeeded
