@@ -7,3 +7,7 @@ enable_postgres_chown: true
 enable_freeipa_chown: true
 storage_class_manifest: "{{ repo_root }}/manifests/identity/storage-class-manual.yaml"
 keycloak_pv_manifest: "{{ repo_root }}/manifests/identity/keycloak-postgresql-pv.yaml"
+# Namespace defaults (safe fallback if playbook doesn't set these)
+namespace_identity: identity
+namespace_cert_manager: cert-manager
+namespace_platform: platform
