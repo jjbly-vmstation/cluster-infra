@@ -1,0 +1,9 @@
+*** Begin Patch
+*** Update File: ansible/roles/identity-storage/templates/postgres-chown-job.yml.j2
+@@
+-      {%- if infra_node is defined and infra_node != '' %}
++      {% if infra_node is defined and infra_node != '' %}
+@@
+-      {%- endif %}
++      {% endif %}
+*** End Patch

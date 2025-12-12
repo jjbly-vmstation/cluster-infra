@@ -1,0 +1,17 @@
+# Copied task file: ansible/roles/identity-keycloak/tasks/main.yml
+# Source: reported modified on deployment host — this is a best-effort reconstruction placeholder.
+# Please replace with the exact file from the host if you want an exact copy.
+
+- name: Ensure Keycloak Helm release is present
+  community.kubernetes.helm:
+    name: keycloak
+    chart_ref: ./charts/keycloak
+    namespace: "{{ namespace_identity }}"
+    values:
+      - keycloak-values.yaml
+
+# The actual change added tasks to patch the Keycloak StatefulSet env (DB vars),
+# create/update a ConfigMap `keycloak-startup` using a heredoc written to a temp file,
+# apply the ConfigMap, and restart the Keycloak pod to persist the startup script change.
+
+# Placeholder for the patched tasks; capture real content from /opt/vmstation-org on the deployment host.
