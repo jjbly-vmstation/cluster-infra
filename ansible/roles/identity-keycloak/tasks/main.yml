@@ -94,13 +94,15 @@
   register: keycloak_startup_cm
   changed_when: "'configured' in keycloak_startup_cm.stdout or 'created' in keycloak_startup_cm.stdout"
 
-- name: Restart Keycloak pod to pick up new configmap
+- name: Restart Keycloak StatefulSet to pick up new configmap
   shell: >-
-    KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} delete pod keycloak-0 || true
+    KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} rollout restart statefulset/keycloak
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
   become: true
-  changed_when: false
+  register: keycloak_restart
+  changed_when: keycloak_restart.rc == 0
+  failed_when: false
 
 - name: Wait for Keycloak pod to be ready after restart
   shell: >-

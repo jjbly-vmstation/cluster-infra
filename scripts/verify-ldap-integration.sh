@@ -27,7 +27,7 @@ echo ""
 echo "2. Testing LDAP connectivity"
 echo "----------------------------"
 if command -v ldapsearch >/dev/null 2>&1; then
-    if ldapsearch -x -H ldap://$FREEIPA_SERVER -b "$LDAP_BASE_DN" -LLL "(objectClass=*)" dn 2>/dev/null | head -5; then
+    if timeout 10 ldapsearch -x -H ldap://$FREEIPA_SERVER -b "$LDAP_BASE_DN" -LLL "(objectClass=*)" dn 2>/dev/null | head -5; then
         echo "✓ LDAP server is accessible"
     else
         echo "⚠ LDAP server not accessible (may require authentication)"

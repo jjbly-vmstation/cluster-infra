@@ -28,7 +28,7 @@ echo ""
 echo "2. Testing Keycloak accessibility"
 echo "----------------------------------"
 if command -v curl >/dev/null 2>&1; then
-    if curl -s -o /dev/null -w "%{http_code}" $KEYCLOAK_URL/auth/ | grep -q "200\|302\|303"; then
+    if curl -s -o /dev/null -w "%{http_code}" --max-time 10 $KEYCLOAK_URL/auth/ | grep -q "200\|302\|303"; then
         echo "✓ Keycloak is accessible at $KEYCLOAK_URL/auth/"
     else
         echo "⚠ Keycloak may not be fully ready yet"
