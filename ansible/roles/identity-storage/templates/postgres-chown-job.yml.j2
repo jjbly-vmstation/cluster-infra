@@ -24,37 +24,11 @@ spec:
           command: ["/bin/sh", "-c", "chown -R {{ postgresql_uid }}:{{ postgresql_gid }} {{ identity_data_dir }}/postgresql && ls -ld {{ identity_data_dir }}/postgresql && echo DONE"]
           securityContext:
             privileged: true
-          apiVersion: batch/v1
-          kind: Job
-          metadata:
-            name: postgres-chown-job
-            namespace: {{ namespace_identity }}
-          spec:
-            backoffLimit: 0
-            template:
-              metadata:
-                name: postgres-chown
-              spec:
-                {% if infra_node is defined and infra_node != '' %}
-                nodeSelector:
-                  kubernetes.io/hostname: {{ infra_node }}
-                {% endif %}
-                tolerations:
-                  - key: node-role.kubernetes.io/control-plane
-                    operator: Exists
-                    effect: NoSchedule
-                restartPolicy: OnFailure
-                containers:
-                  - name: chown
-                    image: busybox:1.36
-                    command: ["/bin/sh", "-c", "chown -R {{ postgresql_uid }}:{{ postgresql_gid }} {{ identity_data_dir }}/postgresql && ls -ld {{ identity_data_dir }}/postgresql && echo DONE"]
-                    securityContext:
-                      privileged: true
-                    volumeMounts:
-                      - name: host-postgres
-                        mountPath: {{ identity_data_dir }}/postgresql
-                volumes:
-                  - name: host-postgres
-                    hostPath:
-                      path: {{ identity_data_dir }}/postgresql
-                      type: DirectoryOrCreate
+          volumeMounts:
+            - name: host-postgres
+              mountPath: {{ identity_data_dir }}/postgresql
+      volumes:
+        - name: host-postgres
+          hostPath:
+            path: {{ identity_data_dir }}/postgresql
+            type: DirectoryOrCreate
