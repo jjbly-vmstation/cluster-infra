@@ -102,14 +102,15 @@ KUBECONFIG="$KUBECONFIG" kubectl -n "$NAMESPACE_IDENTITY" delete deployment --al
 
 # Step 7: Clean up storage directories (optional - commented out for safety)
 echo -e "${GREEN}[8/9] Cleaning up storage directories...${NC}"
+BACKUP_TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 if [[ -d "${STORAGE_PATH}/postgresql" ]]; then
-    echo "  Backing up postgresql data to ${STORAGE_PATH}/postgresql.backup.$(date +%Y%m%d-%H%M%S)"
-    mv "${STORAGE_PATH}/postgresql" "${STORAGE_PATH}/postgresql.backup.$(date +%Y%m%d-%H%M%S)" || echo "  Warning: Could not backup postgresql directory"
+    echo "  Backing up postgresql data to ${STORAGE_PATH}/postgresql.backup.${BACKUP_TIMESTAMP}"
+    mv "${STORAGE_PATH}/postgresql" "${STORAGE_PATH}/postgresql.backup.${BACKUP_TIMESTAMP}" || echo "  Warning: Could not backup postgresql directory"
 fi
 
 if [[ -d "${STORAGE_PATH}/freeipa" ]]; then
-    echo "  Backing up freeipa data to ${STORAGE_PATH}/freeipa.backup.$(date +%Y%m%d-%H%M%S)"
-    mv "${STORAGE_PATH}/freeipa" "${STORAGE_PATH}/freeipa.backup.$(date +%Y%m%d-%H%M%S)" || echo "  Warning: Could not backup freeipa directory"
+    echo "  Backing up freeipa data to ${STORAGE_PATH}/freeipa.backup.${BACKUP_TIMESTAMP}"
+    mv "${STORAGE_PATH}/freeipa" "${STORAGE_PATH}/freeipa.backup.${BACKUP_TIMESTAMP}" || echo "  Warning: Could not backup freeipa directory"
 fi
 
 # Step 8: Recreate empty directories
