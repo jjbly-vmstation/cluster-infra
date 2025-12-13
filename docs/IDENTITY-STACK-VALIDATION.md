@@ -113,6 +113,12 @@ curl -I http://<node-ip>:30180/auth
 # HTTPS (from desktop/external machine)
 curl -Ik https://<node-ip>:30543/auth
 # Should return HTTP 200 or Keycloak response
+
+# Test Keycloak health endpoints (should return HTTP 200)
+curl -s http://<node-ip>:30180/health/live
+curl -s http://<node-ip>:30180/health/ready
+curl -s http://<node-ip>:30180/health/started
+# All should return {"status":"UP","checks":[]} or similar healthy response
 ```
 
 Test FreeIPA access:
@@ -157,7 +163,28 @@ kubectl get endpoints -n identity
 - Each NodePort service should have corresponding endpoints
 - Endpoints should match pod IPs from Step 1
 
-### Step 6: Check Logs
+### Step 6: Verify Keycloak Health Probes
+
+Check that Keycloak pod has correct health probe configuration:
+
+```bash
+# Check probe configuration
+kubectl describe pod keycloak-0 -n identity | grep -A5 "Startup:\|Liveness:\|Readiness:"
+```
+
+**Expected Output:**
+```
+Liveness:     http-get http://:http/health/live delay=120s timeout=5s period=10s #success=1 #failure=10
+Readiness:    http-get http://:http/health/ready delay=60s timeout=2s period=10s #success=1 #failure=10
+Startup:      http-get http://:http/health/started delay=60s timeout=2s period=10s #success=1 #failure=90
+```
+
+**Key Points:**
+- Probes should use `/health/live`, `/health/ready`, and `/health/started` endpoints
+- Startup probe allows up to 15 minutes maximum (90 failures * 10s period = 900s) for initial startup
+- This prevents rollout timeouts during slow first starts while still detecting failures
+
+### Step 7: Check Logs
 
 Review pod logs for any errors:
 

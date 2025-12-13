@@ -22,12 +22,21 @@
   register: keycloak_helm_install
   become: true
 
-- name: Wait for Keycloak StatefulSet rollout
+- name: Wait for Keycloak pod(s) to be ready (by pod condition)
   shell: >-
-    KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status statefulset/keycloak 
-    -n {{ namespace_identity }} --timeout={{ rollout_wait_timeout }}s
-  register: keycloak_rollout
-  failed_when: keycloak_rollout.rc != 0
+    KUBECONFIG=/etc/kubernetes/admin.conf kubectl wait --for=condition=ready pod
+    -l app.kubernetes.io/instance=keycloak -n {{ namespace_identity }} --timeout={{ pod_wait_timeout }}s
+  register: keycloak_pod_wait
+  failed_when: keycloak_pod_wait.rc != 0
+  become: true
+
+# Fallback rollout status for visibility only - failures are intentionally ignored
+# Uses shorter timeout (rollout_wait_timeout) since this is supplementary to the robust pod wait above
+- name: Fallback - Show rollout status for visibility
+  shell: >-
+    KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status statefulset/keycloak -n {{ namespace_identity }} --timeout={{ rollout_wait_timeout }}s || true
+  register: keycloak_rollout_fallback
+  changed_when: false
   become: true
 
 - name: Deploy Keycloak NodePort Service for desktop access
@@ -49,12 +58,12 @@
         - name: http
           port: 80
           targetPort: 8080
-          nodePort: 30180
+          nodePort: {{ keycloak_nodeport_http }}
           protocol: TCP
         - name: https
           port: 8443
           targetPort: 8443
-          nodePort: 30543
+          nodePort: {{ keycloak_nodeport_https }}
           protocol: TCP
       selector:
         app.kubernetes.io/name: keycloak
