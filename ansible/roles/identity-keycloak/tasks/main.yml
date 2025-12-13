@@ -65,34 +65,32 @@
   changed_when: "'created' in keycloak_nodeport_apply.stdout or 'configured' in keycloak_nodeport_apply.stdout"
   become: true
 
-- name: Ensure keycloak-startup configmap has configured node identifier (remove stop-embedded-server)
-  shell: |
-    cat <<CM | kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f -
-    apiVersion: v1
-    kind: ConfigMap
-    metadata:
-      name: keycloak-startup
-      namespace: {{ namespace_identity }}
-    data:
-      keycloak.cli: |
-        embed-server --server-config=standalone-ha.xml --std-out=echo
-        batch
+- name: Ensure keycloak-startup ConfigMap exists with node identifier
+  kubernetes.core.k8s:
+    kubeconfig: /etc/kubernetes/admin.conf
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: keycloak-startup
+        namespace: {{ namespace_identity }}
+      data:
+        keycloak.cli: |
+          embed-server --server-config=standalone-ha.xml --std-out=echo
+          batch
 
-        echo Configuring node identifier
+          echo Configuring node identifier
 
-        ## Sets the node identifier to the node name (= pod name). Node identifiers have to be unique. They can have a
-        ## maximum length of 23 characters. Thus, the chart's fullname template truncates its length accordingly.
-        /subsystem=transactions:write-attribute(name=node-identifier, value=${jboss.node.name})
+          ## Sets the node identifier to the node name (= pod name). Node identifiers have to be unique. They can have a
+          ## maximum length of 23 characters. Thus, the chart's fullname template truncates its length accordingly.
+          /subsystem=transactions:write-attribute(name=node-identifier, value=${jboss.node.name})
 
-        echo Finished configuring node identifier
+          echo Finished configuring node identifier
 
-        run-batch
-    CM
-  environment:
-    KUBECONFIG: /etc/kubernetes/admin.conf
+          run-batch
   become: true
   register: keycloak_startup_cm
-  changed_when: "'configured' in keycloak_startup_cm.stdout or 'created' in keycloak_startup_cm.stdout"
 
 - name: Restart Keycloak StatefulSet to pick up new configmap
   shell: >-
