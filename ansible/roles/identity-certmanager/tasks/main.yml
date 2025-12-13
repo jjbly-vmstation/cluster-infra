@@ -94,12 +94,12 @@
 - name: Set flag if CA already exists
   set_fact:
     ca_already_exists: true
-  when: ca_cert_stat.stat.exists and ca_key_stat.stat.exists
+  when: (ca_cert_stat.stat.exists | default(false)) and (ca_key_stat.stat.exists | default(false))
 
 - name: Determine if CA generation will be needed
   set_fact:
     ca_generation_needed: true
-  when: not ca_cert_stat.stat.exists or not ca_key_stat.stat.exists
+  when: (not (ca_cert_stat.stat.exists | default(false))) or (not (ca_key_stat.stat.exists | default(false)))
 
 - name: Ensure backup directory exists (root-owned)
   file:
@@ -162,7 +162,7 @@
       debug:
         msg: "CA files restored from backup: {{ backup_dir }}/identity-ca-backup.tar.gz"
   when:
-    - (not ca_cert_stat.stat.exists or not ca_key_stat.stat.exists)
+    - ((not (ca_cert_stat.stat.exists | default(false))) or (not (ca_key_stat.stat.exists | default(false))))
     - ca_backup_files.matched > 0
 
 - name: Set flag that CA was restored
