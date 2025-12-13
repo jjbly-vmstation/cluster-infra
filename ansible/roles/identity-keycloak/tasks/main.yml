@@ -49,12 +49,12 @@
         - name: http
           port: 80
           targetPort: 8080
-          nodePort: 30080
+          nodePort: 30180
           protocol: TCP
         - name: https
           port: 8443
           targetPort: 8443
-          nodePort: 30443
+          nodePort: 30543
           protocol: TCP
       selector:
         app.kubernetes.io/name: keycloak
@@ -137,7 +137,7 @@
       The cluster-realm configuration has been prepared at /tmp/cluster-realm.json
       
       To complete SSO setup:
-      1. Access Keycloak admin console at http://192.168.4.63:30080/auth
+      1. Access Keycloak admin console at http://192.168.4.63:30180/auth
       2. Login with admin credentials from /root/identity-backup/keycloak-admin-credentials.txt
       3. Import realm from /tmp/cluster-realm.json or use Keycloak API to create realm
       4. Configure LDAP user federation:

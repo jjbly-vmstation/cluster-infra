@@ -15,7 +15,7 @@ This guide provides steps to validate the identity stack deployment after applyi
 - **Expected Result**: FreeIPA accessible from desktop via NodePort
 
 ### 3. External Access Ports
-- **Keycloak**: HTTP 30080, HTTPS 30443
+- **Keycloak**: HTTP 30180, HTTPS 30543
 - **FreeIPA**: HTTP 30088, HTTPS 30445, LDAP 30389, LDAPS 30636
 
 ## Validation Steps
@@ -84,7 +84,7 @@ kubectl get svc -n identity
 ```
 NAME                   TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)                                                      AGE
 keycloak-http          ClusterIP   10.233.X.X      <none>        80/TCP,8443/TCP                                              Xm
-keycloak-nodeport      NodePort    10.233.X.X      <none>        80:30080/TCP,8443:30443/TCP                                  Xm
+keycloak-nodeport      NodePort    10.233.X.X      <none>        80:30180/TCP,8443:30543/TCP                                  Xm
 keycloak-postgresql    ClusterIP   10.233.X.X      <none>        5432/TCP                                                     Xm
 freeipa                ClusterIP   10.233.X.X      <none>        80/TCP,443/TCP,389/TCP,636/TCP,88/TCP,88/UDP,464/TCP...     Xm
 freeipa-nodeport       NodePort    10.233.X.X      <none>        80:30088/TCP,443:30445/TCP,389:30389/TCP,636:30636/TCP      Xm
@@ -107,11 +107,11 @@ Test Keycloak access:
 
 ```bash
 # HTTP (from desktop/external machine)
-curl -I http://<node-ip>:30080/auth
+curl -I http://<node-ip>:30180/auth
 # Should return HTTP 200 or redirect to HTTPS
 
 # HTTPS (from desktop/external machine)
-curl -Ik https://<node-ip>:30443/auth
+curl -Ik https://<node-ip>:30543/auth
 # Should return HTTP 200 or Keycloak response
 ```
 
@@ -235,7 +235,7 @@ kubectl get svc --all-namespaces -o wide | grep NodePort
 ## Success Criteria
 
 ✅ All identity pods running on control-plane node(s)
-✅ Keycloak accessible via HTTP (30080) and HTTPS (30443)
+✅ Keycloak accessible via HTTP (30180) and HTTPS (30543)
 ✅ FreeIPA accessible via HTTP (30088), HTTPS (30445), LDAP (30389), LDAPS (30636)
 ✅ No error logs in pod containers
 ✅ Services have healthy endpoints

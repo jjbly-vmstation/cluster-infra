@@ -34,7 +34,10 @@ keycloak:
     - name: DB_USER
       value: keycloak
     - name: DB_PASSWORD
-      value: CHANGEME_DB_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: keycloak-postgresql
+          key: postgresql-password
 
 # Schedule Keycloak on control-plane node only (always on)
 nodeSelector:
@@ -137,3 +140,37 @@ resources:
   limits:
     cpu: "500m"
     memory: "1Gi"
+
+# Health probes using Keycloak's dedicated endpoints
+livenessProbe:
+  httpGet:
+    path: /health/live
+    port: http
+    scheme: HTTP
+  initialDelaySeconds: 120  # Keycloak takes ~2 minutes to fully start
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 10
+  successThreshold: 1
+
+readinessProbe:
+  httpGet:
+    path: /health/ready
+    port: http
+    scheme: HTTP
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  timeoutSeconds: 2
+  failureThreshold: 10
+  successThreshold: 1
+
+startupProbe:
+  httpGet:
+    path: /health/started  # ← KEY FIX: Use the startup health endpoint
+    port: http
+    scheme: HTTP
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  timeoutSeconds: 2
+  failureThreshold: 90  # 90 * 10s = 15 minutes max startup time
+  successThreshold: 1

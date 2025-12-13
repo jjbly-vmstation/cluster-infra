@@ -99,7 +99,7 @@
           
           Access Keycloak:
             Run: kubectl get nodes -o wide
-            Then access: http://<node-ip>:30080/auth
+            Then access: http://<node-ip>:30180/auth
           
           Backup Location: /root/identity-backup
           Credentials: /root/identity-backup/cluster-admin-credentials.txt

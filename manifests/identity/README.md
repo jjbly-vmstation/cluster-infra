@@ -48,9 +48,9 @@ These manifests are automatically deployed by the `identity-deploy-and-handover.
 ## External Access
 
 ### Keycloak
-- **NodePort HTTP**: Port 30080 (mapped to container port 8080)
-- **NodePort HTTPS**: Port 30443 (mapped to container port 8443)
-- **Access URL**: `http://<node-ip>:30080/auth` or `https://<node-ip>:30443/auth`
+- **NodePort HTTP**: Port 30180 (mapped to container port 8080)
+- **NodePort HTTPS**: Port 30543 (mapped to container port 8443)
+- **Access URL**: `http://<node-ip>:30180/auth` or `https://<node-ip>:30543/auth`
 
 ### FreeIPA
 - **NodePort HTTP**: Port 30088
