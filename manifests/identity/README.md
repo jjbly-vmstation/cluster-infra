@@ -21,14 +21,43 @@ Creates a PersistentVolume for Keycloak's PostgreSQL database using hostPath sto
 - **Path**: `/srv/monitoring-data/postgresql`
 - **Node Affinity**: Control plane nodes only
 
+### freeipa.yaml
+Deploys FreeIPA (Identity Management) with LDAP, Kerberos, and CA services.
+
+- **StatefulSet**: `freeipa` (1 replica)
+- **Storage**: 20Gi PersistentVolume at `/srv/monitoring-data/freeipa`
+- **Node Scheduling**: Control plane nodes only (with tolerations)
+- **ClusterIP Service**: Internal cluster access on standard ports (80, 443, 389, 636, 88, 464)
+- **NodePort Service**: External desktop access on:
+  - HTTP: 30088
+  - HTTPS: 30444
+  - LDAP: 30389
+  - LDAPS: 30636
+
 ## Deployment
 
 These manifests are automatically deployed by the `identity-deploy-and-handover.yml` playbook in the following order:
 
-1. Create storage directory: `/srv/monitoring-data/postgresql`
+1. Create storage directories: `/srv/monitoring-data/postgresql` and `/srv/monitoring-data/freeipa`
 2. Deploy StorageClass: `storage-class-manual.yaml`
 3. Deploy PersistentVolume: `keycloak-postgresql-pv.yaml`
-4. Deploy Keycloak (which creates the PVC that binds to the PV)
+4. Deploy PostgreSQL StatefulSet: `postgresql-statefulset.yaml`
+5. Deploy Keycloak via Helm (with NodePort service for external access on ports 30080/30443)
+6. Deploy FreeIPA: `freeipa.yaml` (with NodePort service for external access)
+
+## External Access
+
+### Keycloak
+- **NodePort HTTP**: Port 30080 (mapped to container port 8080)
+- **NodePort HTTPS**: Port 30443 (mapped to container port 8443)
+- **Access URL**: `http://<node-ip>:30080/auth` or `https://<node-ip>:30443/auth`
+
+### FreeIPA
+- **NodePort HTTP**: Port 30088
+- **NodePort HTTPS**: Port 30444
+- **NodePort LDAP**: Port 30389
+- **NodePort LDAPS**: Port 30636
+- **Access URL**: `https://<node-ip>:30444`
 
 ## Troubleshooting
 
@@ -58,10 +87,29 @@ If the PVC `data-keycloak-postgresql-0` remains in Pending state:
 
 ### Node Scheduling Issues
 
-The PV is configured with node affinity to control plane nodes. If you need to schedule on different nodes:
+All identity stack components (Keycloak, PostgreSQL, FreeIPA) are configured to run on control-plane nodes with appropriate tolerations. This ensures critical identity services are always available.
 
-1. Edit `keycloak-postgresql-pv.yaml` and modify the `nodeAffinity` section
-2. Reapply the manifest: `kubectl apply -f keycloak-postgresql-pv.yaml`
+**Keycloak Pod Scheduling:**
+- Node affinity is configured in `helm/keycloak-values.yaml` with `nodeSelector` and `tolerations` at the root level
+- The pod should be scheduled on nodes with label `node-role.kubernetes.io/control-plane`
+
+**PostgreSQL Pod Scheduling:**
+- Configured in `postgresql-statefulset.yaml` with `nodeSelector` and `tolerations`
+- PV has node affinity matching control-plane nodes
+
+**FreeIPA Pod Scheduling:**
+- Configured in `freeipa.yaml` StatefulSet with `nodeSelector` and `tolerations`
+- PV has node affinity matching control-plane nodes
+
+To verify pod placement:
+```bash
+kubectl get pods -n identity -o wide
+```
+
+If pods are scheduled on wrong nodes, check:
+1. Node labels: `kubectl get nodes --show-labels`
+2. Pod node affinity: `kubectl describe pod <pod-name> -n identity`
+3. StatefulSet/Deployment configuration: `kubectl get statefulset <name> -n identity -o yaml`
 
 ## Storage Considerations
 
