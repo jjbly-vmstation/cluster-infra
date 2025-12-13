@@ -30,6 +30,8 @@
   failed_when: keycloak_pod_wait.rc != 0
   become: true
 
+# Fallback rollout status for visibility only - failures are intentionally ignored
+# Uses shorter timeout (rollout_wait_timeout) since this is supplementary to the robust pod wait above
 - name: Fallback - Show rollout status for visibility
   shell: >-
     KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status statefulset/keycloak -n {{ namespace_identity }} --timeout={{ rollout_wait_timeout }}s || true
