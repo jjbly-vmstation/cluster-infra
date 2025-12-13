@@ -20,8 +20,12 @@ After running the identity deployment playbook, Keycloak is installed and runnin
 
 1. Access the Keycloak admin console:
    ```bash
-   # From your desktop/workstation
+   # From your desktop/workstation (replace <control-plane-ip> with actual IP)
    http://<control-plane-ip>:30180/auth/admin
+   
+   # Or use port forwarding from control plane node:
+   # ssh -L 30180:localhost:30180 root@<control-plane-ip>
+   # Then access: http://localhost:30180/auth/admin
    ```
 
 2. Login with admin credentials:
@@ -47,13 +51,16 @@ The Ansible playbook has prepared a realm configuration file at `/tmp/cluster-re
 Use the provided helper script to import the realm via Keycloak's REST API:
 
 ```bash
-# On control plane node
-cd /path/to/cluster-infra
+# On control plane node, navigate to the repository root
+cd /root/cluster-infra  # or wherever you cloned the repository
 
 # Set admin credentials as environment variables
 export KEYCLOAK_ADMIN_USER=admin
 export KEYCLOAK_ADMIN_PASSWORD=<password-from-credentials-file>
 export KEYCLOAK_BASE_URL=http://localhost:30180
+
+# Optional: Force update if realm already exists (for non-interactive mode)
+# export KEYCLOAK_FORCE_UPDATE=true
 
 # Run the import script
 ./scripts/keycloak-import-realm.sh /tmp/cluster-realm.json

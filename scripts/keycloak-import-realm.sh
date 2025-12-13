@@ -9,6 +9,7 @@
 #   export KEYCLOAK_ADMIN_USER=admin
 #   export KEYCLOAK_ADMIN_PASSWORD=<password>
 #   export KEYCLOAK_BASE_URL=http://localhost:30180
+#   export KEYCLOAK_FORCE_UPDATE=true  # Optional: force update without prompting
 #   ./keycloak-import-realm.sh /path/to/realm.json
 #
 # PREREQUISITES:
@@ -107,14 +108,12 @@ get_admin_token() {
     info "Authenticating as admin user..."
     
     local response
-    response=$(curl -s -X POST "$token_url" \
+    if ! response=$(curl -s -X POST "$token_url" \
         -H "Content-Type: application/x-www-form-urlencoded" \
         -d "username=${KEYCLOAK_ADMIN_USER}" \
         -d "password=${KEYCLOAK_ADMIN_PASSWORD}" \
         -d "grant_type=password" \
-        -d "client_id=admin-cli" 2>&1)
-    
-    if [ $? -ne 0 ]; then
+        -d "client_id=admin-cli" 2>&1); then
         error "Failed to authenticate with Keycloak"
         error "Response: $response"
         exit 1
@@ -154,11 +153,20 @@ import_realm() {
     
     if [ "$http_code" == "200" ]; then
         warn "Realm '$realm_name' already exists"
-        read -p "Do you want to update it? (y/N) " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            info "Import cancelled"
-            exit 0
+        
+        # Check if running in non-interactive mode or force flag is set
+        if [ "${KEYCLOAK_FORCE_UPDATE:-false}" == "true" ]; then
+            info "Force update enabled, proceeding with realm update..."
+        elif [ ! -t 0 ]; then
+            error "Realm already exists and running in non-interactive mode. Set KEYCLOAK_FORCE_UPDATE=true to force update."
+            exit 1
+        else
+            read -p "Do you want to update it? (y/N) " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                info "Import cancelled"
+                exit 0
+            fi
         fi
         
         # Update existing realm
