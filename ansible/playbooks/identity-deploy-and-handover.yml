@@ -61,6 +61,18 @@
         name: identity-keycloak
       tags: [keycloak]
     
+    - name: Display Keycloak admin credentials
+      debug:
+        msg: |
+          ============================================================
+          Keycloak Admin Credentials
+          ============================================================
+          URL: http://<masternode-ip>:30180/auth
+          Username: admin
+          Password: {{ keycloak_admin_password | default('admin123') }}
+          ============================================================
+      tags: [keycloak]
+    
     # Phase 6: Deploy FreeIPA (optional)
     - name: Deploy FreeIPA
       include_role:

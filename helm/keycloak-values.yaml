@@ -21,7 +21,7 @@ replicaCount: 1
 # Admin credentials (replace before installing in production)
 keycloak:
   adminUser: "admin"
-  adminPassword: "CHANGEME_ADMIN_PASSWORD"
+  adminPassword: "admin123"
   extraEnv:
     - name: DB_VENDOR
       value: postgres

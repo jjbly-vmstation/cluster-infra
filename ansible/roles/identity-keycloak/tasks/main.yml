@@ -7,6 +7,24 @@
     path: "{{ keycloak_values_file }}"
   register: keycloak_values_stat
 
+- name: Generate Keycloak admin password
+  shell: openssl rand -base64 32
+  register: keycloak_admin_password_gen
+  become: false
+
+- name: Set Keycloak admin password fact
+  set_fact:
+    keycloak_admin_password: "{{ keycloak_admin_password_gen.stdout | trim }}"
+
+- name: Generate PostgreSQL password
+  shell: openssl rand -base64 32
+  register: postgresql_password_gen
+  become: false
+
+- name: Set PostgreSQL password fact
+  set_fact:
+    postgresql_password: "{{ postgresql_password_gen.stdout | trim }}"
+
 - name: Install/upgrade Keycloak via Helm (PostgreSQL disabled)
   shell: >-
     helm repo add codecentric https://codecentric.github.io/helm-charts >/dev/null 2>&1 || true;
@@ -14,6 +32,7 @@
     helm upgrade --install keycloak {{ keycloak_helm_chart }} 
     -n {{ namespace_identity }} 
     -f {{ keycloak_values_file }} 
+    --set keycloak.adminPassword="{{ keycloak_admin_password }}"
     --create-namespace 
     --set postgresql.enabled=false
   when: keycloak_values_stat.stat.exists
@@ -92,33 +111,6 @@
   register: keycloak_nodeport_apply
   changed_when: "'created' in keycloak_nodeport_apply.stdout or 'configured' in keycloak_nodeport_apply.stdout"
   become: true
-
-- name: Ensure keycloak-startup ConfigMap exists with node identifier
-  kubernetes.core.k8s:
-    kubeconfig: /etc/kubernetes/admin.conf
-    state: present
-    definition:
-      apiVersion: v1
-      kind: ConfigMap
-      metadata:
-        name: keycloak-startup
-        namespace: "{{ namespace_identity }}"
-      data:
-        keycloak.cli: |
-          embed-server --server-config=standalone-ha.xml --std-out=echo
-          batch
-
-          echo Configuring node identifier
-
-          ## Sets the node identifier to the node name (= pod name). Node identifiers have to be unique. They can have a
-          ## maximum length of 23 characters. Thus, the chart's fullname template truncates its length accordingly.
-          /subsystem=transactions:write-attribute(name=node-identifier, value=${jboss.node.name})
-
-          echo Finished configuring node identifier
-
-          run-batch
-  become: true
-  register: keycloak_startup_cm
 
 - name: Restart Keycloak StatefulSet to pick up new configmap
   shell: >-
