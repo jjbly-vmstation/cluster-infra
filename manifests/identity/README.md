@@ -30,7 +30,7 @@ Deploys FreeIPA (Identity Management) with LDAP, Kerberos, and CA services.
 - **ClusterIP Service**: Internal cluster access on standard ports (80, 443, 389, 636, 88, 464)
 - **NodePort Service**: External desktop access on:
   - HTTP: 30088
-  - HTTPS: 30444
+  - HTTPS: 30445
   - LDAP: 30389
   - LDAPS: 30636
 
@@ -54,10 +54,10 @@ These manifests are automatically deployed by the `identity-deploy-and-handover.
 
 ### FreeIPA
 - **NodePort HTTP**: Port 30088
-- **NodePort HTTPS**: Port 30444
+- **NodePort HTTPS**: Port 30445
 - **NodePort LDAP**: Port 30389
 - **NodePort LDAPS**: Port 30636
-- **Access URL**: `https://<node-ip>:30444`
+- **Access URL**: `https://<node-ip>:30445`
 
 ## Troubleshooting
 
