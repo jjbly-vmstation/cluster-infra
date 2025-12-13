@@ -6,7 +6,7 @@ This guide explains how to integrate new applications with the Keycloak SSO syst
 
 ## Prerequisites
 
-- Keycloak deployed and accessible at `http://192.168.4.63:30080/auth`
+- Keycloak deployed and accessible at `http://192.168.4.63:30180/auth`
 - `cluster-services` realm created and configured
 - FreeIPA LDAP user federation configured
 - Admin access to Keycloak console
@@ -22,7 +22,7 @@ Keycloak supports multiple authentication protocols:
 
 ### Step 1: Create OIDC Client in Keycloak
 
-1. Access Keycloak admin console: `http://192.168.4.63:30080/auth/admin/`
+1. Access Keycloak admin console: `http://192.168.4.63:30180/auth/admin/`
 2. Select the `cluster-services` realm
 3. Navigate to **Clients** → **Create**
 4. Configure client:
@@ -60,7 +60,7 @@ kubectl create secret generic your-app-oidc-secret \
   -n your-namespace \
   --from-literal=client-id=your-app-name \
   --from-literal=client-secret=<secret-from-keycloak> \
-  --from-literal=issuer-url=http://192.168.4.63:30080/auth/realms/cluster-services
+  --from-literal=issuer-url=http://192.168.4.63:30180/auth/realms/cluster-services
 ```
 
 ### Step 4: Configure Application
@@ -71,7 +71,7 @@ Each application configures OIDC differently. Common configuration parameters:
 oidc:
   client_id: your-app-name
   client_secret: <from-kubernetes-secret>
-  issuer_url: http://192.168.4.63:30080/auth/realms/cluster-services
+  issuer_url: http://192.168.4.63:30180/auth/realms/cluster-services
   redirect_uri: http://your-app.vmstation.local/callback
   scopes:
     - openid
@@ -96,9 +96,9 @@ allow_sign_up = true
 client_id = grafana
 client_secret = <secret>
 scopes = openid email profile
-auth_url = http://192.168.4.63:30080/auth/realms/cluster-services/protocol/openid-connect/auth
-token_url = http://192.168.4.63:30080/auth/realms/cluster-services/protocol/openid-connect/token
-api_url = http://192.168.4.63:30080/auth/realms/cluster-services/protocol/openid-connect/userinfo
+auth_url = http://192.168.4.63:30180/auth/realms/cluster-services/protocol/openid-connect/auth
+token_url = http://192.168.4.63:30180/auth/realms/cluster-services/protocol/openid-connect/token
+api_url = http://192.168.4.63:30180/auth/realms/cluster-services/protocol/openid-connect/userinfo
 ```
 
 **3. Helm Chart Values**:
@@ -122,7 +122,7 @@ helm install oauth2-proxy oauth2-proxy/oauth2-proxy \
   -n monitoring \
   --set config.clientID=prometheus \
   --set config.clientSecret=<secret> \
-  --set config.oidcIssuerUrl=http://192.168.4.63:30080/auth/realms/cluster-services
+  --set config.oidcIssuerUrl=http://192.168.4.63:30180/auth/realms/cluster-services
 ```
 
 **2. Configure Ingress**:
@@ -164,7 +164,7 @@ metadata:
 data:
   oidc.config: |
     name: Keycloak
-    issuer: http://192.168.4.63:30080/auth/realms/cluster-services
+    issuer: http://192.168.4.63:30180/auth/realms/cluster-services
     clientID: argocd
     clientSecret: <secret>
     requestedScopes: ["openid", "profile", "email", "groups"]
@@ -186,7 +186,7 @@ gitlab_rails['omniauth_providers'] = [
       name: 'openid_connect',
       scope: ['openid', 'profile', 'email'],
       response_type: 'code',
-      issuer: 'http://192.168.4.63:30080/auth/realms/cluster-services',
+      issuer: 'http://192.168.4.63:30180/auth/realms/cluster-services',
       client_auth_method: 'query',
       discovery: true,
       uid_field: 'preferred_username',
@@ -281,7 +281,7 @@ Users in the group automatically get the assigned roles.
 ```bash
 # Get access token
 TOKEN=$(curl -X POST \
-  'http://192.168.4.63:30080/auth/realms/cluster-services/protocol/openid-connect/token' \
+  'http://192.168.4.63:30180/auth/realms/cluster-services/protocol/openid-connect/token' \
   -H 'Content-Type: application/x-www-form-urlencoded' \
   -d 'client_id=your-app' \
   -d 'client_secret=<secret>' \

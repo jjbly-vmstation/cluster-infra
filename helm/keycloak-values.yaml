@@ -34,7 +34,10 @@ keycloak:
     - name: DB_USER
       value: keycloak
     - name: DB_PASSWORD
-      value: CHANGEME_DB_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: keycloak-postgresql
+          key: postgresql-password
 
 # Schedule Keycloak on control-plane node only (always on)
 nodeSelector:
@@ -51,20 +54,23 @@ service:
   port: 8080
 
 # Use PostgreSQL (recommended for production)
+# Note: Database connection is configured via extraEnv above using secretKeyRef
 database:
   vendor: postgres
   hostname: keycloak-postgresql
   port: 5432
   database: keycloak
   username: keycloak
-  password: "CHANGEME_DB_PASSWORD"
+  # Password is configured via DB_PASSWORD env var with secretKeyRef above
+  password: ""
 
 # PostgreSQL subchart configuration (disabled - we use standalone StatefulSet)
+# Note: We use a standalone PostgreSQL StatefulSet, not this subchart
 postgresql:
   enabled: false
   auth:
     username: keycloak
-    password: "CHANGEME_DB_PASSWORD"
+    password: ""  # Not used - standalone PostgreSQL uses keycloak-postgresql secret
     database: keycloak
   # Force the use of a stable, known-good PostgreSQL image to avoid
   # registry issues, rate limiting, or missing Bitnami tags
@@ -137,3 +143,37 @@ resources:
   limits:
     cpu: "500m"
     memory: "1Gi"
+
+# Health probes using Keycloak's dedicated endpoints
+livenessProbe:
+  httpGet:
+    path: /health/live
+    port: http
+    scheme: HTTP
+  initialDelaySeconds: 120  # Keycloak takes ~2 minutes to fully start
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 10
+  successThreshold: 1
+
+readinessProbe:
+  httpGet:
+    path: /health/ready
+    port: http
+    scheme: HTTP
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  timeoutSeconds: 2
+  failureThreshold: 10
+  successThreshold: 1
+
+startupProbe:
+  httpGet:
+    path: /health/started  # KEY FIX: Use the startup health endpoint
+    port: http
+    scheme: HTTP
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  timeoutSeconds: 2
+  failureThreshold: 90  # 90 * 10s = 15 minutes max startup time
+  successThreshold: 1
