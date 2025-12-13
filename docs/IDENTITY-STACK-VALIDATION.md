@@ -181,8 +181,8 @@ Startup:      http-get http://:http/health/started delay=60s timeout=2s period=1
 
 **Key Points:**
 - Probes should use `/health/live`, `/health/ready`, and `/health/started` endpoints
-- Startup probe allows up to 15 minutes (90 failures * 10s period) for initial startup
-- This prevents rollout timeouts during slow first starts
+- Startup probe allows up to 15 minutes maximum (90 failures * 10s period = 900s) for initial startup
+- This prevents rollout timeouts during slow first starts while still detecting failures
 
 ### Step 7: Check Logs
 

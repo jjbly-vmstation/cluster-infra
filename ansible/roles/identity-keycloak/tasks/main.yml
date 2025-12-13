@@ -32,7 +32,7 @@
 
 - name: Fallback - Show rollout status for visibility
   shell: >-
-    KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status statefulset/keycloak -n {{ namespace_identity }} --timeout=60s || true
+    KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status statefulset/keycloak -n {{ namespace_identity }} --timeout={{ rollout_wait_timeout }}s || true
   register: keycloak_rollout_fallback
   changed_when: false
   become: true
@@ -56,12 +56,12 @@
         - name: http
           port: 80
           targetPort: 8080
-          nodePort: 30180
+          nodePort: {{ keycloak_nodeport_http }}
           protocol: TCP
         - name: https
           port: 8443
           targetPort: 8443
-          nodePort: 30543
+          nodePort: {{ keycloak_nodeport_https }}
           protocol: TCP
       selector:
         app.kubernetes.io/name: keycloak
