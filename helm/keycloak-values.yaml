@@ -18,6 +18,15 @@
 
 replicaCount: 1
 
+# Ensure node scheduling is set at the root level
+nodeSelector:
+  node-role.kubernetes.io/control-plane: ""
+
+tolerations:
+- key: node-role.kubernetes.io/control-plane
+  operator: Exists
+  effect: NoSchedule
+
 keycloak:
   adminUser: "admin"
   adminPassword: "admin123"
