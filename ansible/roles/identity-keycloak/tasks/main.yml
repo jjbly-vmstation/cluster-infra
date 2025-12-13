@@ -74,7 +74,7 @@
       kind: ConfigMap
       metadata:
         name: keycloak-startup
-        namespace: {{ namespace_identity }}
+        namespace: "{{ namespace_identity }}"
       data:
         keycloak.cli: |
           embed-server --server-config=standalone-ha.xml --std-out=echo
