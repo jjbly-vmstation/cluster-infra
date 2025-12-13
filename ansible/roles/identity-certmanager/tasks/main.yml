@@ -74,6 +74,13 @@
   changed_when: false
   become: true
 
+- name: Initialize CA handling flags
+  set_fact:
+    ca_was_restored: false
+    ca_was_generated: false
+    ca_already_exists: false
+    ca_generation_needed: false
+
 - name: Check if CA cert file exists
   stat:
     path: "{{ ca_cert_src }}"
@@ -83,6 +90,16 @@
   stat:
     path: "{{ ca_key_src }}"
   register: ca_key_stat
+
+- name: Set flag if CA already exists
+  set_fact:
+    ca_already_exists: true
+  when: ca_cert_stat.stat.exists and ca_key_stat.stat.exists
+
+- name: Determine if CA generation will be needed
+  set_fact:
+    ca_generation_needed: true
+  when: not ca_cert_stat.stat.exists or not ca_key_stat.stat.exists
 
 - name: Ensure backup directory exists (root-owned)
   file:
@@ -148,6 +165,14 @@
     - (not ca_cert_stat.stat.exists or not ca_key_stat.stat.exists)
     - ca_backup_files.matched > 0
 
+- name: Set flag that CA was restored
+  set_fact:
+    ca_was_restored: true
+    ca_generation_needed: false
+  when:
+    - ca_backup_files.matched > 0
+    - ca_generation_needed | default(false)
+
 - name: Generate self-signed CA if missing and generation is enabled
   block:
     - name: Ensure CA directory exists
@@ -193,27 +218,65 @@
     - name: Re-check CA cert file after generation
       stat:
         path: "{{ ca_cert_src }}"
-      register: ca_cert_stat
+      register: ca_cert_stat_final
 
     - name: Re-check CA key file after generation
       stat:
         path: "{{ ca_key_src }}"
-      register: ca_key_stat
+      register: ca_key_stat_final
 
     - name: Display generation message
       debug:
         msg: "Self-signed CA generated at {{ ca_cert_src }} and {{ ca_key_src }}"
   when:
     - identity_generate_ca | default(true) | bool
-    - (not ca_cert_stat.stat.exists or not ca_key_stat.stat.exists)
-    - ca_backup_files.matched == 0
+    - ca_generation_needed | default(false)
+    - not ca_was_restored | default(false)
+
+- name: Set flag that CA was generated
+  set_fact:
+    ca_was_generated: true
+  when:
+    - identity_generate_ca | default(true) | bool
+    - ca_generation_needed | default(false)
+    - not ca_was_restored | default(false)
+
+- name: Final verification that CA cert exists
+  stat:
+    path: "{{ ca_cert_src }}"
+  register: final_ca_cert_check
+
+- name: Final verification that CA key exists
+  stat:
+    path: "{{ ca_key_src }}"
+  register: final_ca_key_check
+
+- name: Fail if CA cert still doesn't exist
+  fail:
+    msg: "CA certificate not found at {{ ca_cert_src }} after restore/generation attempts"
+  when: not final_ca_cert_check.stat.exists
+
+- name: Fail if CA key still doesn't exist
+  fail:
+    msg: "CA key not found at {{ ca_key_src }} after restore/generation attempts"
+  when: not final_ca_key_check.stat.exists
+
+- name: Display CA handling result
+  debug:
+    msg: |
+      CA handling completed successfully:
+      - CA already existed: {{ ca_already_exists }}
+      - CA restored from backup: {{ ca_was_restored }}
+      - CA generated: {{ ca_was_generated }}
+      - CA cert: {{ ca_cert_src }}
+      - CA key: {{ ca_key_src }}
 
 - name: Copy CA cert to backup directory
   copy:
     src: "{{ ca_cert_src }}"
     dest: "{{ backup_dir }}/ca.cert.pem"
     remote_src: true
-  when: ca_cert_stat.stat.exists
+  when: final_ca_cert_check.stat.exists
   become: true
 
 - name: Copy CA key to backup directory
@@ -221,7 +284,7 @@
     src: "{{ ca_key_src }}"
     dest: "{{ backup_dir }}/ca.key.pem"
     remote_src: true
-  when: ca_key_stat.stat.exists
+  when: final_ca_key_check.stat.exists
   become: true
 
 - name: Create CA backup archive
@@ -231,19 +294,9 @@
       - "{{ backup_dir }}/ca.key.pem"
     dest: "{{ backup_dir }}/identity-ca-backup.tar.gz"
     remove: true
-  when: ca_cert_stat.stat.exists and ca_key_stat.stat.exists
+  when: final_ca_cert_check.stat.exists and final_ca_key_check.stat.exists
   register: backup_run
   become: true
-
-- name: Display warning if CA files still missing
-  debug:
-    msg: |
-      WARNING: CA files not found and could not be generated/restored.
-      - CA cert: {{ ca_cert_src }}
-      - CA key: {{ ca_key_src }}
-      ClusterIssuer will NOT be created.
-      To fix: Provide CA files at the paths above or set identity_generate_ca=true
-  when: not ca_cert_stat.stat.exists or not ca_key_stat.stat.exists
 
 - name: Create or update Kubernetes Secret with CA (tls.crt and tls.key format for cert-manager)
   shell: >-
@@ -255,7 +308,7 @@
     KUBECONFIG: /etc/kubernetes/admin.conf
   register: ca_secret_created
   become: true
-  when: ca_cert_stat.stat.exists and ca_key_stat.stat.exists
+  when: final_ca_cert_check.stat.exists and final_ca_key_check.stat.exists
 
 - name: Render ClusterIssuer template
   template:
