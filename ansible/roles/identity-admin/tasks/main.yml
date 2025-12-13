@@ -39,7 +39,7 @@
         Domain: vmstation.local
       
       Keycloak Access:
-        URL: http://192.168.4.63:30080/auth
+        URL: http://192.168.4.63:30180/auth
         Realm: cluster-services
       
       SECURITY NOTICE:

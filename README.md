@@ -227,7 +227,7 @@ ansible-playbook ansible/playbooks/identity-deploy-and-handover.yml
 
 ### Access Points
 
-- **Keycloak Admin**: `http://192.168.4.63:30080/auth/admin/`
+- **Keycloak Admin**: `http://192.168.4.63:30180/auth/admin/`
 - **FreeIPA Web UI**: `https://ipa.vmstation.local`
 - **Credentials**: `/root/identity-backup/cluster-admin-credentials.txt`
 

@@ -42,7 +42,7 @@ These manifests are automatically deployed by the `identity-deploy-and-handover.
 2. Deploy StorageClass: `storage-class-manual.yaml`
 3. Deploy PersistentVolume: `keycloak-postgresql-pv.yaml`
 4. Deploy PostgreSQL StatefulSet: `postgresql-statefulset.yaml`
-5. Deploy Keycloak via Helm (with NodePort service for external access on ports 30080/30443)
+5. Deploy Keycloak via Helm (with NodePort service for external access on ports 30180/30543)
 6. Deploy FreeIPA: `freeipa.yaml` (with NodePort service for external access)
 
 ## External Access

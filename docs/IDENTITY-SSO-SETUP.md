@@ -51,7 +51,7 @@ This guide covers the deployment and configuration of the complete identity mana
 ### 2. Keycloak
 - **Purpose**: Identity and Access Management, SSO provider
 - **Location**: Kubernetes StatefulSet in `identity` namespace on masternode
-- **Access**: http://192.168.4.63:30080/auth
+- **Access**: http://192.168.4.63:30180/auth
 - **Features**:
   - OIDC/SAML SSO
   - LDAP user federation (integrates with FreeIPA)
@@ -126,7 +126,7 @@ Expected output:
    ```
 
 2. Access Keycloak:
-   - URL: `http://192.168.4.63:30080/auth/admin/`
+   - URL: `http://192.168.4.63:30180/auth/admin/`
    - Credentials: `/root/identity-backup/cluster-admin-credentials.txt`
 
 ### Step 4: Import SSO Realm
