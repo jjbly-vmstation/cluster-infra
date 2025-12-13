@@ -22,13 +22,6 @@ replicaCount: 1
 keycloak:
   adminUser: "admin"
   adminPassword: "CHANGEME_ADMIN_PASSWORD"
-  # Schedule Keycloak on control-plane node only (always on)
-  nodeSelector:
-    node-role.kubernetes.io/control-plane: ""
-  tolerations:
-  - key: node-role.kubernetes.io/control-plane
-    operator: Exists
-    effect: NoSchedule
   extraEnv:
     - name: DB_VENDOR
       value: postgres
@@ -42,6 +35,15 @@ keycloak:
       value: keycloak
     - name: DB_PASSWORD
       value: CHANGEME_DB_PASSWORD
+
+# Schedule Keycloak on control-plane node only (always on)
+nodeSelector:
+  node-role.kubernetes.io/control-plane: ""
+
+tolerations:
+- key: node-role.kubernetes.io/control-plane
+  operator: Exists
+  effect: NoSchedule
 
 # Service exposure
 service:
@@ -100,17 +102,9 @@ persistence:
   enabled: false
   size: 10Gi
 
-# Node scheduling: The playbook will set nodeSelector via Helm --set flags
-# to ensure Keycloak and PostgreSQL run on the infra node (control-plane).
-# You can also configure them here:
-#
-# keycloak:
-#   nodeSelector:
-#     kubernetes.io/hostname: your-masternode-hostname
-#
-# postgresql:
-#   nodeSelector:
-#     kubernetes.io/hostname: your-masternode-hostname
+# Node scheduling: nodeSelector and tolerations are configured at the root level
+# above to ensure Keycloak runs on the control-plane node (masternode).
+# PostgreSQL scheduling is configured in its separate StatefulSet manifest.
 
 # Ingress (optional) - configure your ingress controller and host
 ingress:
