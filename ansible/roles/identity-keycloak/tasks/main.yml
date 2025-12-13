@@ -22,6 +22,25 @@
   register: keycloak_helm_install
   become: true
 
+- name: Patch Keycloak StatefulSet to schedule on control-plane node
+  shell: >-
+    KUBECONFIG=/etc/kubernetes/admin.conf kubectl patch statefulset keycloak -n {{ namespace_identity }} --type='json' -p='[
+      {"op": "add", "path": "/spec/template/spec/nodeSelector", "value": {"node-role.kubernetes.io/control-plane": ""}},
+      {"op": "add", "path": "/spec/template/spec/tolerations", "value": [{"key": "node-role.kubernetes.io/control-plane", "operator": "Exists", "effect": "NoSchedule"}]}
+    ]'
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  become: true
+  when: keycloak_values_stat.stat.exists
+
+- name: Restart Keycloak StatefulSet to apply nodeSelector changes
+  shell: >-
+    KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout restart statefulset/keycloak -n {{ namespace_identity }}
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  become: true
+  when: keycloak_values_stat.stat.exists
+
 - name: Wait for Keycloak pod(s) to be ready (by pod condition)
   shell: >-
     KUBECONFIG=/etc/kubernetes/admin.conf kubectl wait --for=condition=ready pod
