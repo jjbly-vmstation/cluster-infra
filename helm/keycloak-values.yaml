@@ -18,56 +18,52 @@
 
 replicaCount: 1
 
-# Admin credentials (replace before installing in production)
-keycloakAdminUser: "admin"
-keycloakAdminPassword: "admin123"
-
-# Database configuration for Bitnami Keycloak chart
-extraEnvVars:
-  - name: KEYCLOAK_DATABASE_HOST
-    value: "keycloak-postgresql"
-  - name: KEYCLOAK_DATABASE_PORT_NUMBER
-    value: "5432"
-  - name: KEYCLOAK_DATABASE_NAME
-    value: "keycloak"
-  - name: KEYCLOAK_DATABASE_USER
-    value: "keycloak"
-  - name: KEYCLOAK_DATABASE_PASSWORD
-    valueFrom:
-      secretKeyRef:
-        name: keycloak-postgresql
-        key: postgresql-password
-
-# Health probes using Keycloak's dedicated endpoints
-livenessProbe:
-  httpGet:
-    path: /health/live
-    port: http
-    scheme: HTTP
-  initialDelaySeconds: 120  # Keycloak takes ~2 minutes to fully start
-  periodSeconds: 10
-  timeoutSeconds: 5
-  failureThreshold: 10
-  successThreshold: 1
-
-readinessProbe:
-  httpGet:
-    path: /health/ready
-    port: http
-    scheme: HTTP
-  initialDelaySeconds: 60
-  periodSeconds: 10
-  timeoutSeconds: 2
-  failureThreshold: 10
-  successThreshold: 1
-
-startupProbe:
-  httpGet:
-    path: /health/started  # KEY FIX: Use the startup health endpoint
-    port: http
-    scheme: HTTP
-  initialDelaySeconds: 60
-  periodSeconds: 10
-  timeoutSeconds: 2
-  failureThreshold: 90  # 90 * 10s = 15 minutes max startup time
-  successThreshold: 1
+keycloak:
+  adminUser: "admin"
+  adminPassword: "admin123"
+  extraEnv:
+    - name: DB_VENDOR
+      value: postgres
+    - name: DB_ADDR
+      value: "keycloak-postgresql"
+    - name: DB_PORT
+      value: "5432"
+    - name: DB_DATABASE
+      value: "keycloak"
+    - name: DB_USER
+      value: "keycloak"
+    - name: DB_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: keycloak-postgresql
+          key: postgresql-password
+  livenessProbe:
+    httpGet:
+      path: /health/live
+      port: http
+      scheme: HTTP
+    initialDelaySeconds: 120
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 10
+    successThreshold: 1
+  readinessProbe:
+    httpGet:
+      path: /health/ready
+      port: http
+      scheme: HTTP
+    initialDelaySeconds: 60
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 10
+    successThreshold: 1
+  startupProbe:
+    httpGet:
+      path: /health/started
+      port: http
+      scheme: HTTP
+    initialDelaySeconds: 60
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 90
+    successThreshold: 1
