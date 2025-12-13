@@ -54,20 +54,23 @@ service:
   port: 8080
 
 # Use PostgreSQL (recommended for production)
+# Note: Database connection is configured via extraEnv above using secretKeyRef
 database:
   vendor: postgres
   hostname: keycloak-postgresql
   port: 5432
   database: keycloak
   username: keycloak
-  password: "CHANGEME_DB_PASSWORD"
+  # Password is configured via DB_PASSWORD env var with secretKeyRef above
+  password: ""
 
 # PostgreSQL subchart configuration (disabled - we use standalone StatefulSet)
+# Note: We use a standalone PostgreSQL StatefulSet, not this subchart
 postgresql:
   enabled: false
   auth:
     username: keycloak
-    password: "CHANGEME_DB_PASSWORD"
+    password: ""  # Not used - standalone PostgreSQL uses keycloak-postgresql secret
     database: keycloak
   # Force the use of a stable, known-good PostgreSQL image to avoid
   # registry issues, rate limiting, or missing Bitnami tags
@@ -166,7 +169,7 @@ readinessProbe:
 
 startupProbe:
   httpGet:
-    path: /health/started  # ← KEY FIX: Use the startup health endpoint
+    path: /health/started  # KEY FIX: Use the startup health endpoint
     port: http
     scheme: HTTP
   initialDelaySeconds: 60
