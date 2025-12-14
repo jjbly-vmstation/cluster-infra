@@ -9,3 +9,4 @@ keycloak_realm: "cluster-services"
 namespace_monitoring: "monitoring"
 keycloak_nodeport_http: 30180
 keycloak_nodeport_https: 30543
+backup_dir: /root/identity-backup
