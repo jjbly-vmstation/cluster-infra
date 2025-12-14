@@ -16,6 +16,42 @@
   set_fact:
     keycloak_admin_password: "{{ keycloak_admin_password_gen.stdout | trim }}"
 
+- name: Ensure backup directory exists for credentials
+  file:
+    path: "{{ backup_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  become: true
+
+- name: Save Keycloak admin credentials to backup directory
+  copy:
+    content: |
+      ============================================================
+      Keycloak Administrator Credentials
+      ============================================================
+      Generated: {{ ansible_date_time.iso8601 }}
+      
+      URL: http://<masternode-ip>:30180/auth
+      Username: admin
+      Password: {{ keycloak_admin_password }}
+      
+      SECURITY NOTICE:
+      - This file contains sensitive credentials
+      - Keep it secure and backed up
+      - Change default passwords immediately in production
+      - This password is SEPARATE from FreeIPA admin password
+      
+      Note: FreeIPA admin password is set separately via
+      CHANGEME_IPA_ADMIN_PASSWORD in playbook variables
+      ============================================================
+    dest: "{{ backup_dir }}/keycloak-admin-credentials.txt"
+    owner: root
+    group: root
+    mode: '0600'
+  become: true
+
 - name: Generate PostgreSQL password
   shell: openssl rand -base64 32
   register: postgresql_password_gen
