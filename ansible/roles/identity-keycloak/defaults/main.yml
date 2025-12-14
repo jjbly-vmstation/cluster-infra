@@ -3,7 +3,7 @@
 keycloak_helm_chart: "codecentric/keycloak"
 keycloak_values_file: "{{ repo_root }}/helm/keycloak-values.yaml"
 rollout_wait_timeout: 300
-pod_wait_timeout: 900
+pod_wait_timeout: 300
 keycloak_configure_sso: true
 keycloak_realm: "cluster-services"
 namespace_monitoring: "monitoring"
