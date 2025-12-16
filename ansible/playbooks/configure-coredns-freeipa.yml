@@ -1,0 +1,515 @@
+---
+# Playbook: configure-coredns-freeipa.yml
+# Purpose: Configure CoreDNS with FreeIPA DNS Records for Identity Stack Integration
+# This playbook should be run after the identity stack deployment (Steps 1-3)
+# 
+# Usage:
+#   ansible-playbook -i inventory/mycluster/hosts.yaml \
+#     ansible/playbooks/configure-coredns-freeipa.yml
+
+- name: Configure CoreDNS with FreeIPA DNS Records
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: yes
+  
+  vars:
+    # Kubernetes configuration
+    kubeconfig: /etc/kubernetes/admin.conf
+    
+    # FreeIPA configuration
+    freeipa_namespace: identity
+    freeipa_pod: freeipa-0
+    freeipa_hostname: ipa.vmstation.local
+    freeipa_domain: vmstation.local
+    
+    # CoreDNS configuration
+    coredns_namespace: kube-system
+    coredns_configmap: coredns
+    
+    # Output paths
+    dns_records_file: /tmp/freeipa-dns-records.txt
+    dns_records_dir: /tmp/freeipa-dns-records
+    coredns_backup_file: /tmp/coredns-backup-{{ ansible_date_time.epoch }}.yaml
+    
+    # Flags
+    enable_hosts_fallback: true
+    
+  tasks:
+    # =========================================================================
+    # Phase 1: Validation - Check Prerequisites
+    # =========================================================================
+    - name: Phase 1 - Validate Prerequisites
+      block:
+        - name: Check if kubectl is available
+          ansible.builtin.command: which kubectl
+          register: kubectl_check
+          changed_when: false
+          failed_when: false
+          
+        - name: Fail if kubectl not found
+          ansible.builtin.fail:
+            msg: "kubectl not found. Please install kubectl or ensure it's in PATH."
+          when: kubectl_check.rc != 0
+          
+        - name: Check if kubeconfig exists
+          ansible.builtin.stat:
+            path: "{{ kubeconfig }}"
+          register: kubeconfig_stat
+          
+        - name: Fail if kubeconfig not found
+          ansible.builtin.fail:
+            msg: "Kubeconfig not found at {{ kubeconfig }}"
+          when: not kubeconfig_stat.stat.exists
+          
+        - name: Check if FreeIPA pod exists and is ready
+          ansible.builtin.command: >
+            kubectl --kubeconfig={{ kubeconfig }}
+            -n {{ freeipa_namespace }}
+            get pod {{ freeipa_pod }}
+            -o jsonpath='{.status.phase}'
+          register: freeipa_pod_status
+          changed_when: false
+          failed_when: false
+          
+        - name: Fail if FreeIPA pod not found or not running
+          ansible.builtin.fail:
+            msg: "FreeIPA pod {{ freeipa_pod }} not found or not running (status: {{ freeipa_pod_status.stdout | default('unknown') }})"
+          when: freeipa_pod_status.rc != 0 or freeipa_pod_status.stdout != "Running"
+          
+        - name: Check FreeIPA pod readiness
+          ansible.builtin.command: >
+            kubectl --kubeconfig={{ kubeconfig }}
+            -n {{ freeipa_namespace }}
+            get pod {{ freeipa_pod }}
+            -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+          register: freeipa_pod_ready
+          changed_when: false
+          failed_when: false
+          
+        - name: Warn if FreeIPA pod not ready
+          ansible.builtin.debug:
+            msg: "WARNING: FreeIPA pod is not ready yet. DNS records may be incomplete."
+          when: freeipa_pod_ready.stdout != "True"
+          
+        - name: Display validation summary
+          ansible.builtin.debug:
+            msg:
+              - "============================================"
+              - "Prerequisites Validated"
+              - "============================================"
+              - "✓ kubectl: available"
+              - "✓ kubeconfig: {{ kubeconfig }}"
+              - "✓ FreeIPA pod: {{ freeipa_pod }} ({{ freeipa_pod_status.stdout }})"
+              - "✓ FreeIPA ready: {{ freeipa_pod_ready.stdout }}"
+              - "============================================"
+              
+      tags: [prerequisites, always]
+
+    # =========================================================================
+    # Phase 2: Extract DNS Records from FreeIPA Pod
+    # =========================================================================
+    - name: Phase 2 - Extract DNS Records from FreeIPA
+      block:
+        - name: Create DNS records output directory
+          ansible.builtin.file:
+            path: "{{ dns_records_dir }}"
+            state: directory
+            mode: '0755'
+            
+        - name: Extract DNS records from FreeIPA pod
+          ansible.builtin.shell: |
+            set -euo pipefail
+            kubectl --kubeconfig={{ kubeconfig }} -n {{ freeipa_namespace }} \
+              exec {{ freeipa_pod }} -- \
+              find /tmp -name "ipa.system.records.*.db" -exec cat {} \;
+          args:
+            executable: /bin/bash
+          register: freeipa_dns_raw
+          changed_when: false
+          failed_when: false
+          
+        - name: Check if DNS records were extracted
+          ansible.builtin.fail:
+            msg: "Failed to extract DNS records from FreeIPA pod. Pod may not be fully initialized."
+          when: freeipa_dns_raw.rc != 0 or freeipa_dns_raw.stdout == ""
+          
+        - name: Save raw DNS records to file
+          ansible.builtin.copy:
+            content: "{{ freeipa_dns_raw.stdout }}"
+            dest: "{{ dns_records_dir }}/ipa.system.records.raw.db"
+            mode: '0644'
+            
+        - name: Parse A records from DNS zone files
+          ansible.builtin.shell: |
+            set -euo pipefail
+            echo "{{ freeipa_dns_raw.stdout }}" | \
+            grep " IN A " | \
+            awk '{print $NF " " $1}' | \
+            sed 's/\.$//' | \
+            sort -u
+          args:
+            executable: /bin/bash
+          register: parsed_a_records
+          changed_when: false
+          
+        - name: Get FreeIPA service ClusterIP
+          ansible.builtin.command: >
+            kubectl --kubeconfig={{ kubeconfig }}
+            -n {{ freeipa_namespace }}
+            get service freeipa
+            -o jsonpath='{.spec.clusterIP}'
+          register: freeipa_service_ip
+          changed_when: false
+          failed_when: false
+          
+        - name: Set FreeIPA IP (use service IP or fallback to masternode)
+          ansible.builtin.set_fact:
+            freeipa_ip: "{{ freeipa_service_ip.stdout if freeipa_service_ip.rc == 0 and freeipa_service_ip.stdout != '' else '192.168.4.63' }}"
+            
+        - name: Create DNS records in hosts file format
+          ansible.builtin.copy:
+            dest: "{{ dns_records_file }}"
+            content: |
+              # FreeIPA DNS Records - Generated on {{ ansible_date_time.iso8601 }}
+              # Source: FreeIPA pod {{ freeipa_pod }} in namespace {{ freeipa_namespace }}
+              
+              {{ freeipa_ip }}    {{ freeipa_hostname }} ipa
+              {{ freeipa_ip }}    {{ freeipa_domain }}
+              
+              {% if parsed_a_records.stdout != "" %}
+              # Additional A records from FreeIPA DNS zone
+              {{ parsed_a_records.stdout }}
+              {% endif %}
+            mode: '0644'
+            
+        - name: Display extracted DNS records
+          ansible.builtin.debug:
+            msg:
+              - "============================================"
+              - "DNS Records Extracted"
+              - "============================================"
+              - "FreeIPA IP: {{ freeipa_ip }}"
+              - "Primary hostname: {{ freeipa_hostname }}"
+              - "Domain: {{ freeipa_domain }}"
+              - "Records file: {{ dns_records_file }}"
+              - "============================================"
+              
+      tags: [extract, dns]
+
+    # =========================================================================
+    # Phase 3: Configure CoreDNS ConfigMap
+    # =========================================================================
+    - name: Phase 3 - Configure CoreDNS with FreeIPA DNS Records
+      block:
+        - name: Backup existing CoreDNS ConfigMap
+          ansible.builtin.shell: |
+            kubectl --kubeconfig={{ kubeconfig }} \
+              -n {{ coredns_namespace }} \
+              get configmap {{ coredns_configmap }} \
+              -o yaml > {{ coredns_backup_file }}
+          args:
+            executable: /bin/bash
+          changed_when: true
+          
+        - name: Display backup location
+          ansible.builtin.debug:
+            msg: "CoreDNS ConfigMap backed up to: {{ coredns_backup_file }}"
+            
+        - name: Get current CoreDNS ConfigMap
+          ansible.builtin.command: >
+            kubectl --kubeconfig={{ kubeconfig }}
+            -n {{ coredns_namespace }}
+            get configmap {{ coredns_configmap }}
+            -o jsonpath='{.data.Corefile}'
+          register: current_corefile
+          changed_when: false
+          
+        - name: Check if FreeIPA hosts section already exists
+          ansible.builtin.set_fact:
+            hosts_section_exists: "{{ 'hosts {' in current_corefile.stdout }}"
+            
+        - name: Create new Corefile with FreeIPA hosts section
+          ansible.builtin.set_fact:
+            updated_corefile: |
+              .:53 {
+                  errors
+                  health {
+                     lameduck 5s
+                  }
+                  ready
+                  kubernetes cluster.local in-addr.arpa ip6.arpa {
+                     pods insecure
+                     fallthrough in-addr.arpa ip6.arpa
+                     ttl 30
+                  }
+                  prometheus :9153
+                  forward . /etc/resolv.conf {
+                     max_concurrent 1000
+                  }
+                  cache 30
+                  loop
+                  reload
+                  loadbalance
+                  hosts {
+                    {{ freeipa_ip }} {{ freeipa_hostname }} ipa
+                    {{ freeipa_ip }} {{ freeipa_domain }}
+                    fallthrough
+                  }
+              }
+          when: not hosts_section_exists
+          
+        - name: Update existing Corefile (if hosts section already exists)
+          ansible.builtin.set_fact:
+            updated_corefile: "{{ current_corefile.stdout }}"
+          when: hosts_section_exists
+          
+        - name: Create temporary CoreDNS ConfigMap manifest
+          ansible.builtin.copy:
+            dest: /tmp/coredns-configmap-updated.yaml
+            content: |
+              apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                name: {{ coredns_configmap }}
+                namespace: {{ coredns_namespace }}
+              data:
+                Corefile: |
+              {{ updated_corefile | indent(4, first=True) }}
+            mode: '0644'
+          when: not hosts_section_exists
+          
+        - name: Apply updated CoreDNS ConfigMap
+          ansible.builtin.command: >
+            kubectl --kubeconfig={{ kubeconfig }}
+            apply -f /tmp/coredns-configmap-updated.yaml
+          register: configmap_apply
+          changed_when: "'configured' in configmap_apply.stdout or 'created' in configmap_apply.stdout"
+          when: not hosts_section_exists
+          
+        - name: Skip CoreDNS update (hosts section already exists)
+          ansible.builtin.debug:
+            msg: "CoreDNS ConfigMap already has hosts section. Skipping update."
+          when: hosts_section_exists
+          
+        - name: Restart CoreDNS deployment to reload configuration
+          ansible.builtin.command: >
+            kubectl --kubeconfig={{ kubeconfig }}
+            -n {{ coredns_namespace }}
+            rollout restart deployment/coredns
+          register: coredns_restart
+          changed_when: true
+          when: not hosts_section_exists
+          
+        - name: Wait for CoreDNS rollout to complete
+          ansible.builtin.command: >
+            kubectl --kubeconfig={{ kubeconfig }}
+            -n {{ coredns_namespace }}
+            rollout status deployment/coredns
+            --timeout=120s
+          register: rollout_status
+          changed_when: false
+          when: not hosts_section_exists
+          
+        - name: Wait for CoreDNS pods to be ready
+          ansible.builtin.command: >
+            kubectl --kubeconfig={{ kubeconfig }}
+            -n {{ coredns_namespace }}
+            wait --for=condition=ready pod
+            -l k8s-app=kube-dns
+            --timeout=120s
+          register: coredns_ready
+          changed_when: false
+          when: not hosts_section_exists
+          
+        - name: Display CoreDNS configuration status
+          ansible.builtin.debug:
+            msg:
+              - "============================================"
+              - "CoreDNS Configuration Status"
+              - "============================================"
+              - "Backup file: {{ coredns_backup_file }}"
+              - "ConfigMap updated: {{ not hosts_section_exists }}"
+              - "CoreDNS restarted: {{ not hosts_section_exists }}"
+              - "CoreDNS status: {{ rollout_status.stdout | default('Not restarted') }}"
+              - "============================================"
+              
+      tags: [coredns, configure]
+
+    # =========================================================================
+    # Phase 4: Validate DNS Resolution from Cluster
+    # =========================================================================
+    - name: Phase 4 - Validate DNS Resolution from Cluster
+      block:
+        - name: Test DNS resolution using busybox pod
+          ansible.builtin.command: >
+            kubectl --kubeconfig={{ kubeconfig }}
+            run test-dns-{{ ansible_date_time.epoch }}
+            --image=busybox:1.36
+            --rm -i --restart=Never
+            --command -- nslookup {{ freeipa_hostname }}
+          register: dns_test_result
+          changed_when: false
+          failed_when: false
+          
+        - name: Display DNS test results
+          ansible.builtin.debug:
+            msg:
+              - "============================================"
+              - "DNS Resolution Test"
+              - "============================================"
+              - "Hostname: {{ freeipa_hostname }}"
+              - "Test result:"
+              - "{{ dns_test_result.stdout }}"
+              - "{{ dns_test_result.stderr }}"
+              - "============================================"
+              
+        - name: Verify DNS resolution succeeded
+          ansible.builtin.assert:
+            that:
+              - dns_test_result.rc == 0
+              - freeipa_ip in dns_test_result.stdout
+            fail_msg: "DNS resolution failed for {{ freeipa_hostname }}"
+            success_msg: "DNS resolution successful for {{ freeipa_hostname }} -> {{ freeipa_ip }}"
+            
+      tags: [validate, test]
+
+    # =========================================================================
+    # Phase 5: Optional - Configure /etc/hosts on All Nodes (Fallback)
+    # =========================================================================
+    - name: Phase 5 - Display fallback configuration instructions
+      block:
+        - name: Display /etc/hosts fallback instructions
+          ansible.builtin.debug:
+            msg:
+              - "============================================"
+              - "Optional: /etc/hosts Fallback Configuration"
+              - "============================================"
+              - "To configure /etc/hosts on all cluster nodes as a fallback:"
+              - ""
+              - "ansible-playbook -i inventory/mycluster/hosts.yaml \\"
+              - "  ansible/playbooks/configure-coredns-freeipa.yml \\"
+              - "  --tags hosts-fallback"
+              - ""
+              - "Or use the existing playbook for full network configuration:"
+              - "ansible-playbook -i inventory/mycluster/hosts.yaml \\"
+              - "  ansible/playbooks/configure-dns-network-step4a.yml"
+              - "============================================"
+              
+      tags: [always]
+
+    # =========================================================================
+    # Phase 6: Final Summary
+    # =========================================================================
+    - name: Phase 6 - Display Configuration Summary
+      block:
+        - name: Display final summary
+          ansible.builtin.debug:
+            msg:
+              - "============================================"
+              - "CoreDNS FreeIPA Configuration Complete!"
+              - "============================================"
+              - "FreeIPA Hostname: {{ freeipa_hostname }}"
+              - "FreeIPA IP: {{ freeipa_ip }}"
+              - "FreeIPA Domain: {{ freeipa_domain }}"
+              - ""
+              - "CoreDNS Configuration:"
+              - "  Namespace: {{ coredns_namespace }}"
+              - "  ConfigMap: {{ coredns_configmap }}"
+              - "  Backup: {{ coredns_backup_file }}"
+              - ""
+              - "DNS Records:"
+              - "  Records file: {{ dns_records_file }}"
+              - "  Records directory: {{ dns_records_dir }}"
+              - ""
+              - "Verification:"
+              - "  DNS resolution test: PASSED"
+              - "  {{ freeipa_hostname }} resolves to {{ freeipa_ip }}"
+              - ""
+              - "Access Points:"
+              - "  FreeIPA Web UI: https://{{ freeipa_hostname }}:30445/ipa/ui"
+              - "  FreeIPA Web UI (IP): https://192.168.4.63:30445/ipa/ui"
+              - ""
+              - "Next Steps:"
+              - "  1. Verify FreeIPA is accessible from cluster pods"
+              - "  2. Configure Keycloak to use FreeIPA LDAP"
+              - "  3. Deploy infrastructure services (Step 4b)"
+              - "  4. Deploy monitoring stack (Step 5)"
+              - ""
+              - "Troubleshooting:"
+              - "  If DNS resolution fails:"
+              - "  - Check CoreDNS pods: kubectl get pods -n kube-system -l k8s-app=kube-dns"
+              - "  - Check CoreDNS logs: kubectl logs -n kube-system -l k8s-app=kube-dns"
+              - "  - Restore backup: kubectl apply -f {{ coredns_backup_file }}"
+              - "  - Use /etc/hosts fallback: See playbook configure-dns-network-step4a.yml"
+              - "============================================"
+              
+      tags: [always]
+
+# =========================================================================
+# Optional Play: Configure /etc/hosts on All Cluster Nodes (Fallback)
+# =========================================================================
+- name: Optional - Configure /etc/hosts on All Cluster Nodes (Fallback)
+  hosts: all
+  become: true
+  gather_facts: yes
+  
+  vars:
+    freeipa_ip: 192.168.4.63
+    freeipa_hostname: ipa.vmstation.local
+    freeipa_domain: vmstation.local
+    dns_records_dir: /tmp/freeipa-dns-records
+    
+  tasks:
+    - name: Ensure DNS records directory exists
+      ansible.builtin.file:
+        path: "{{ dns_records_dir }}"
+        state: directory
+        mode: '0755'
+        
+    - name: Backup existing /etc/hosts
+      ansible.builtin.copy:
+        src: /etc/hosts
+        dest: /etc/hosts.pre-freeipa-{{ ansible_date_time.epoch }}
+        remote_src: true
+        mode: '0644'
+      when: not ansible_check_mode
+      
+    - name: Remove old FreeIPA entries from /etc/hosts
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '.*{{ freeipa_hostname }}.*'
+        state: absent
+        
+    - name: Remove old domain entries from /etc/hosts
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '.*{{ freeipa_domain }}.*'
+        state: absent
+        
+    - name: Add FreeIPA DNS records to /etc/hosts
+      ansible.builtin.blockinfile:
+        path: /etc/hosts
+        block: |
+          # FreeIPA DNS Records - Managed by Ansible (configure-coredns-freeipa.yml)
+          {{ freeipa_ip }}    {{ freeipa_hostname }} ipa
+          {{ freeipa_ip }}    {{ freeipa_domain }}
+        marker: "# {mark} FREEIPA DNS RECORDS (CoreDNS Fallback)"
+        
+    - name: Verify DNS resolution on node
+      ansible.builtin.command: getent hosts {{ freeipa_hostname }}
+      register: dns_verify
+      changed_when: false
+      failed_when: false
+      
+    - name: Display DNS verification result
+      ansible.builtin.debug:
+        msg: "✓ DNS resolution on {{ inventory_hostname }}: {{ dns_verify.stdout }}"
+      when: dns_verify.rc == 0
+      
+    - name: Warn if DNS resolution failed on node
+      ansible.builtin.debug:
+        msg: "✗ DNS resolution failed on {{ inventory_hostname }}"
+      when: dns_verify.rc != 0
+      
+  tags: [hosts-fallback]

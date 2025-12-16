@@ -84,14 +84,33 @@ After completing the identity stack deployment, configure DNS records and networ
 
 #### Automated Deployment
 
-**Option 1: Full Ansible Playbook** (Recommended)
+**Option 1: CoreDNS Configuration** (Recommended for CoreDNS-based DNS)
 ```bash
 cd /path/to/cluster-infra
-ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml \
+ansible-playbook -i inventory/mycluster/hosts.yaml \
+  ansible/playbooks/configure-coredns-freeipa.yml
+```
+
+This playbook:
+- Extracts DNS records from FreeIPA pod
+- Updates CoreDNS ConfigMap with FreeIPA hostnames
+- Restarts CoreDNS pods
+- Validates DNS resolution from within cluster
+- Optionally configures /etc/hosts on nodes as fallback
+
+**Option 2: Full Network Configuration** (DNS + Firewall)
+```bash
+cd /path/to/cluster-infra
+ansible-playbook -i inventory/mycluster/hosts.yaml \
   ansible/playbooks/configure-dns-network-step4a.yml
 ```
 
-**Option 2: Individual Scripts**
+This playbook:
+- Configures DNS via /etc/hosts on all nodes
+- Configures firewall rules (firewalld/iptables)
+- Verifies network ports and connectivity
+
+**Option 3: Individual Scripts**
 ```bash
 # 1. Extract DNS records from FreeIPA
 ./scripts/extract-freeipa-dns-records.sh -v
