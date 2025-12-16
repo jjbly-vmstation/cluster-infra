@@ -92,6 +92,8 @@ ansible-playbook -i inventory/mycluster/hosts.yaml \
 ```
 
 This playbook:
+- Checks if CoreDNS is installed in the cluster
+- Installs CoreDNS if not present (automatically handles clusters using Calico CNI)
 - Extracts DNS records from FreeIPA pod
 - Updates CoreDNS ConfigMap with FreeIPA hostnames
 - Restarts CoreDNS pods

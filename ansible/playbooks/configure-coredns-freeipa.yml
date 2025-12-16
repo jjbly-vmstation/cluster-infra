@@ -2,6 +2,13 @@
 # Playbook: configure-coredns-freeipa.yml
 # Purpose: Configure CoreDNS with FreeIPA DNS Records for Identity Stack Integration
 # This playbook should be run after the identity stack deployment (Steps 1-3)
+#
+# This playbook:
+# 1. Checks if CoreDNS is installed in the cluster
+# 2. Installs CoreDNS if not present (required for clusters using Calico CNI)
+# 3. Extracts DNS records from FreeIPA pod
+# 4. Configures CoreDNS with FreeIPA DNS records
+# 5. Validates DNS resolution for ipa.vmstation.local
 # 
 # Usage:
 #   ansible-playbook -i inventory/mycluster/hosts.yaml \
@@ -27,6 +34,9 @@
     # CoreDNS configuration
     coredns_namespace: kube-system
     coredns_configmap: coredns
+    coredns_deployment_wait_retries: 10
+    coredns_deployment_wait_delay: 3
+    coredns_rollout_timeout: 120s
     
     # Output paths
     dns_records_file: /tmp/freeipa-dns-records.txt
@@ -106,6 +116,120 @@
               - "============================================"
               
       tags: [prerequisites, always]
+
+    # =========================================================================
+    # Phase 1.5: Check CoreDNS Installation and Install if Needed
+    # =========================================================================
+    - name: Phase 1.5 - CoreDNS Installation Detection and Deployment
+      block:
+        - name: Check if CoreDNS deployment exists
+          ansible.builtin.command:
+            cmd: kubectl --kubeconfig={{ kubeconfig }} -n kube-system get deployment coredns
+          register: coredns_check
+          changed_when: false
+          failed_when: false
+          
+        - name: Set CoreDNS installation required flag
+          ansible.builtin.set_fact:
+            coredns_install_required: "{{ coredns_check.rc != 0 }}"
+            
+        - name: Display CoreDNS status
+          ansible.builtin.debug:
+            msg: |
+              ============================================
+              CoreDNS Status
+              ============================================
+              CoreDNS installed: {{ 'No' if coredns_install_required else 'Yes' }}
+              {% if coredns_install_required %}
+              Action: Installing CoreDNS before configuration
+              {% else %}
+              Action: Using existing CoreDNS installation
+              {% endif %}
+              ============================================
+              
+        - block:
+            - name: Detect cluster DNS service IP
+              ansible.builtin.shell: |
+                set -euo pipefail
+                # Try to get from existing kube-dns service
+                if kubectl --kubeconfig={{ kubeconfig }} get svc -n kube-system kube-dns -o jsonpath='{.spec.clusterIP}' 2>/dev/null; then
+                  exit 0
+                fi
+                # Try to get from kubelet config if file exists
+                if [ -f /var/lib/kubelet/config.yaml ]; then
+                  grep -oP 'clusterDNS:\s*\[\K[^\]]+' /var/lib/kubelet/config.yaml 2>/dev/null && exit 0
+                fi
+                # Default to Kubespray/Calico default
+                echo "10.233.0.10"
+              args:
+                executable: /bin/bash
+              register: cluster_dns_ip_result
+              changed_when: false
+              
+            - name: Set cluster DNS IP
+              ansible.builtin.set_fact:
+                cluster_dns_ip: "{{ cluster_dns_ip_result.stdout | trim }}"
+                
+            - name: Display detected cluster DNS IP
+              ansible.builtin.debug:
+                msg: "Detected cluster DNS IP: {{ cluster_dns_ip }}"
+                
+            - name: Create secure temporary directory for CoreDNS manifest
+              ansible.builtin.tempfile:
+                state: directory
+                suffix: coredns
+              register: coredns_temp_dir
+              
+            - name: Create CoreDNS deployment manifest from template
+              ansible.builtin.template:
+                src: templates/coredns-deployment.yaml.j2
+                dest: "{{ coredns_temp_dir.path }}/coredns-deployment.yaml"
+                mode: '0600'
+                
+            - name: Deploy CoreDNS
+              ansible.builtin.command:
+                cmd: kubectl --kubeconfig={{ kubeconfig }} apply -f {{ coredns_temp_dir.path }}/coredns-deployment.yaml
+              register: coredns_deploy
+              
+            - name: Wait for CoreDNS deployment to be created
+              ansible.builtin.command:
+                cmd: kubectl --kubeconfig={{ kubeconfig }} -n kube-system get deployment coredns
+              retries: "{{ coredns_deployment_wait_retries }}"
+              delay: "{{ coredns_deployment_wait_delay }}"
+              register: coredns_deployment_check
+              until: coredns_deployment_check.rc == 0
+              
+            - name: Wait for CoreDNS pods to be ready
+              ansible.builtin.command:
+                cmd: kubectl --kubeconfig={{ kubeconfig }} -n kube-system rollout status deployment/coredns --timeout={{ coredns_rollout_timeout }}
+              register: coredns_rollout
+              
+            - name: Verify CoreDNS service exists
+              ansible.builtin.command:
+                cmd: kubectl --kubeconfig={{ kubeconfig }} -n kube-system get service kube-dns
+              register: coredns_svc_check
+              changed_when: false
+              
+            - name: Display CoreDNS installation result
+              ansible.builtin.debug:
+                msg: |
+                  ============================================
+                  CoreDNS Installation Complete
+                  ============================================
+                  ✓ CoreDNS deployment created
+                  ✓ CoreDNS pods ready
+                  ✓ kube-dns service available at {{ cluster_dns_ip }}
+                  ============================================
+                  
+            - name: Cleanup temporary CoreDNS manifest directory
+              ansible.builtin.file:
+                path: "{{ coredns_temp_dir.path }}"
+                state: absent
+              when: coredns_temp_dir.path is defined
+                  
+          when: coredns_install_required
+          
+      tags: [coredns, install, always]
 
     # =========================================================================
     # Phase 2: Extract DNS Records from FreeIPA Pod
@@ -433,6 +557,7 @@
               - "  Namespace: {{ coredns_namespace }}"
               - "  ConfigMap: {{ coredns_configmap }}"
               - "  Backup: {{ coredns_backup_file }}"
+              - "  CoreDNS Installed: {{ 'Yes (newly installed)' if coredns_install_required | default(false) else 'Yes (pre-existing)' }}"
               - ""
               - "DNS Records:"
               - "  Records file: {{ dns_records_file }}"

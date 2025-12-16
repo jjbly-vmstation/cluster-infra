@@ -229,6 +229,7 @@ ansible-playbook ansible/playbooks/identity-deploy-and-handover.yml
 **Target Hosts**: `localhost` for CoreDNS config, optionally `all` for /etc/hosts fallback  
 **Phases**:
 - Phase 1: Validate prerequisites (kubectl, kubeconfig, FreeIPA pod)
+- Phase 1.5: Check CoreDNS installation and install if needed (auto-installs for Calico CNI clusters)
 - Phase 2: Extract DNS records from FreeIPA pod
 - Phase 3: Update CoreDNS ConfigMap with FreeIPA hostnames
 - Phase 4: Restart CoreDNS and validate DNS resolution
@@ -247,6 +248,8 @@ ansible-playbook -i inventory/mycluster/hosts.yaml \
 ```
 
 **Features**:
+- **Auto-installs CoreDNS** if not present (handles Calico CNI clusters automatically)
+- Detects cluster DNS service IP and configures CoreDNS accordingly
 - Extracts DNS records from FreeIPA pod (`/tmp/ipa.system.records.*.db`)
 - Parses A records for hostname → IP mappings
 - Backs up existing CoreDNS ConfigMap before changes
