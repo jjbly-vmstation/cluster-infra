@@ -34,6 +34,9 @@
     # CoreDNS configuration
     coredns_namespace: kube-system
     coredns_configmap: coredns
+    coredns_deployment_wait_retries: 10
+    coredns_deployment_wait_delay: 3
+    coredns_rollout_timeout: 120s
     
     # Output paths
     dns_records_file: /tmp/freeipa-dns-records.txt
@@ -147,9 +150,16 @@
         - block:
             - name: Detect cluster DNS service IP
               ansible.builtin.shell: |
-                kubectl --kubeconfig={{ kubeconfig }} get svc -n kube-system -o json | \
-                jq -r '.items[] | select(.metadata.name=="kube-dns") | .spec.clusterIP' || \
-                grep -oP 'clusterDNS:\s*\[\K[^\]]+' /var/lib/kubelet/config.yaml || \
+                set -euo pipefail
+                # Try to get from existing kube-dns service
+                if kubectl --kubeconfig={{ kubeconfig }} get svc -n kube-system kube-dns -o jsonpath='{.spec.clusterIP}' 2>/dev/null; then
+                  exit 0
+                fi
+                # Try to get from kubelet config if file exists
+                if [ -f /var/lib/kubelet/config.yaml ]; then
+                  grep -oP 'clusterDNS:\s*\[\K[^\]]+' /var/lib/kubelet/config.yaml 2>/dev/null && exit 0
+                fi
+                # Default to Kubespray/Calico default
                 echo "10.233.0.10"
               args:
                 executable: /bin/bash
@@ -164,28 +174,34 @@
               ansible.builtin.debug:
                 msg: "Detected cluster DNS IP: {{ cluster_dns_ip }}"
                 
+            - name: Create secure temporary directory for CoreDNS manifest
+              ansible.builtin.tempfile:
+                state: directory
+                suffix: coredns
+              register: coredns_temp_dir
+              
             - name: Create CoreDNS deployment manifest from template
               ansible.builtin.template:
                 src: templates/coredns-deployment.yaml.j2
-                dest: /tmp/coredns-deployment.yaml
-                mode: '0644'
+                dest: "{{ coredns_temp_dir.path }}/coredns-deployment.yaml"
+                mode: '0600'
                 
             - name: Deploy CoreDNS
               ansible.builtin.command:
-                cmd: kubectl --kubeconfig={{ kubeconfig }} apply -f /tmp/coredns-deployment.yaml
+                cmd: kubectl --kubeconfig={{ kubeconfig }} apply -f {{ coredns_temp_dir.path }}/coredns-deployment.yaml
               register: coredns_deploy
               
             - name: Wait for CoreDNS deployment to be created
               ansible.builtin.command:
                 cmd: kubectl --kubeconfig={{ kubeconfig }} -n kube-system get deployment coredns
-              retries: 10
-              delay: 3
+              retries: "{{ coredns_deployment_wait_retries }}"
+              delay: "{{ coredns_deployment_wait_delay }}"
               register: coredns_deployment_check
               until: coredns_deployment_check.rc == 0
               
             - name: Wait for CoreDNS pods to be ready
               ansible.builtin.command:
-                cmd: kubectl --kubeconfig={{ kubeconfig }} -n kube-system rollout status deployment/coredns --timeout=120s
+                cmd: kubectl --kubeconfig={{ kubeconfig }} -n kube-system rollout status deployment/coredns --timeout={{ coredns_rollout_timeout }}
               register: coredns_rollout
               
             - name: Verify CoreDNS service exists
@@ -204,6 +220,12 @@
                   ✓ CoreDNS pods ready
                   ✓ kube-dns service available at {{ cluster_dns_ip }}
                   ============================================
+                  
+            - name: Cleanup temporary CoreDNS manifest directory
+              ansible.builtin.file:
+                path: "{{ coredns_temp_dir.path }}"
+                state: absent
+              when: coredns_temp_dir.path is defined
                   
           when: coredns_install_required
           
