@@ -76,7 +76,7 @@ metadata:
   labels:
     k8s-app: kube-dns
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       k8s-app: kube-dns
@@ -86,6 +86,8 @@ spec:
         k8s-app: kube-dns
     spec:
       serviceAccountName: coredns
+      nodeSelector:
+        kubernetes.io/hostname: masternode
       tolerations:
       - key: node-role.kubernetes.io/control-plane
         operator: Exists
