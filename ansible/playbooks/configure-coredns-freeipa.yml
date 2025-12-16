@@ -535,6 +535,7 @@
               - "  Namespace: {{ coredns_namespace }}"
               - "  ConfigMap: {{ coredns_configmap }}"
               - "  Backup: {{ coredns_backup_file }}"
+              - "  CoreDNS Installed: {{ 'Yes (newly installed)' if coredns_install_required | default(false) else 'Yes (pre-existing)' }}"
               - ""
               - "DNS Records:"
               - "  Records file: {{ dns_records_file }}"
