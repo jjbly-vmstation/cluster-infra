@@ -204,6 +204,98 @@ ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml
 - 0: Cluster is healthy
 - 1: Cluster verification failed
 
+### Identity Stack Playbooks
+
+#### `identity-deploy-and-handover.yml`
+**Purpose**: Deploy FreeIPA, Keycloak, PostgreSQL, and cert-manager for identity management  
+**Target Hosts**: `localhost` (runs kubectl commands on control plane)  
+**Components Deployed**:
+- PostgreSQL StatefulSet (database for Keycloak)
+- Keycloak StatefulSet (SSO and OIDC provider)
+- FreeIPA StatefulSet (LDAP, Kerberos, CA)
+- cert-manager (automated TLS certificates)
+- Administrator accounts and credentials
+
+**Usage**:
+```bash
+ansible-playbook ansible/playbooks/identity-deploy-and-handover.yml
+```
+
+**Idempotency**: ✅ Safe to run multiple times
+**Documentation**: See [IDENTITY-SSO-SETUP.md](../../docs/IDENTITY-SSO-SETUP.md)
+
+#### `configure-coredns-freeipa.yml`
+**Purpose**: Configure CoreDNS with FreeIPA DNS records for identity stack integration  
+**Target Hosts**: `localhost` for CoreDNS config, optionally `all` for /etc/hosts fallback  
+**Phases**:
+- Phase 1: Validate prerequisites (kubectl, kubeconfig, FreeIPA pod)
+- Phase 2: Extract DNS records from FreeIPA pod
+- Phase 3: Update CoreDNS ConfigMap with FreeIPA hostnames
+- Phase 4: Restart CoreDNS and validate DNS resolution
+- Phase 5: Optional /etc/hosts fallback configuration on all nodes
+
+**Usage**:
+```bash
+# Configure CoreDNS only
+ansible-playbook -i inventory/mycluster/hosts.yaml \
+  ansible/playbooks/configure-coredns-freeipa.yml
+
+# Configure CoreDNS + /etc/hosts fallback on all nodes
+ansible-playbook -i inventory/mycluster/hosts.yaml \
+  ansible/playbooks/configure-coredns-freeipa.yml \
+  --tags all,hosts-fallback
+```
+
+**Features**:
+- Extracts DNS records from FreeIPA pod (`/tmp/ipa.system.records.*.db`)
+- Parses A records for hostname → IP mappings
+- Backs up existing CoreDNS ConfigMap before changes
+- Updates CoreDNS with `hosts` plugin section for FreeIPA hostnames
+- Restarts CoreDNS pods to pick up configuration
+- Validates DNS resolution from within cluster using busybox test pod
+- Optionally configures /etc/hosts on all cluster nodes as fallback
+
+**Prerequisites**:
+- Identity stack deployed (`identity-deploy-and-handover.yml`)
+- FreeIPA pod running and ready in `identity` namespace
+- kubectl access with `/etc/kubernetes/admin.conf`
+
+**Idempotency**: ✅ Safe to run multiple times - skips if hosts section already exists
+
+**When to use**:
+- After deploying the identity stack (Step 4a in deployment sequence)
+- When FreeIPA hostname resolution is needed cluster-wide
+- Before deploying infrastructure services or monitoring stack
+- To enable Keycloak-FreeIPA LDAP integration
+
+**Related Playbooks**:
+- `configure-dns-network-step4a.yml` - Full DNS and network port configuration
+- `identity-deploy-and-handover.yml` - Identity stack deployment
+
+#### `configure-dns-network-step4a.yml`
+**Purpose**: Comprehensive DNS and network port configuration for FreeIPA/Keycloak  
+**Target Hosts**: `all` cluster nodes  
+**Phases**:
+- Phase 1: Extract DNS records from FreeIPA pod
+- Phase 2: Distribute DNS records to all nodes via /etc/hosts
+- Phase 3: Configure firewall rules (firewalld/iptables)
+- Phase 4: Verify configuration
+
+**Usage**:
+```bash
+ansible-playbook -i inventory/mycluster/hosts.yaml \
+  ansible/playbooks/configure-dns-network-step4a.yml
+```
+
+**Features**:
+- Configures DNS via /etc/hosts (traditional approach)
+- Configures firewall ports for FreeIPA/Keycloak (TCP: 22, 80, 443, 389, 636, 88, 464, 53; UDP: 88, 464, 53)
+- Supports both firewalld (RHEL) and iptables (Debian)
+- Trusts cluster network subnets
+- Comprehensive verification
+
+**Idempotency**: ✅ Safe to run multiple times
+
 ## Deployment Workflow
 
 ### Initial Deployment
