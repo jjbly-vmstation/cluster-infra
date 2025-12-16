@@ -22,6 +22,7 @@
     freeipa_pod: freeipa-0
     freeipa_hostname: ipa.vmstation.local
     freeipa_domain: vmstation.local
+    freeipa_default_ip: 192.168.4.63  # Masternode IP, fallback if service IP not available
     
     # CoreDNS configuration
     coredns_namespace: kube-system
@@ -165,7 +166,7 @@
           
         - name: Set FreeIPA IP (use service IP or fallback to masternode)
           ansible.builtin.set_fact:
-            freeipa_ip: "{{ freeipa_service_ip.stdout if freeipa_service_ip.rc == 0 and freeipa_service_ip.stdout != '' else '192.168.4.63' }}"
+            freeipa_ip: "{{ freeipa_service_ip.stdout if freeipa_service_ip.rc == 0 and freeipa_service_ip.stdout != '' else freeipa_default_ip }}"
             
         - name: Create DNS records in hosts file format
           ansible.builtin.copy:
@@ -230,8 +231,9 @@
             hosts_section_exists: "{{ 'hosts {' in current_corefile.stdout }}"
             
         - name: Create new Corefile with FreeIPA hosts section
-          ansible.builtin.set_fact:
-            updated_corefile: |
+          ansible.builtin.copy:
+            dest: /tmp/corefile-updated.txt
+            content: |
               .:53 {
                   errors
                   health {
@@ -257,6 +259,18 @@
                     fallthrough
                   }
               }
+            mode: '0644'
+          when: not hosts_section_exists
+          
+        - name: Read updated Corefile
+          ansible.builtin.slurp:
+            src: /tmp/corefile-updated.txt
+          register: corefile_content
+          when: not hosts_section_exists
+          
+        - name: Set updated_corefile variable
+          ansible.builtin.set_fact:
+            updated_corefile: "{{ corefile_content.content | b64decode }}"
           when: not hosts_section_exists
           
         - name: Update existing Corefile (if hosts section already exists)
@@ -265,9 +279,12 @@
           when: hosts_section_exists
           
         - name: Create temporary CoreDNS ConfigMap manifest
-          ansible.builtin.copy:
+          ansible.builtin.template:
+            src: /dev/stdin
             dest: /tmp/coredns-configmap-updated.yaml
-            content: |
+            mode: '0644'
+          args:
+            stdin: |
               apiVersion: v1
               kind: ConfigMap
               metadata:
@@ -275,8 +292,7 @@
                 namespace: {{ coredns_namespace }}
               data:
                 Corefile: |
-              {{ updated_corefile | indent(4, first=True) }}
-            mode: '0644'
+              {{ updated_corefile | indent(4) }}
           when: not hosts_section_exists
           
         - name: Apply updated CoreDNS ConfigMap
@@ -455,7 +471,7 @@
   gather_facts: yes
   
   vars:
-    freeipa_ip: 192.168.4.63
+    freeipa_ip: 192.168.4.63  # Masternode IP where FreeIPA is deployed
     freeipa_hostname: ipa.vmstation.local
     freeipa_domain: vmstation.local
     dns_records_dir: /tmp/freeipa-dns-records
