@@ -402,13 +402,10 @@
             updated_corefile: "{{ current_corefile.stdout }}"
           when: hosts_section_exists
           
-        - name: Create temporary CoreDNS ConfigMap manifest
-          ansible.builtin.template:
-            src: /dev/stdin
+        - name: Create temporary CoreDNS ConfigMap manifest file
+          ansible.builtin.copy:
             dest: /tmp/coredns-configmap-updated.yaml
-            mode: '0644'
-          args:
-            stdin: |
+            content: |
               apiVersion: v1
               kind: ConfigMap
               metadata:
@@ -416,7 +413,8 @@
                 namespace: {{ coredns_namespace }}
               data:
                 Corefile: |
-              {{ updated_corefile | indent(4) }}
+              {{ updated_corefile | indent(6) }}
+            mode: '0644'
           when: not hosts_section_exists
           
         - name: Apply updated CoreDNS ConfigMap
