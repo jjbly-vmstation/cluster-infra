@@ -411,9 +411,9 @@
               metadata:
                 name: {{ coredns_configmap }}
                 namespace: {{ coredns_namespace }}
-            data:
-              Corefile: |
-            {{ updated_corefile | indent(6) }}
+              data:
+                Corefile: |
+              {{ updated_corefile | indent(8) }}
             mode: '0644'
           when: not hosts_section_exists
           
