@@ -216,13 +216,17 @@ The cluster includes a comprehensive identity management solution for cluster-wi
 ### Deployment
 
 ```bash
-# Deploy complete identity stack
+# Step 1-3: Deploy complete identity stack
 ansible-playbook ansible/playbooks/identity-deploy-and-handover.yml
+
+# Step 4a: Configure DNS and network ports
+ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml \
+  ansible/playbooks/configure-dns-network-step4a.yml
 
 # Verify deployment
 ./scripts/verify-identity-deployment.sh
-./scripts/verify-sso-integration.sh
-./scripts/verify-ldap-integration.sh
+./scripts/verify-freeipa-keycloak-readiness.sh
+./scripts/verify-network-ports.sh
 ```
 
 ### Access Points
@@ -233,6 +237,8 @@ ansible-playbook ansible/playbooks/identity-deploy-and-handover.yml
 
 ### Documentation
 
+- [Deployment Sequence](docs/DEPLOYMENT_SEQUENCE.md) - Complete deployment workflow
+- [Step 4a: DNS and Network Configuration](docs/STEP4A_DNS_NETWORK_CONFIGURATION.md) - DNS and firewall setup
 - [Identity SSO Setup Guide](docs/IDENTITY-SSO-SETUP.md) - Complete deployment and configuration guide
 - [Keycloak Integration](docs/KEYCLOAK-INTEGRATION.md) - How to integrate applications with SSO
 
