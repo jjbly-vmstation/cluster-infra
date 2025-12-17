@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ coredns_configmap }}
+  namespace: {{ coredns_namespace }}
+data:
+  Corefile: |
+{% for line in updated_corefile.splitlines() %}
+    {{ line }}
+{% endfor %}
