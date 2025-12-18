@@ -336,9 +336,49 @@ If you have existing baseline hardening:
 
 ## Automated Deployment
 
-### Full Ansible Playbook (Recommended)
+### Automated Wrapper Script (Quickest Method)
 
-Deploy all Step 4a components in one command:
+The automated wrapper script provides a single command to extract FreeIPA DNS records, configure CoreDNS, and verify readiness:
+
+```bash
+cd /path/to/cluster-infra
+
+# Standard run (recommended)
+./scripts/automate-identity-dns-and-coredns.sh
+
+# With automatic cleanup before redeploy
+FORCE_CLEANUP=1 ./scripts/automate-identity-dns-and-coredns.sh
+```
+
+**What this script does:**
+1. **Optional Cleanup** (only if `FORCE_CLEANUP=1`): Runs the cleanup script to remove existing identity stack resources
+2. **Extract DNS Records**: Automatically extracts FreeIPA DNS records from the pod
+3. **Configure CoreDNS**: Runs the Ansible playbook `configure-coredns-freeipa.yml` to update CoreDNS configuration
+4. **Verify Readiness**: Checks that FreeIPA and Keycloak are ready and accessible
+
+**FORCE_CLEANUP Option:**
+- Set `FORCE_CLEANUP=1` to automatically run `cleanup-identity-stack.sh` before extracting DNS records
+- Useful when redeploying the identity stack from scratch
+- **Warning**: This will delete all identity stack resources (pods, PVCs, PVs, data)
+- Only use when you want a complete fresh deployment
+
+**Examples:**
+```bash
+# First-time setup (no cleanup needed)
+./scripts/automate-identity-dns-and-coredns.sh
+
+# Redeploy with cleanup
+FORCE_CLEANUP=1 ./scripts/automate-identity-dns-and-coredns.sh
+
+# Check if script components exist
+ls -la scripts/extract-freeipa-dns-records.sh
+ls -la scripts/verify-freeipa-keycloak-readiness.sh
+ls -la ansible/playbooks/configure-coredns-freeipa.yml
+```
+
+### Full Ansible Playbook (Alternative Method)
+
+Deploy all Step 4a components using the complete Ansible playbook:
 
 ```bash
 cd /path/to/cluster-infra
