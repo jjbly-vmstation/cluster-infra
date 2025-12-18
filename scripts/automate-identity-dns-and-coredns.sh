@@ -192,6 +192,11 @@ preflight_checks() {
         "verify-identity-and-certs.sh"
     )
     
+    # Add reset script to required list if force-reset is enabled
+    if [ "$FORCE_RESET" = "true" ] || [ "$FORCE_RESET" = "1" ]; then
+        required_scripts+=("reset-identity-stack.sh")
+    fi
+    
     for script in "${required_scripts[@]}"; do
         if [ ! -x "$SCRIPTS_DIR/$script" ]; then
             log_error "Required script not found or not executable: $SCRIPTS_DIR/$script"

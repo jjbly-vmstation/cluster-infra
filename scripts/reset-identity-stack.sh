@@ -36,11 +36,11 @@ validate_ownership_value() {
     local value="$1"
     local name="$2"
     
-    # Allow numeric values or 'root'
+    # Allow numeric values or 'root' (could be extended to support other usernames if needed)
     if [[ "$value" =~ ^[0-9]+$ ]] || [ "$value" = "root" ]; then
         return 0
     else
-        log_error "Invalid $name value: $value (must be numeric or 'root')"
+        log_error "Invalid $name value: $value (must be numeric or a valid username like 'root')"
         return 1
     fi
 }
@@ -240,7 +240,8 @@ backup_identity_data() {
     
     # Create combined checksum file
     if compgen -G "${BACKUP_WORKSPACE}/data/*.tar.gz" > /dev/null; then
-        (cd "${BACKUP_WORKSPACE}/data" && sha256sum *.tar.gz > SHA256SUMS 2>/dev/null) || true
+        # Use find instead of glob to avoid issues with shell expansion
+        (cd "${BACKUP_WORKSPACE}/data" && find . -maxdepth 1 -name "*.tar.gz" -type f -exec sha256sum {} \; > SHA256SUMS 2>/dev/null) || true
         log_info "✓ Combined checksums created: ${BACKUP_WORKSPACE}/data/SHA256SUMS"
     fi
     
@@ -267,16 +268,24 @@ backup_kubernetes_manifests() {
     
     # Backup PVs separately (cluster-scoped) - get all PVs that have claimRef to our namespace
     local pv_json
-    if pv_json=$(kubectl --kubeconfig="$KUBECONFIG" get pv -o json 2>&1) && command -v jq &>/dev/null; then
-        echo "$pv_json" | jq --arg ns "$NAMESPACE" '.items[] | select(.spec.claimRef and .spec.claimRef.namespace == $ns)' \
-            > "${BACKUP_WORKSPACE}/manifests/pvs.json" 2>&1
-        if [ -s "${BACKUP_WORKSPACE}/manifests/pvs.json" ]; then
-            log_verbose "PVs backed up to pvs.json"
+    local pv_error
+    if command -v jq &>/dev/null; then
+        # Separate stdout and stderr to handle errors properly
+        if pv_json=$(kubectl --kubeconfig="$KUBECONFIG" get pv -o json 2>"${BACKUP_WORKSPACE}/logs/pv-kubectl-error.log"); then
+            echo "$pv_json" | jq --arg ns "$NAMESPACE" '.items[] | select(.spec.claimRef and .spec.claimRef.namespace == $ns)' \
+                > "${BACKUP_WORKSPACE}/manifests/pvs.json" 2>&1
+            if [ -s "${BACKUP_WORKSPACE}/manifests/pvs.json" ]; then
+                log_verbose "PVs backed up to pvs.json"
+            else
+                log_verbose "No PVs with claimRef to namespace '$NAMESPACE' found"
+            fi
         else
-            log_verbose "No PVs with claimRef to namespace '$NAMESPACE' found"
+            log_warn "kubectl get pv failed, see ${BACKUP_WORKSPACE}/logs/pv-kubectl-error.log"
+            log_verbose "Using alternative method to backup PVs"
+            kubectl --kubeconfig="$KUBECONFIG" get pv -o yaml > "${BACKUP_WORKSPACE}/manifests/all-pvs.yaml" 2>&1 | tee -a "$manifest_log" || true
         fi
     else
-        log_verbose "jq not available or kubectl failed, using alternative method"
+        log_verbose "jq not available, using alternative method"
         kubectl --kubeconfig="$KUBECONFIG" get pv -o yaml > "${BACKUP_WORKSPACE}/manifests/all-pvs.yaml" 2>&1 | tee -a "$manifest_log" || true
     fi
     
