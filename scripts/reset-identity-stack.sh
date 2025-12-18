@@ -25,11 +25,34 @@ STORAGE_PATH="${STORAGE_PATH:-/srv/monitoring-data}"
 BACKUP_BASE_DIR="${BACKUP_BASE_DIR:-/root/identity-backup}"
 VERBOSE="${VERBOSE:-false}"
 
-# Storage ownership configuration
+# Storage ownership configuration with validation
 POSTGRES_UID="${POSTGRES_UID:-999}"
 POSTGRES_GID="${POSTGRES_GID:-999}"
 FREEIPA_UID="${FREEIPA_UID:-root}"
 FREEIPA_GID="${FREEIPA_GID:-root}"
+
+# Validate UID/GID values (must be numeric or valid usernames)
+validate_ownership_value() {
+    local value="$1"
+    local name="$2"
+    
+    # Allow numeric values or 'root'
+    if [[ "$value" =~ ^[0-9]+$ ]] || [ "$value" = "root" ]; then
+        return 0
+    else
+        log_error "Invalid $name value: $value (must be numeric or 'root')"
+        return 1
+    fi
+}
+
+# Validate all ownership values
+if ! validate_ownership_value "$POSTGRES_UID" "POSTGRES_UID" || \
+   ! validate_ownership_value "$POSTGRES_GID" "POSTGRES_GID" || \
+   ! validate_ownership_value "$FREEIPA_UID" "FREEIPA_UID" || \
+   ! validate_ownership_value "$FREEIPA_GID" "FREEIPA_GID"; then
+    log_error "Invalid ownership configuration"
+    exit 1
+fi
 
 # Logging functions
 log_info() {
@@ -243,12 +266,17 @@ backup_kubernetes_manifests() {
     fi
     
     # Backup PVs separately (cluster-scoped) - get all PVs that have claimRef to our namespace
-    if kubectl --kubeconfig="$KUBECONFIG" get pv -o json | \
-           jq -r --arg ns "$NAMESPACE" '.items[] | select(.spec.claimRef.namespace == $ns)' \
-           > "${BACKUP_WORKSPACE}/manifests/pvs.json" 2>&1; then
-        log_verbose "PVs backed up to pvs.json"
+    local pv_json
+    if pv_json=$(kubectl --kubeconfig="$KUBECONFIG" get pv -o json 2>&1) && command -v jq &>/dev/null; then
+        echo "$pv_json" | jq --arg ns "$NAMESPACE" '.items[] | select(.spec.claimRef and .spec.claimRef.namespace == $ns)' \
+            > "${BACKUP_WORKSPACE}/manifests/pvs.json" 2>&1
+        if [ -s "${BACKUP_WORKSPACE}/manifests/pvs.json" ]; then
+            log_verbose "PVs backed up to pvs.json"
+        else
+            log_verbose "No PVs with claimRef to namespace '$NAMESPACE' found"
+        fi
     else
-        log_verbose "No PVs found or jq not available, using alternative method"
+        log_verbose "jq not available or kubectl failed, using alternative method"
         kubectl --kubeconfig="$KUBECONFIG" get pv -o yaml > "${BACKUP_WORKSPACE}/manifests/all-pvs.yaml" 2>&1 | tee -a "$manifest_log" || true
     fi
     
@@ -307,8 +335,12 @@ reset_identity_stack() {
     # Step 6: Delete PVs - dynamically find PVs associated with the namespace
     log_info "[6/9] Deleting PVs for identity services..."
     local pvs_to_delete
-    pvs_to_delete=$(kubectl --kubeconfig="$KUBECONFIG" get pv -o json | \
-                    jq -r --arg ns "$NAMESPACE" '.items[] | select(.spec.claimRef.namespace == $ns) | .metadata.name' 2>/dev/null || true)
+    if command -v jq &>/dev/null; then
+        pvs_to_delete=$(kubectl --kubeconfig="$KUBECONFIG" get pv -o json | \
+                        jq -r --arg ns "$NAMESPACE" '.items[] | select(.spec.claimRef and .spec.claimRef.namespace == $ns) | .metadata.name' 2>/dev/null || true)
+    else
+        pvs_to_delete=""
+    fi
     
     if [ -n "$pvs_to_delete" ]; then
         while IFS= read -r pv; do
@@ -347,8 +379,9 @@ reset_identity_stack() {
     log_info "[9/9] Recreating empty storage directories..."
     mkdir -p "${STORAGE_PATH}/postgresql"
     mkdir -p "${STORAGE_PATH}/freeipa"
-    chown "${POSTGRES_UID}:${POSTGRES_GID}" "${STORAGE_PATH}/postgresql"
-    chown "${FREEIPA_UID}:${FREEIPA_GID}" "${STORAGE_PATH}/freeipa"
+    # Quote variables to prevent shell metacharacter injection
+    chown "${POSTGRES_UID}":"${POSTGRES_GID}" "${STORAGE_PATH}/postgresql"
+    chown "${FREEIPA_UID}":"${FREEIPA_GID}" "${STORAGE_PATH}/freeipa"
     chmod 0755 "${STORAGE_PATH}/postgresql"
     chmod 0755 "${STORAGE_PATH}/freeipa"
     log_verbose "Storage directories recreated with proper permissions (postgres: ${POSTGRES_UID}:${POSTGRES_GID}, freeipa: ${FREEIPA_UID}:${FREEIPA_GID})"
