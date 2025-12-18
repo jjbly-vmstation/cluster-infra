@@ -25,6 +25,12 @@ STORAGE_PATH="${STORAGE_PATH:-/srv/monitoring-data}"
 BACKUP_BASE_DIR="${BACKUP_BASE_DIR:-/root/identity-backup}"
 VERBOSE="${VERBOSE:-false}"
 
+# Storage ownership configuration
+POSTGRES_UID="${POSTGRES_UID:-999}"
+POSTGRES_GID="${POSTGRES_GID:-999}"
+FREEIPA_UID="${FREEIPA_UID:-root}"
+FREEIPA_GID="${FREEIPA_GID:-root}"
+
 # Logging functions
 log_info() {
     echo -e "${GREEN}[INFO]${NC} $1"
@@ -231,18 +237,19 @@ backup_kubernetes_manifests() {
     local manifest_log="${BACKUP_WORKSPACE}/logs/manifests.log"
     
     # Backup all resources in namespace
-    local resources="pods,statefulsets,deployments,services,configmaps,secrets,pvc,pv"
-    
     if kubectl --kubeconfig="$KUBECONFIG" -n "$NAMESPACE" get all,pvc,secrets,configmaps \
            -o yaml > "${BACKUP_WORKSPACE}/manifests/all-resources.yaml" 2>&1 | tee -a "$manifest_log"; then
         log_verbose "All resources backed up to all-resources.yaml"
     fi
     
-    # Backup PVs separately (cluster-scoped)
-    if kubectl --kubeconfig="$KUBECONFIG" get pv -o yaml | \
-           grep -A 1000 "claimRef:" | \
-           grep -B 5 "namespace: $NAMESPACE" > "${BACKUP_WORKSPACE}/manifests/pvs.yaml" 2>&1 | tee -a "$manifest_log"; then
-        log_verbose "PVs backed up to pvs.yaml"
+    # Backup PVs separately (cluster-scoped) - get all PVs that have claimRef to our namespace
+    if kubectl --kubeconfig="$KUBECONFIG" get pv -o json | \
+           jq -r --arg ns "$NAMESPACE" '.items[] | select(.spec.claimRef.namespace == $ns)' \
+           > "${BACKUP_WORKSPACE}/manifests/pvs.json" 2>&1; then
+        log_verbose "PVs backed up to pvs.json"
+    else
+        log_verbose "No PVs found or jq not available, using alternative method"
+        kubectl --kubeconfig="$KUBECONFIG" get pv -o yaml > "${BACKUP_WORKSPACE}/manifests/all-pvs.yaml" 2>&1 | tee -a "$manifest_log" || true
     fi
     
     log_info "✓ Kubernetes manifests backed up"
@@ -297,10 +304,25 @@ reset_identity_stack() {
     log_info "[5/9] Deleting all PVCs in namespace '$NAMESPACE'..."
     kubectl --kubeconfig="$KUBECONFIG" -n "$NAMESPACE" delete pvc --all 2>&1 | tee -a "$reset_log" || log_warn "No PVCs found"
     
-    # Step 6: Delete PVs
+    # Step 6: Delete PVs - dynamically find PVs associated with the namespace
     log_info "[6/9] Deleting PVs for identity services..."
-    kubectl --kubeconfig="$KUBECONFIG" delete pv keycloak-postgresql-pv 2>&1 | tee -a "$reset_log" || log_warn "PV keycloak-postgresql-pv not found"
-    kubectl --kubeconfig="$KUBECONFIG" delete pv freeipa-data-pv 2>&1 | tee -a "$reset_log" || log_warn "PV freeipa-data-pv not found"
+    local pvs_to_delete
+    pvs_to_delete=$(kubectl --kubeconfig="$KUBECONFIG" get pv -o json | \
+                    jq -r --arg ns "$NAMESPACE" '.items[] | select(.spec.claimRef.namespace == $ns) | .metadata.name' 2>/dev/null || true)
+    
+    if [ -n "$pvs_to_delete" ]; then
+        while IFS= read -r pv; do
+            if [ -n "$pv" ]; then
+                log_info "Deleting PV: $pv"
+                kubectl --kubeconfig="$KUBECONFIG" delete pv "$pv" 2>&1 | tee -a "$reset_log" || log_warn "Failed to delete PV: $pv"
+            fi
+        done <<< "$pvs_to_delete"
+    else
+        log_warn "No PVs found for namespace '$NAMESPACE' (or jq not available)"
+        # Fallback to known PV names if jq is not available
+        kubectl --kubeconfig="$KUBECONFIG" delete pv keycloak-postgresql-pv 2>&1 | tee -a "$reset_log" || log_warn "PV keycloak-postgresql-pv not found"
+        kubectl --kubeconfig="$KUBECONFIG" delete pv freeipa-data-pv 2>&1 | tee -a "$reset_log" || log_warn "PV freeipa-data-pv not found"
+    fi
     
     # Step 7: Delete StatefulSets and Deployments
     log_info "[7/9] Deleting StatefulSets and Deployments..."
@@ -325,11 +347,11 @@ reset_identity_stack() {
     log_info "[9/9] Recreating empty storage directories..."
     mkdir -p "${STORAGE_PATH}/postgresql"
     mkdir -p "${STORAGE_PATH}/freeipa"
-    chown 999:999 "${STORAGE_PATH}/postgresql"
-    chown root:root "${STORAGE_PATH}/freeipa"
+    chown "${POSTGRES_UID}:${POSTGRES_GID}" "${STORAGE_PATH}/postgresql"
+    chown "${FREEIPA_UID}:${FREEIPA_GID}" "${STORAGE_PATH}/freeipa"
     chmod 0755 "${STORAGE_PATH}/postgresql"
     chmod 0755 "${STORAGE_PATH}/freeipa"
-    log_verbose "Storage directories recreated with proper permissions"
+    log_verbose "Storage directories recreated with proper permissions (postgres: ${POSTGRES_UID}:${POSTGRES_GID}, freeipa: ${FREEIPA_UID}:${FREEIPA_GID})"
     
     log_info "✓ Identity stack reset complete"
     return 0
@@ -393,8 +415,8 @@ To restore from this backup:
    - tar -xzf ${BACKUP_WORKSPACE}/data/postgresql-data.tar.gz -C ${STORAGE_PATH}
    - tar -xzf ${BACKUP_WORKSPACE}/data/freeipa-data.tar.gz -C ${STORAGE_PATH}
 3. Restore correct permissions:
-   - chown -R 999:999 ${STORAGE_PATH}/postgresql
-   - chown -R root:root ${STORAGE_PATH}/freeipa
+   - chown -R ${POSTGRES_UID}:${POSTGRES_GID} ${STORAGE_PATH}/postgresql
+   - chown -R ${FREEIPA_UID}:${FREEIPA_GID} ${STORAGE_PATH}/freeipa
 4. Redeploy identity stack
 
 EOF
