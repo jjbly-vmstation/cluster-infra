@@ -12,7 +12,7 @@
 #
 # Environment Variables:
 #   FREEIPA_ADMIN_PASSWORD - FreeIPA admin password (required if not in secret)
-#   ANSIBLE_INVENTORY      - Path to Ansible inventory (default: inventory.ini)
+#   INVENTORY              - Path to Ansible inventory (default: /opt/vmstation-org/cluster-setup/ansible/inventory/hosts.yml)
 #   FREEIPA_SERVER_IP      - FreeIPA server IP (default: 192.168.4.63)
 #   FREEIPA_DOMAIN         - FreeIPA domain (default: vmstation.local)
 #   FREEIPA_REALM          - FreeIPA realm (default: VMSTATION.LOCAL)
@@ -39,7 +39,12 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration with defaults
-ANSIBLE_INVENTORY="${ANSIBLE_INVENTORY:-$REPO_ROOT/inventory.ini}"
+# Canonical inventory path (VMStation Deployment Memory canonical inventory rule)
+: "${INVENTORY:=/opt/vmstation-org/cluster-setup/ansible/inventory/hosts.yml}"
+# Fallback to deprecated inventory if canonical doesn't exist
+if [[ ! -f "$INVENTORY" ]]; then
+    INVENTORY="$REPO_ROOT/inventory.ini"
+fi
 FREEIPA_SERVER_IP="${FREEIPA_SERVER_IP:-192.168.4.63}"
 FREEIPA_DOMAIN="${FREEIPA_DOMAIN:-vmstation.local}"
 FREEIPA_REALM="${FREEIPA_REALM:-VMSTATION.LOCAL}"
@@ -96,10 +101,14 @@ preflight_checks() {
         fi
     done
     
-    # Check if inventory file exists
-    if [[ ! -f "$ANSIBLE_INVENTORY" ]]; then
-        log_fatal "Ansible inventory not found at $ANSIBLE_INVENTORY"
+    # Check if inventory file exists - fail early with clear error
+    if [[ ! -f "$INVENTORY" ]]; then
+        log_fatal "Ansible inventory not found at: $INVENTORY
+Please ensure the canonical inventory exists at /opt/vmstation-org/cluster-setup/ansible/inventory/hosts.yml
+or set INVENTORY environment variable to point to a valid inventory file.
+This check prevents Ansible from falling back to implicit localhost."
     fi
+    log_info "Using inventory: $INVENTORY"
     
     log_success "Preflight checks passed"
 }
@@ -179,9 +188,9 @@ get_freeipa_password() {
 create_enrollment_playbook() {
     log_info "Creating temporary enrollment playbook..."
     
-    local playbook_path="/tmp/freeipa-node-enrollment.yml"
+    local TMP_PLAYBOOK="/tmp/freeipa-node-enrollment.yml"
     
-    cat > "$playbook_path" << 'EOF'
+    cat > "$TMP_PLAYBOOK" << 'EOF'
 ---
 # Temporary playbook for FreeIPA node enrollment
 - name: Enroll cluster nodes to FreeIPA
@@ -274,8 +283,13 @@ create_enrollment_playbook() {
           Status: {{ 'Already enrolled' if ipa_client_configured.stat.exists else 'Newly enrolled' }}
 EOF
     
-    log_success "Created enrollment playbook: $playbook_path"
-    echo "$playbook_path"
+    # Verify playbook was created
+    if [[ ! -f "$TMP_PLAYBOOK" ]]; then
+        log_fatal "Failed to create temporary playbook at $TMP_PLAYBOOK"
+    fi
+    
+    log_success "Created enrollment playbook: $TMP_PLAYBOOK"
+    echo "$TMP_PLAYBOOK"
 }
 
 # Run Ansible playbook for enrollment
@@ -283,11 +297,16 @@ run_enrollment() {
     log_info "Running node enrollment via Ansible..."
     
     # Create playbook
-    local playbook_path
-    playbook_path=$(create_enrollment_playbook)
+    local TMP_PLAYBOOK
+    TMP_PLAYBOOK=$(create_enrollment_playbook)
+    
+    # Verify playbook exists before proceeding
+    if [[ ! -f "$TMP_PLAYBOOK" ]]; then
+        log_fatal "Temporary playbook not found at: $TMP_PLAYBOOK"
+    fi
     
     if [[ "$DRY_RUN" == "1" ]]; then
-        log_info "[DRY-RUN] Would run: ansible-playbook -i $ANSIBLE_INVENTORY $playbook_path"
+        log_info "[DRY-RUN] Would run: ansible-playbook -i \"$INVENTORY\" \"$TMP_PLAYBOOK\""
         log_info "[DRY-RUN] With environment variables:"
         log_info "  FREEIPA_SERVER_HOSTNAME=$FREEIPA_SERVER_HOSTNAME"
         log_info "  FREEIPA_DOMAIN=$FREEIPA_DOMAIN"
@@ -304,17 +323,18 @@ run_enrollment() {
     export FREEIPA_SERVER_IP
     export FREEIPA_ADMIN_PASSWORD
     
-    # Run playbook
-    log_info "Executing Ansible playbook..."
-    if ansible-playbook -i "$ANSIBLE_INVENTORY" "$playbook_path" --become; then
+    # Run playbook with explicit inventory to prevent fallback to localhost
+    log_info "Executing Ansible playbook with inventory: $INVENTORY"
+    if ansible-playbook -i "$INVENTORY" "$TMP_PLAYBOOK" --become; then
         log_success "Node enrollment completed successfully"
+        # Cleanup temporary playbook on success
+        rm -f "$TMP_PLAYBOOK"
     else
+        local exit_code=$?
         log_error "Node enrollment failed - check Ansible output above"
-        return 1
+        log_error "Temporary playbook preserved at: $TMP_PLAYBOOK for debugging"
+        return $exit_code
     fi
-    
-    # Cleanup temporary playbook
-    rm -f "$playbook_path"
 }
 
 # Verify node enrollment
@@ -358,7 +378,7 @@ verify_enrollment() {
 EOF
     
     log_info "Running verification checks..."
-    ansible-playbook -i "$ANSIBLE_INVENTORY" "$verify_playbook" --become || log_warn "Verification encountered issues"
+    ansible-playbook -i "$INVENTORY" "$verify_playbook" --become || log_warn "Verification encountered issues"
     
     # Cleanup
     rm -f "$verify_playbook"
@@ -394,7 +414,7 @@ main() {
     log_info "  FreeIPA Server: $FREEIPA_SERVER_HOSTNAME ($FREEIPA_SERVER_IP)"
     log_info "  Domain: $FREEIPA_DOMAIN"
     log_info "  Realm: $FREEIPA_REALM"
-    log_info "  Inventory: $ANSIBLE_INVENTORY"
+    log_info "  Inventory: $INVENTORY"
     echo ""
     
     # Run enrollment

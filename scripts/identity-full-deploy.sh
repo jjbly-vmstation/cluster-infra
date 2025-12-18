@@ -22,7 +22,8 @@
 #   KEYCLOAK_ADMIN_PASSWORD  - Keycloak admin password for automation
 #   SKIP_NODE_ENROLLMENT     - Set to "1" to skip node enrollment (default: 0)
 #   SKIP_VERIFICATION        - Set to "1" to skip final verification (default: 0)
-#   ANSIBLE_INVENTORY        - Path to Ansible inventory (default: inventory.ini)
+#   INVENTORY                - Path to Ansible inventory (default: /opt/vmstation-org/cluster-setup/ansible/inventory/hosts.yml)
+#   KUBECONFIG_PATH          - Path to kubeconfig (default: /etc/kubernetes/admin.conf)
 #
 
 set -euo pipefail
@@ -55,7 +56,15 @@ SKIP_NODE_ENROLLMENT="${SKIP_NODE_ENROLLMENT:-0}"
 SKIP_VERIFICATION="${SKIP_VERIFICATION:-0}"
 FREEIPA_ADMIN_PASSWORD="${FREEIPA_ADMIN_PASSWORD:-}"
 KEYCLOAK_ADMIN_PASSWORD="${KEYCLOAK_ADMIN_PASSWORD:-}"
-ANSIBLE_INVENTORY="${ANSIBLE_INVENTORY:-$REPO_ROOT/inventory.ini}"
+# Canonical inventory path (VMStation Deployment Memory canonical inventory rule)
+: "${INVENTORY:=/opt/vmstation-org/cluster-setup/ansible/inventory/hosts.yml}"
+# Fallback to deprecated inventory if canonical doesn't exist
+if [[ ! -f "$INVENTORY" ]]; then
+    INVENTORY="$REPO_ROOT/inventory.ini"
+fi
+ANSIBLE_INVENTORY="${ANSIBLE_INVENTORY:-$INVENTORY}"
+# KUBECONFIG path default
+: "${KUBECONFIG_PATH:=/etc/kubernetes/admin.conf}"
 
 # Logging and artifacts directory
 LOG_DIR="${LOG_DIR:-/opt/vmstation-org/copilot-identity-fixing-automate}"
@@ -150,12 +159,25 @@ preflight_checks() {
         log_fatal "Missing required commands: ${missing_cmds[*]}"
     fi
     
-    # Check if Ansible inventory exists
-    if [[ ! -f "$ANSIBLE_INVENTORY" ]]; then
-        log_warn "Ansible inventory not found at $ANSIBLE_INVENTORY"
-        log_info "Node enrollment will be skipped"
-        SKIP_NODE_ENROLLMENT=1
+    # Check if Ansible inventory exists - fail early with clear error
+    if [[ ! -f "$INVENTORY" ]]; then
+        log_fatal "Ansible inventory not found at: $INVENTORY
+Please ensure the canonical inventory exists at /opt/vmstation-org/cluster-setup/ansible/inventory/hosts.yml
+or set INVENTORY environment variable to point to a valid inventory file.
+This check prevents Ansible from falling back to implicit localhost."
     fi
+    log_info "Using inventory: $INVENTORY"
+    
+    # Export KUBECONFIG if KUBECONFIG_PATH exists
+    if [[ -f "$KUBECONFIG_PATH" ]]; then
+        export KUBECONFIG="$KUBECONFIG_PATH"
+        log_info "Using KUBECONFIG: $KUBECONFIG"
+    else
+        log_warn "KUBECONFIG not found at $KUBECONFIG_PATH - kubectl may not work"
+    fi
+    
+    # Ensure ANSIBLE_INVENTORY matches INVENTORY
+    ANSIBLE_INVENTORY="$INVENTORY"
     
     # Check if playbook exists
     local playbook="$REPO_ROOT/ansible/playbooks/identity-deploy-and-handover.yml"
@@ -172,7 +194,8 @@ display_configuration() {
     log_info "  Repository: $REPO_ROOT"
     log_info "  Log Directory: $LOG_DIR"
     log_info "  Log File: $LOG_FILE"
-    log_info "  Ansible Inventory: $ANSIBLE_INVENTORY"
+    log_info "  Inventory: $INVENTORY"
+    log_info "  KUBECONFIG Path: $KUBECONFIG_PATH"
     echo ""
     log_info "Workflow Options:"
     log_info "  Dry Run: $DRY_RUN"
@@ -226,14 +249,15 @@ run_deployment() {
     local playbook="$REPO_ROOT/ansible/playbooks/identity-deploy-and-handover.yml"
     
     log_info "Running Ansible playbook: $playbook"
+    log_info "Using inventory: $INVENTORY"
     
     if [[ "$DRY_RUN" == "1" ]]; then
-        log_info "[DRY-RUN] Would run: ansible-playbook $playbook --become"
+        log_info "[DRY-RUN] Would run: ansible-playbook -i \"$INVENTORY\" $playbook --become"
         return 0
     fi
     
-    # Run Ansible playbook
-    if ansible-playbook "$playbook" --become 2>&1 | tee -a "$LOG_FILE"; then
+    # Run Ansible playbook with explicit inventory to prevent fallback to localhost
+    if ansible-playbook -i "$INVENTORY" "$playbook" --become 2>&1 | tee -a "$LOG_FILE"; then
         log_success "Deployment completed successfully"
     else
         log_error "Deployment failed - check log: $LOG_FILE"
@@ -289,7 +313,7 @@ run_node_enrollment() {
     
     # Export configuration
     export FREEIPA_ADMIN_PASSWORD
-    export ANSIBLE_INVENTORY
+    export INVENTORY
     export DRY_RUN
     
     if "$SCRIPT_DIR/enroll-nodes-freeipa.sh" 2>&1 | tee -a "$LOG_FILE"; then
@@ -342,7 +366,7 @@ Generated: $(date -Iseconds)
 Configuration:
   Repository: $REPO_ROOT
   Log File: $LOG_FILE
-  Ansible Inventory: $ANSIBLE_INVENTORY
+  Inventory: $INVENTORY
 
 Workflow Executed:
   Force Reset: $FORCE_RESET
