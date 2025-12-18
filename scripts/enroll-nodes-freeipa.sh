@@ -292,6 +292,7 @@ EOF
     fi
     
     log_success "Created enrollment playbook: $TMP_PLAYBOOK"
+    # Return the path via stdout for command substitution (logging goes to stderr)
     echo "$TMP_PLAYBOOK"
 }
 
