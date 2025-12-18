@@ -553,8 +553,137 @@ verify_certificates() {
         add_step "Certificate verification" "compare CA fingerprints" "MISMATCH" "Remediation: Update ClusterIssuer secret or create intermediate CA"
     fi
     
+    # Test certificate issuance (optional, only if ClusterIssuer found and matches)
+    if [ -n "$cluster_issuer" ] && [ "$ca_cert_sha256" = "$freeipa_ca_sha256" ]; then
+        log_info "Testing certificate issuance with ClusterIssuer..."
+        test_certificate_issuance "$cluster_issuer" "$freeipa_ca_sha256"
+    else
+        log_verbose "Skipping test certificate issuance (no matching ClusterIssuer)"
+    fi
+    
     log_audit "Certificate and CA verification complete"
     log_info "✓ Certificate verification complete"
+    return 0
+}
+
+# ============================================================================
+# TEST CERTIFICATE ISSUANCE
+# ============================================================================
+
+test_certificate_issuance() {
+    local cluster_issuer="$1"
+    local freeipa_ca_fingerprint="$2"
+    
+    log_verbose "Creating test namespace and certificate..."
+    log_audit "=== TEST CERTIFICATE ISSUANCE ==="
+    
+    local test_namespace="cert-test-$(date +%s)"
+    local test_cert_name="test-cert"
+    local timeout=60
+    
+    # Create test namespace
+    if ! kubectl --kubeconfig="$KUBECONFIG" create namespace "$test_namespace" &>/dev/null; then
+        log_warn "Failed to create test namespace, skipping certificate test"
+        add_step "Certificate test" "create test namespace" "FAILED" "Namespace creation failed"
+        return 0
+    fi
+    
+    log_verbose "Created test namespace: $test_namespace"
+    
+    # Create test certificate
+    cat > /tmp/test-cert.yaml << EOF
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: $test_cert_name
+  namespace: $test_namespace
+spec:
+  secretName: $test_cert_name-tls
+  duration: 1h
+  renewBefore: 30m
+  commonName: test.vmstation.local
+  dnsNames:
+  - test.vmstation.local
+  issuerRef:
+    name: $cluster_issuer
+    kind: ClusterIssuer
+    group: cert-manager.io
+EOF
+    
+    if ! kubectl --kubeconfig="$KUBECONFIG" apply -f /tmp/test-cert.yaml &>/dev/null; then
+        log_warn "Failed to create test certificate"
+        add_step "Certificate test" "create test certificate" "FAILED" "Certificate creation failed"
+        kubectl --kubeconfig="$KUBECONFIG" delete namespace "$test_namespace" &>/dev/null || true
+        rm -f /tmp/test-cert.yaml
+        return 0
+    fi
+    
+    log_verbose "Waiting for certificate issuance (timeout: ${timeout}s)..."
+    
+    # Wait for certificate to be ready
+    local elapsed=0
+    local ready=false
+    while [ $elapsed -lt $timeout ]; do
+        local status=$(kubectl --kubeconfig="$KUBECONFIG" -n "$test_namespace" get certificate "$test_cert_name" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "")
+        if [ "$status" = "True" ]; then
+            ready=true
+            break
+        fi
+        sleep 2
+        elapsed=$((elapsed + 2))
+    done
+    
+    if [ "$ready" = false ]; then
+        log_warn "Test certificate did not become ready within ${timeout}s"
+        add_step "Certificate test" "wait for issuance" "TIMEOUT" "Certificate not ready after ${timeout}s"
+        kubectl --kubeconfig="$KUBECONFIG" delete namespace "$test_namespace" &>/dev/null || true
+        rm -f /tmp/test-cert.yaml
+        return 0
+    fi
+    
+    log_verbose "Test certificate issued successfully"
+    add_step "Certificate test" "wait for issuance" "SUCCESS" "Certificate ready after ${elapsed}s"
+    
+    # Extract certificate and verify chain
+    log_verbose "Verifying certificate chain to FreeIPA CA..."
+    
+    local cert_b64=$(kubectl --kubeconfig="$KUBECONFIG" -n "$test_namespace" get secret "$test_cert_name-tls" -o jsonpath='{.data.tls\.crt}' 2>/dev/null || echo "")
+    
+    if [ -n "$cert_b64" ]; then
+        # Save certificate to temp file
+        echo "$cert_b64" | base64 -d > /tmp/test-cert.crt
+        
+        # Get FreeIPA CA cert for verification
+        local freeipa_pod="freeipa-0"
+        if kubectl --kubeconfig="$KUBECONFIG" -n "$NAMESPACE" exec "$freeipa_pod" -- cat /etc/ipa/ca.crt > /tmp/freeipa-ca.crt 2>/dev/null; then
+            # Verify certificate chain
+            if openssl verify -CAfile /tmp/freeipa-ca.crt /tmp/test-cert.crt &>/dev/null; then
+                log_info "✓ Test certificate chains to FreeIPA CA"
+                log_audit "TEST CERT: Successfully issued and chains to FreeIPA CA"
+                add_step "Certificate test" "verify chain" "SUCCESS" "Certificate chains to FreeIPA CA"
+            else
+                log_warn "⚠ Test certificate does NOT chain to FreeIPA CA"
+                log_audit "TEST CERT: Certificate issued but does not chain to FreeIPA CA"
+                add_step "Certificate test" "verify chain" "FAILED" "Certificate does not chain to FreeIPA CA"
+            fi
+            rm -f /tmp/freeipa-ca.crt
+        else
+            log_warn "Could not extract FreeIPA CA for verification"
+            add_step "Certificate test" "verify chain" "SKIPPED" "Could not extract FreeIPA CA"
+        fi
+        
+        rm -f /tmp/test-cert.crt
+    else
+        log_warn "Could not extract test certificate from secret"
+        add_step "Certificate test" "extract certificate" "FAILED" "Could not extract cert from secret"
+    fi
+    
+    # Cleanup
+    log_verbose "Cleaning up test resources..."
+    kubectl --kubeconfig="$KUBECONFIG" delete namespace "$test_namespace" &>/dev/null || true
+    rm -f /tmp/test-cert.yaml
+    
+    log_audit "Test certificate issuance complete"
     return 0
 }
 
