@@ -25,12 +25,12 @@
 
 set -euo pipefail
 
-# Configuration
-WORKDIR="/opt/vmstation-org/copilot-identity-fixing-automate"
+# Configuration - can be overridden via environment variables
+WORKDIR="${WORKDIR:-/opt/vmstation-org/copilot-identity-fixing-automate}"
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ANSIBLE_PLAYBOOK_PATH="/opt/vmstation-org/cluster-infra/ansible/playbooks/configure-coredns-freeipa.yml"
-INVENTORY="/opt/vmstation-org/cluster-setup/ansible/inventory/hosts.yml"
-CLEANUP_SCRIPT="/opt/vmstation-org/cluster-infra/scripts/cleanup-identity-stack.sh"
+ANSIBLE_PLAYBOOK_PATH="${ANSIBLE_PLAYBOOK_PATH:-/opt/vmstation-org/cluster-infra/ansible/playbooks/configure-coredns-freeipa.yml}"
+INVENTORY="${INVENTORY:-/opt/vmstation-org/cluster-setup/ansible/inventory/hosts.yml}"
+CLEANUP_SCRIPT="${CLEANUP_SCRIPT:-/opt/vmstation-org/cluster-infra/scripts/cleanup-identity-stack.sh}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -150,8 +150,9 @@ if [ ! -f "$INVENTORY" ]; then
     log_warn "Inventory file not found at: $INVENTORY"
     log_info "Checking alternative inventory location..."
     
-    # Try alternative inventory locations
-    ALT_INVENTORY="/home/runner/work/cluster-infra/cluster-infra/inventory/mycluster/hosts.yaml"
+    # Try alternative inventory locations relative to script directory
+    CLUSTER_INFRA_ROOT="$(cd "$SCRIPTS_DIR/.." && pwd)"
+    ALT_INVENTORY="$CLUSTER_INFRA_ROOT/inventory/mycluster/hosts.yaml"
     if [ -f "$ALT_INVENTORY" ]; then
         log_info "Using alternative inventory: $ALT_INVENTORY"
         INVENTORY="$ALT_INVENTORY"
