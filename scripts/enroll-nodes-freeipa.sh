@@ -283,11 +283,13 @@ create_enrollment_playbook() {
           Status: {{ 'Already enrolled' if ipa_client_configured.stat.exists else 'Newly enrolled' }}
 EOF
     
-    # Verify playbook was created and set proper permissions
+    # Set restrictive permissions immediately after file creation
+    chmod 600 "$TMP_PLAYBOOK"
+    
+    # Verify playbook was created successfully
     if [[ ! -f "$TMP_PLAYBOOK" ]]; then
         log_fatal "Failed to create temporary playbook at $TMP_PLAYBOOK"
     fi
-    chmod 600 "$TMP_PLAYBOOK"
     
     log_success "Created enrollment playbook: $TMP_PLAYBOOK"
     echo "$TMP_PLAYBOOK"

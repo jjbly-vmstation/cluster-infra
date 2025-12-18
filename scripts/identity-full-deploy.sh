@@ -65,6 +65,7 @@ if [[ ! -f "$INVENTORY" ]]; then
 fi
 
 # Export ANSIBLE_INVENTORY to prevent implicit localhost fallback
+# Note: Inventory validity is checked in preflight_checks() before use
 export ANSIBLE_INVENTORY="$INVENTORY"
 
 # KUBECONFIG path default
