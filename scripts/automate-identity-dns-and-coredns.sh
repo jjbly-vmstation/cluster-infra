@@ -64,7 +64,7 @@ This wrapper script performs the following steps:
 OPTIONS:
     -n, --namespace NAMESPACE  Kubernetes namespace (default: identity)
     -k, --kubeconfig FILE      Path to kubeconfig (default: /etc/kubernetes/admin.conf)
-    -i, --inventory FILE       Ansible inventory file (default: /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml)
+    -i, --inventory FILE       Ansible inventory file (default: /opt/vmstation-org/cluster-setup/ansible/inventory/hosts.yml)
     -v, --verbose              Enable verbose output
     --force-cleanup            Force cleanup before starting (use with caution)
     -h, --help                 Show this help message
