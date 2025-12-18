@@ -64,11 +64,17 @@ cluster-infra/
 │   ├── activate-kubespray-env.sh   # Environment activation
 │   ├── ops-kubespray-automation.sh # CI/CD automation
 │   ├── validate-kubespray-setup.sh # Validate environment
+│   ├── identity-full-deploy.sh     # Main identity stack orchestrator
+│   ├── reset-identity-stack.sh     # Safe identity stack reset
+│   ├── bootstrap-identity-admins.sh # Admin account bootstrap
+│   ├── request-freeipa-intermediate-ca.sh # CA certificate management
+│   ├── enroll-nodes-freeipa.sh     # Node enrollment to FreeIPA
 │   ├── verify-identity-deployment.sh  # Identity stack verification
 │   ├── verify-ldap-integration.sh  # LDAP connectivity testing
 │   ├── verify-sso-integration.sh   # SSO configuration verification
 │   ├── test-inventory.sh           # Validate inventory
 │   ├── dry-run-deployment.sh       # Test deployment
+│   ├── IDENTITY-DEPLOY-SCRIPTS.md  # Identity scripts documentation
 │   └── lib/
 │       ├── kubespray-common.sh     # Shared functions
 │       └── kubespray-validation.sh # Validation functions
@@ -215,6 +221,21 @@ The cluster includes a comprehensive identity management solution for cluster-wi
 
 ### Deployment
 
+**Option 1: Automated Full Deployment (Recommended)**
+
+```bash
+# Deploy complete identity stack with all phases
+sudo ./scripts/identity-full-deploy.sh
+
+# Or with full reset and redeploy
+sudo FORCE_RESET=1 RESET_CONFIRM=yes ./scripts/identity-full-deploy.sh
+
+# Dry-run mode to preview actions
+sudo DRY_RUN=1 ./scripts/identity-full-deploy.sh
+```
+
+**Option 2: Manual Deployment**
+
 ```bash
 # Step 1-3: Deploy complete identity stack
 ansible-playbook ansible/playbooks/identity-deploy-and-handover.yml
@@ -229,6 +250,18 @@ ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml
 ./scripts/verify-network-ports.sh
 ```
 
+**Option 3: Reset and Clean Deployment**
+
+```bash
+# Reset identity stack (creates timestamped backup)
+sudo ./scripts/reset-identity-stack.sh
+
+# Deploy fresh
+ansible-playbook ansible/playbooks/identity-deploy-and-handover.yml
+```
+
+For detailed documentation on identity deployment scripts, see [scripts/IDENTITY-DEPLOY-SCRIPTS.md](scripts/IDENTITY-DEPLOY-SCRIPTS.md)
+
 ### Access Points
 
 - **Keycloak Admin**: `http://192.168.4.63:30180/auth/admin/`
@@ -237,6 +270,7 @@ ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml
 
 ### Documentation
 
+- [Identity Deployment Scripts](scripts/IDENTITY-DEPLOY-SCRIPTS.md) - Automated deployment and reset scripts
 - [Deployment Sequence](docs/DEPLOYMENT_SEQUENCE.md) - Complete deployment workflow
 - [Step 4a: DNS and Network Configuration](docs/STEP4A_DNS_NETWORK_CONFIGURATION.md) - DNS and firewall setup
 - [Identity SSO Setup Guide](docs/IDENTITY-SSO-SETUP.md) - Complete deployment and configuration guide
