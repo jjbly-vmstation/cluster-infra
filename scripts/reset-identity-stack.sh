@@ -25,34 +25,11 @@ STORAGE_PATH="${STORAGE_PATH:-/srv/monitoring-data}"
 BACKUP_BASE_DIR="${BACKUP_BASE_DIR:-/root/identity-backup}"
 VERBOSE="${VERBOSE:-false}"
 
-# Storage ownership configuration with validation
+# Storage ownership configuration
 POSTGRES_UID="${POSTGRES_UID:-999}"
 POSTGRES_GID="${POSTGRES_GID:-999}"
 FREEIPA_UID="${FREEIPA_UID:-root}"
 FREEIPA_GID="${FREEIPA_GID:-root}"
-
-# Validate UID/GID values (must be numeric or valid usernames)
-validate_ownership_value() {
-    local value="$1"
-    local name="$2"
-    
-    # Allow numeric values or 'root' (could be extended to support other usernames if needed)
-    if [[ "$value" =~ ^[0-9]+$ ]] || [ "$value" = "root" ]; then
-        return 0
-    else
-        log_error "Invalid $name value: $value (must be numeric or a valid username like 'root')"
-        return 1
-    fi
-}
-
-# Validate all ownership values
-if ! validate_ownership_value "$POSTGRES_UID" "POSTGRES_UID" || \
-   ! validate_ownership_value "$POSTGRES_GID" "POSTGRES_GID" || \
-   ! validate_ownership_value "$FREEIPA_UID" "FREEIPA_UID" || \
-   ! validate_ownership_value "$FREEIPA_GID" "FREEIPA_GID"; then
-    log_error "Invalid ownership configuration"
-    exit 1
-fi
 
 # Logging functions
 log_info() {
@@ -77,6 +54,36 @@ log_verbose() {
     if [ "$VERBOSE" = "true" ]; then
         echo -e "${BLUE}[VERBOSE]${NC} $1"
     fi
+}
+
+# ============================================================================
+# VALIDATE OWNERSHIP CONFIGURATION
+# ============================================================================
+
+# Validate UID/GID values (must be numeric or valid usernames)
+validate_ownership_value() {
+    local value="$1"
+    local name="$2"
+    
+    # Allow numeric values or 'root' (could be extended to support other usernames if needed)
+    if [[ "$value" =~ ^[0-9]+$ ]] || [ "$value" = "root" ]; then
+        return 0
+    else
+        log_error "Invalid $name value: $value (must be numeric or a valid username like 'root')"
+        return 1
+    fi
+}
+
+# Validate all ownership values at startup
+validate_ownership_config() {
+    if ! validate_ownership_value "$POSTGRES_UID" "POSTGRES_UID" || \
+       ! validate_ownership_value "$POSTGRES_GID" "POSTGRES_GID" || \
+       ! validate_ownership_value "$FREEIPA_UID" "FREEIPA_UID" || \
+       ! validate_ownership_value "$FREEIPA_GID" "FREEIPA_GID"; then
+        log_error "Invalid ownership configuration"
+        return 1
+    fi
+    return 0
 }
 
 # ============================================================================
@@ -238,9 +245,9 @@ backup_identity_data() {
         log_warn "FreeIPA data directory not found: ${STORAGE_PATH}/freeipa"
     fi
     
-    # Create combined checksum file
-    if compgen -G "${BACKUP_WORKSPACE}/data/*.tar.gz" > /dev/null; then
-        # Use find instead of glob to avoid issues with shell expansion
+    # Create combined checksum file - use portable method with find
+    if [ -n "$(find "${BACKUP_WORKSPACE}/data" -maxdepth 1 -name "*.tar.gz" -type f 2>/dev/null)" ]; then
+        # Use find to avoid issues with shell expansion and portability
         (cd "${BACKUP_WORKSPACE}/data" && find . -maxdepth 1 -name "*.tar.gz" -type f -exec sha256sum {} \; > SHA256SUMS 2>/dev/null) || true
         log_info "✓ Combined checksums created: ${BACKUP_WORKSPACE}/data/SHA256SUMS"
     fi
@@ -501,6 +508,11 @@ ${BLUE}=========================================================================
 EOF
     
     # Run all steps
+    if ! validate_ownership_config; then
+        log_error "Ownership configuration validation failed - aborting"
+        exit 1
+    fi
+    
     if ! preflight_checks; then
         log_error "Preflight checks failed - aborting"
         exit 1

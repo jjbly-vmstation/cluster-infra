@@ -290,7 +290,8 @@ EOF
         
         local cmd="$SCRIPTS_DIR/reset-identity-stack.sh"
         [ "$VERBOSE" = "true" ] && export VERBOSE=true
-        # Set FORCE_RESET=1 to pass confirmation to reset script (it accepts both '1' and 'true')
+        # Set FORCE_RESET=1 to pass confirmation to reset script
+        # (reset script checks for FORCE_RESET=1 or RESET_CONFIRM=yes)
         export FORCE_RESET=1
         export KUBECONFIG
         export NAMESPACE
