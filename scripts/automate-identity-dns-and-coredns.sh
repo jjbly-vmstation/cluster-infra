@@ -13,6 +13,7 @@ ANSIBLE_DIR="$(cd "$SCRIPTS_DIR/../ansible" && pwd)"
 INVENTORY=${INVENTORY:-/srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml}
 VERBOSE=${VERBOSE:-false}
 FORCE_CLEANUP=${FORCE_CLEANUP:-false}
+FORCE_RESET=${FORCE_RESET:-false}
 
 # Colors for output
 RED='\033[0;31m'
@@ -67,6 +68,7 @@ OPTIONS:
     -i, --inventory FILE       Ansible inventory file (default: /opt/vmstation-org/cluster-setup/ansible/inventory/hosts.yml)
     -v, --verbose              Enable verbose output
     --force-cleanup            Force cleanup before starting (use with caution)
+    --force-reset              Perform controlled reset of identity stack with fresh backups (DESTRUCTIVE)
     -h, --help                 Show this help message
 
 ENVIRONMENT VARIABLES:
@@ -75,6 +77,7 @@ ENVIRONMENT VARIABLES:
     INVENTORY          Path to Ansible inventory file
     VERBOSE            Enable verbose output (true/false)
     FORCE_CLEANUP      Force cleanup before starting (true/false)
+    FORCE_RESET        Perform identity stack reset with backups (1/true = enabled)
 
 EXAMPLES:
     # Standard execution
@@ -88,6 +91,12 @@ EXAMPLES:
 
     # Force cleanup and restart
     sudo $0 --force-cleanup
+
+    # Force reset with fresh backups (DESTRUCTIVE)
+    sudo $0 --force-reset
+
+    # Force reset with verbose output
+    sudo FORCE_RESET=1 $0 --verbose
 
 OUTPUT:
     All verification results are stored in:
@@ -118,6 +127,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --force-cleanup)
             FORCE_CLEANUP=true
+            shift
+            ;;
+        --force-reset)
+            FORCE_RESET=true
             shift
             ;;
         -h|--help)
@@ -230,6 +243,61 @@ cleanup_workspace() {
         fi
         
         log_info "✓ Cleanup complete"
+    fi
+}
+
+# ============================================================================
+# FORCE RESET (OPTIONAL)
+# ============================================================================
+
+reset_identity_stack() {
+    if [ "$FORCE_RESET" = "true" ] || [ "$FORCE_RESET" = "1" ]; then
+        log_step "FORCE RESET IDENTITY STACK"
+        
+        cat << EOF
+${YELLOW}╔═══════════════════════════════════════════════════════════════════════════╗
+║                           ⚠️  DESTRUCTIVE OPERATION  ⚠️                    ║
+╚═══════════════════════════════════════════════════════════════════════════╝${NC}
+
+${RED}You have enabled --force-reset which will:${NC}
+  ${YELLOW}•${NC} Create timestamped backups of FreeIPA and PostgreSQL data
+  ${YELLOW}•${NC} Delete all identity stack Kubernetes resources (pods, PVCs, PVs)
+  ${YELLOW}•${NC} Clean and reset storage directories
+  ${YELLOW}•${NC} Then re-run DNS/CoreDNS automation with fresh identity stack
+
+${GREEN}Backups will be saved to:${NC}
+  /root/identity-backup/auto-reset-[timestamp]/
+
+${BLUE}This process is:${NC}
+  ${GREEN}✓${NC} Safe: Full backups created before any destructive actions
+  ${GREEN}✓${NC} Logged: All operations logged with checksums
+  ${GREEN}✓${NC} Idempotent: Can be run multiple times safely
+
+${YELLOW}═══════════════════════════════════════════════════════════════════════════${NC}
+
+EOF
+        
+        log_warn "Starting identity stack reset in 5 seconds..."
+        log_info "Press Ctrl+C to abort"
+        sleep 5
+        
+        log_info "Calling reset-identity-stack.sh..."
+        
+        local cmd="$SCRIPTS_DIR/reset-identity-stack.sh"
+        [ "$VERBOSE" = "true" ] && export VERBOSE=true
+        export FORCE_RESET=1
+        export KUBECONFIG
+        export NAMESPACE
+        
+        if $cmd; then
+            log_info "✓ Identity stack reset completed successfully"
+            log_info "Backups are stored in /root/identity-backup/"
+            return 0
+        else
+            log_error "✗ Identity stack reset failed"
+            log_error "Check logs in /root/identity-backup/auto-reset-*/logs/"
+            return 1
+        fi
     fi
 }
 
@@ -348,6 +416,20 @@ ${BLUE}Result Files:${NC}
     • $workspace/recover_identity_steps.json
     • $workspace/keycloak_summary.txt
     • $workspace/freeipa_summary.txt
+EOF
+
+    # Show reset backup location if reset was performed
+    if [ "$FORCE_RESET" = "true" ] || [ "$FORCE_RESET" = "1" ]; then
+        cat << EOF
+
+  ${YELLOW}Reset Backups (IMPORTANT):${NC}
+    • /root/identity-backup/auto-reset-*/
+    • Review: cat /root/identity-backup/auto-reset-*/RESET_SUMMARY.txt
+    • Verify checksums: cd /root/identity-backup/auto-reset-*/data && sha256sum -c SHA256SUMS
+EOF
+    fi
+    
+    cat << EOF
 
 ${BLUE}Review Commands:${NC}
   # View audit log
@@ -400,6 +482,7 @@ This script automates:
 Namespace: $NAMESPACE
 Kubeconfig: $KUBECONFIG
 Inventory: $INVENTORY
+Force Reset: $FORCE_RESET
 
 ${BLUE}==============================================================================${NC}
 
@@ -409,6 +492,15 @@ EOF
     if ! preflight_checks; then
         log_error "Preflight checks failed - exiting"
         exit 1
+    fi
+    
+    # FORCE RESET: Backup and reset identity stack if requested
+    if [ "$FORCE_RESET" = "true" ] || [ "$FORCE_RESET" = "1" ]; then
+        if ! reset_identity_stack; then
+            log_error "Identity stack reset failed - exiting"
+            log_error "Backups have been preserved - check /root/identity-backup/"
+            exit 1
+        fi
     fi
     
     cleanup_workspace
