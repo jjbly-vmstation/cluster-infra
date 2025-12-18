@@ -115,6 +115,8 @@ sudo DRY_RUN=1 ./scripts/reset-identity-stack.sh
 | `KUBECONFIG` | /etc/kubernetes/admin.conf | Path to kubeconfig |
 | `NAMESPACE_IDENTITY` | identity | Identity namespace name |
 | `STORAGE_PATH` | /srv/monitoring-data | Base storage path |
+| `POSTGRESQL_PV_NAME` | keycloak-postgresql-pv | PostgreSQL PV name |
+| `FREEIPA_PV_NAME` | freeipa-data-pv | FreeIPA PV name |
 
 **Backup Location:**
 

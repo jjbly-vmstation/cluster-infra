@@ -255,6 +255,9 @@ create_enrollment_playbook() {
         - not ipa_client_configured.stat.exists
         - freeipa_client_install | bool
       register: ipa_client_join
+      # Exit code 0: Successful enrollment
+      # Exit code 3: Client already enrolled (acceptable with --force-join)
+      # Any other exit code: Failure
       failed_when: ipa_client_join.rc != 0 and ipa_client_join.rc != 3
       changed_when: ipa_client_join.rc == 0
     

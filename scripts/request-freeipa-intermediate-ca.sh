@@ -268,26 +268,14 @@ request_freeipa_ca() {
     
     log_success "Authenticated to FreeIPA"
     
-    # Copy CSR to FreeIPA pod
-    log_info "Submitting CSR to FreeIPA CA..."
-    kubectl --kubeconfig="$KUBECONFIG" -n "$NAMESPACE_IDENTITY" cp "$csr_path" "$freeipa_pod:/tmp/intermediate-ca.csr"
+    # Note: Full FreeIPA CA integration requires additional setup and configuration
+    # including proper host principals, service accounts, and certificate profiles.
+    # For production use, consider using ipa-getcert or implementing full cert-request flow.
+    # For now, we fall back to self-signed CA which works with cert-manager.
+    log_warn "FreeIPA certificate signing requires additional configuration"
+    log_info "Using self-signed CA instead (recommended for most deployments)"
+    log_info "The self-signed CA will be used by cert-manager for cluster certificates"
     
-    # Request certificate from FreeIPA CA
-    # Note: This is a simplified version. In production, you may need to use ipa-getcert or similar
-    local cert_result
-    cert_result=$(kubectl --kubeconfig="$KUBECONFIG" -n "$NAMESPACE_IDENTITY" exec "$freeipa_pod" -- \
-        ipa cert-request /tmp/intermediate-ca.csr --principal=host/ipa.vmstation.local 2>&1 || echo "FAILED")
-    
-    if [[ "$cert_result" == *"FAILED"* ]]; then
-        log_warn "Cannot request certificate from FreeIPA CA - falling back to self-signed CA"
-        rm -f "$csr_path"
-        create_self_signed_ca
-        return 0
-    fi
-    
-    # Extract certificate (simplified - actual extraction may vary)
-    # For now, fall back to self-signed CA as FreeIPA cert request needs more complex handling
-    log_warn "FreeIPA certificate request requires additional configuration - using self-signed CA for now"
     rm -f "$csr_path"
     create_self_signed_ca
 }

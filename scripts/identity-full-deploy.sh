@@ -423,8 +423,21 @@ main() {
         log_fatal "Deployment phase failed - aborting"
     fi
     
-    # Wait a bit for pods to stabilize
-    if [[ "$DRY_RUN" != "1" ]] && [[ "$FORCE_RESET" != "1" || "$REDEPLOY_AFTER_RESET" == "1" ]]; then
+    # Wait a bit for pods to stabilize after deployment
+    # Only wait if we're not in dry-run and we actually deployed something
+    # (either no reset, or reset with redeploy)
+    local should_wait=0
+    if [[ "$DRY_RUN" != "1" ]]; then
+        if [[ "$FORCE_RESET" != "1" ]]; then
+            # No reset, so we deployed
+            should_wait=1
+        elif [[ "$REDEPLOY_AFTER_RESET" == "1" ]]; then
+            # Reset with redeploy
+            should_wait=1
+        fi
+    fi
+    
+    if [[ $should_wait -eq 1 ]]; then
         log_info "Waiting 30 seconds for pods to stabilize..."
         sleep 30
     fi

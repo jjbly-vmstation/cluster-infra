@@ -311,8 +311,21 @@ delete_pvs() {
     fi
     
     # Delete specific PVs used by identity stack
-    kubectl --kubeconfig="$KUBECONFIG" delete pv keycloak-postgresql-pv 2>/dev/null || log_info "  PV keycloak-postgresql-pv not found"
-    kubectl --kubeconfig="$KUBECONFIG" delete pv freeipa-data-pv 2>/dev/null || log_info "  PV freeipa-data-pv not found"
+    # These names match the default PV names in the Ansible playbook
+    # If custom PV names are used, set them via environment variables
+    local postgresql_pv="${POSTGRESQL_PV_NAME:-keycloak-postgresql-pv}"
+    local freeipa_pv="${FREEIPA_PV_NAME:-freeipa-data-pv}"
+    
+    kubectl --kubeconfig="$KUBECONFIG" delete pv "$postgresql_pv" 2>/dev/null || log_info "  PV $postgresql_pv not found"
+    kubectl --kubeconfig="$KUBECONFIG" delete pv "$freeipa_pv" 2>/dev/null || log_info "  PV $freeipa_pv not found"
+    
+    # Also try to delete PVs by label selector if they exist
+    local pv_count
+    pv_count=$(kubectl --kubeconfig="$KUBECONFIG" get pv -l app=identity --no-headers 2>/dev/null | wc -l)
+    if [[ $pv_count -gt 0 ]]; then
+        log_info "  Found $pv_count additional identity PVs via label selector"
+        kubectl --kubeconfig="$KUBECONFIG" delete pv -l app=identity 2>/dev/null || log_info "  Could not delete labeled PVs"
+    fi
     
     log_success "PVs deleted"
 }
