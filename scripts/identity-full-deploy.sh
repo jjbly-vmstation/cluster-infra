@@ -56,13 +56,17 @@ SKIP_NODE_ENROLLMENT="${SKIP_NODE_ENROLLMENT:-0}"
 SKIP_VERIFICATION="${SKIP_VERIFICATION:-0}"
 FREEIPA_ADMIN_PASSWORD="${FREEIPA_ADMIN_PASSWORD:-}"
 KEYCLOAK_ADMIN_PASSWORD="${KEYCLOAK_ADMIN_PASSWORD:-}"
+
 # Canonical inventory path (VMStation Deployment Memory canonical inventory rule)
 : "${INVENTORY:=/opt/vmstation-org/cluster-setup/ansible/inventory/hosts.yml}"
 # Fallback to deprecated inventory if canonical doesn't exist
 if [[ ! -f "$INVENTORY" ]]; then
     INVENTORY="$REPO_ROOT/inventory.ini"
 fi
-ANSIBLE_INVENTORY="${ANSIBLE_INVENTORY:-$INVENTORY}"
+
+# Export ANSIBLE_INVENTORY to prevent implicit localhost fallback
+export ANSIBLE_INVENTORY="$INVENTORY"
+
 # KUBECONFIG path default
 : "${KUBECONFIG_PATH:=/etc/kubernetes/admin.conf}"
 
@@ -167,17 +171,15 @@ or set INVENTORY environment variable to point to a valid inventory file.
 This check prevents Ansible from falling back to implicit localhost."
     fi
     log_info "Using inventory: $INVENTORY"
+    log_info "ANSIBLE_INVENTORY exported to: $ANSIBLE_INVENTORY"
     
     # Export KUBECONFIG if KUBECONFIG_PATH exists
     if [[ -f "$KUBECONFIG_PATH" ]]; then
         export KUBECONFIG="$KUBECONFIG_PATH"
-        log_info "Using KUBECONFIG: $KUBECONFIG"
+        log_info "Exported KUBECONFIG: $KUBECONFIG"
     else
         log_warn "KUBECONFIG not found at $KUBECONFIG_PATH - kubectl may not work"
     fi
-    
-    # Ensure ANSIBLE_INVENTORY matches INVENTORY
-    ANSIBLE_INVENTORY="$INVENTORY"
     
     # Check if playbook exists
     local playbook="$REPO_ROOT/ansible/playbooks/identity-deploy-and-handover.yml"
@@ -195,7 +197,11 @@ display_configuration() {
     log_info "  Log Directory: $LOG_DIR"
     log_info "  Log File: $LOG_FILE"
     log_info "  Inventory: $INVENTORY"
+    log_info "  ANSIBLE_INVENTORY: $ANSIBLE_INVENTORY (exported)"
     log_info "  KUBECONFIG Path: $KUBECONFIG_PATH"
+    if [[ -n "${KUBECONFIG:-}" ]]; then
+        log_info "  KUBECONFIG: $KUBECONFIG (exported)"
+    fi
     echo ""
     log_info "Workflow Options:"
     log_info "  Dry Run: $DRY_RUN"
