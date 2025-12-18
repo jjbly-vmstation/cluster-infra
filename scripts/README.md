@@ -171,13 +171,78 @@ After deploying the identity stack (Steps 1-3), use these scripts to configure D
 6. Network ports
 7. Optional: Kerberos authentication
 
+### automate-identity-dns-and-coredns.sh
+
+**Purpose**: Wrapper script to fully automate steps 4a→5 (DNS extraction, CoreDNS configuration, and verification).
+
+**Usage**:
+```bash
+sudo ./scripts/automate-identity-dns-and-coredns.sh
+```
+
+**Options**:
+- `-n, --namespace`: Kubernetes namespace (default: identity)
+- `-k, --kubeconfig`: Path to kubeconfig (default: /etc/kubernetes/admin.conf)
+- `-i, --inventory`: Ansible inventory file
+- `-v, --verbose`: Enable verbose output
+- `--force-cleanup`: Force cleanup of previous results
+
+**What it does**:
+1. Runs `extract-freeipa-dns-records.sh` to extract DNS records
+2. Runs `configure-coredns-freeipa.yml` Ansible playbook
+3. Runs `verify-freeipa-keycloak-readiness.sh` for basic readiness checks
+4. Runs `verify-identity-and-certs.sh` for comprehensive verification
+5. Displays paths to all result files
+
+**Output**:
+- All verification results in `/opt/vmstation-org/copilot-identity-fixing-automate/`
+- DNS records in `/tmp/freeipa-dns-records/`
+
+### verify-identity-and-certs.sh
+
+**Purpose**: Comprehensive, robust verification of identity stack and certificate distribution.
+
+**Usage**:
+```bash
+sudo ./scripts/verify-identity-and-certs.sh --verbose
+```
+
+**Options**:
+- `-n, --namespace`: Kubernetes namespace (default: identity)
+- `-k, --kubeconfig`: Path to kubeconfig (default: /etc/kubernetes/admin.conf)
+- `-w, --workspace`: Workspace directory (default: /opt/vmstation-org/copilot-identity-fixing-automate)
+- `-b, --backup-dir`: Backup directory for credentials (default: /root/identity-backup)
+- `-v, --verbose`: Enable verbose output
+
+**Checks Performed**:
+1. Preflight: Verify required tools (kubectl, curl, openssl, jq, python3)
+2. Workspace: Setup secure workspace with mode 700
+3. Credentials: Discover backup credentials for Keycloak and FreeIPA
+4. Keycloak: Admin access verification and recovery guidance
+5. FreeIPA: Admin access verification and recovery guidance
+6. Certificates: ClusterIssuer and FreeIPA CA fingerprint comparison
+7. Key Distribution: Verify Keycloak PKCS12 keystore presence
+8. Audit: Generate comprehensive, sanitized audit log
+
+**Output Files**:
+- `recover_identity_audit.log` - Human-readable audit log (mode 600)
+- `recover_identity_steps.json` - Structured JSON array of steps (mode 600)
+- `keycloak_summary.txt` - Keycloak verification summary (mode 600)
+- `freeipa_summary.txt` - FreeIPA verification summary (mode 600)
+
+**Security Features**:
+- Never writes passwords or tokens to logs
+- All output files created with mode 600
+- Credentials stored only in `/root/identity-backup/`
+- Non-destructive checks only
+- Provides remediation guidance without executing changes
+
 ### Complete Step 4a Workflow
 
-**Automated (Recommended)**:
+**Fully Automated (Recommended)**:
 ```bash
-# Using Ansible playbook
-ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml \
-  ansible/playbooks/configure-dns-network-step4a.yml
+# Run the wrapper script to automate everything
+sudo ./scripts/automate-identity-dns-and-coredns.sh --verbose
 ```
 
 **Manual (Individual scripts)**:
@@ -191,9 +256,14 @@ ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml
 # 3. Configure firewall rules
 ./scripts/configure-network-ports.sh
 
-# 4. Verify configuration
+# 4. Verify network ports
 ./scripts/verify-network-ports.sh
+
+# 5. Verify FreeIPA and Keycloak readiness
 ./scripts/verify-freeipa-keycloak-readiness.sh
+
+# 6. Comprehensive identity and certificate verification
+sudo ./scripts/verify-identity-and-certs.sh --verbose
 ```
 
 **Documentation**: See [docs/STEP4A_DNS_NETWORK_CONFIGURATION.md](../docs/STEP4A_DNS_NETWORK_CONFIGURATION.md) for detailed instructions.

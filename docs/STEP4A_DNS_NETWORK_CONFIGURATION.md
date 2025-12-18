@@ -860,6 +860,438 @@ kubectl describe pod -n identity <pod-name>
 
 ---
 
+## Automated Verification and Recovery
+
+### Overview
+
+The `automate-identity-dns-and-coredns.sh` wrapper script provides comprehensive automation for Steps 4a→5, including:
+
+1. **DNS Record Extraction**: Automatically extracts FreeIPA DNS records from the pod
+2. **CoreDNS Configuration**: Runs the Ansible playbook to configure CoreDNS
+3. **Readiness Verification**: Validates FreeIPA and Keycloak are ready
+4. **Identity & Certificate Verification**: Comprehensive checks of identity stack and certificate distribution
+
+### Usage
+
+#### Full Automation
+
+Run all steps in sequence:
+
+```bash
+sudo ./scripts/automate-identity-dns-and-coredns.sh
+```
+
+**With verbose output**:
+```bash
+sudo ./scripts/automate-identity-dns-and-coredns.sh --verbose
+```
+
+**With forced cleanup** (removes previous verification results):
+```bash
+sudo ./scripts/automate-identity-dns-and-coredns.sh --force-cleanup
+```
+
+#### Individual Verification Script
+
+For just the comprehensive identity and certificate verification:
+
+```bash
+sudo ./scripts/verify-identity-and-certs.sh --verbose
+```
+
+### Workspace and Output Files
+
+All verification results are stored in a secure workspace with restricted permissions:
+
+**Workspace Path**: `/opt/vmstation-org/copilot-identity-fixing-automate`
+
+**Permission Model**:
+- Workspace directory: `700` (drwx------)
+- All result files: `600` (-rw-------)
+- Only accessible by root/owner
+
+**Output Files**:
+
+| File | Purpose | Format |
+|------|---------|--------|
+| `recover_identity_audit.log` | Human-readable audit log with timestamped actions | Text |
+| `recover_identity_steps.json` | Structured JSON array of all verification steps | JSON |
+| `keycloak_summary.txt` | Keycloak access verification summary | Key=Value |
+| `freeipa_summary.txt` | FreeIPA access verification summary | Key=Value |
+
+### Verification Steps Performed
+
+The comprehensive verification script performs the following checks:
+
+#### 1. Preflight Checks
+- Verifies presence of required tools: `kubectl`, `curl`, `openssl`, `jq`, `python3`
+- Validates kubeconfig file exists
+- Exits immediately on missing tools with clear error
+
+#### 2. Workspace Setup
+- Creates workspace directory: `/opt/vmstation-org/copilot-identity-fixing-automate`
+- Sets restrictive permissions (mode 700)
+- Initializes audit log with header information
+- Ensures backup directory exists: `/root/identity-backup`
+
+#### 3. Credentials Discovery
+- Searches for Keycloak admin credentials in `/root/identity-backup/keycloak-admin-credentials.txt`
+- Searches for FreeIPA admin credentials in `/root/identity-backup/freeipa-admin-credentials.txt`
+- Detects Helm release secrets (but does not extract passwords)
+- Records findings in audit log
+
+#### 4. Keycloak Admin Recovery
+The script follows this recovery priority:
+
+**Priority 1: Backup Credentials**
+- If credentials exist in backup directory, verification succeeds
+- No actual login test performed to avoid exposing credentials
+- Summary file records: `method=backup_credentials`, `success=true`
+
+**Priority 2: Add-User Script**
+- Checks for `/opt/jboss/keycloak/bin/add-user-keycloak.sh` or `/opt/keycloak/bin/add-user-keycloak.sh`
+- If found, logs remediation guidance (script does not execute add-user automatically)
+- Summary file records: `method=add_user_required`, `success=false`
+- Provides remediation command for operator
+
+**Priority 3: Database Helper Pod**
+- Checks for `keycloak-postgresql` secret
+- If found, logs that helper pod method is available
+- Summary file records: `method=db_helper_pod_required`, `success=false`
+- Provides remediation guidance
+
+**Priority 4: Manual Intervention**
+- If no recovery method available, records need for manual intervention
+- Summary file records: `method=none`, `success=false`
+
+#### 5. FreeIPA Admin Recovery
+
+**Backup Credentials**
+- Searches for credentials in `/root/identity-backup/freeipa-admin-credentials.txt`
+- If found, verification succeeds
+- Summary file records: `method=backup_credentials`, `success=true`
+
+**Recovery Required**
+- If no credentials found, logs remediation steps
+- Suggests `ipa-server-install` recovery mode or restore from backup
+- Summary file records: `method=recovery_required`, `success=false`
+
+#### 6. Certificate and CA Verification
+
+**ClusterIssuer Detection**
+- Searches for ClusterIssuer with name matching `freeipa-ca-issuer` or `freeipa-intermediate-issuer`
+- Extracts `spec.ca.secretName` from ClusterIssuer
+
+**CA Certificate Fingerprinting**
+- Extracts `tls.crt` from ClusterIssuer secret
+- Computes SHA256 fingerprint of cert-manager CA certificate
+- Extracts CA cert from FreeIPA pod (checks `/etc/ipa/ca.crt`, `/etc/pki/ca-trust/source/anchors/ipa-ca.crt`)
+- Computes SHA256 fingerprint of FreeIPA CA certificate
+
+**Fingerprint Comparison**
+- Compares ClusterIssuer CA fingerprint with FreeIPA CA fingerprint
+- Records MATCH or MISMATCH in audit log
+- If mismatch, provides remediation guidance:
+  - Option 1: Update ClusterIssuer secret with FreeIPA CA/key
+  - Option 2: Create intermediate CA signed by FreeIPA and update ClusterIssuer
+
+**Certificate Test** (optional, not implemented in basic version)
+- Future enhancement: Issue temporary test Certificate using ClusterIssuer
+- Verify certificate chains to FreeIPA CA using `openssl verify`
+- Clean up test resources
+
+#### 7. Key Distribution Check for Keycloak
+
+**PKCS12 Keystore Verification**
+- Checks for keystore at `/etc/keycloak/keystore/keycloak.p12`
+- Alternative path: `/opt/jboss/keycloak/standalone/configuration/keycloak.p12`
+- Records whether keystore is present
+
+**InitContainer Detection**
+- If keystore missing, checks if initContainer exists in pod spec
+- Looks for initContainer with command referencing `openssl pkcs12`
+- If initContainer exists but keystore missing:
+  - Logs remediation: "Rolling restart or re-run initContainer"
+- If no initContainer found:
+  - Logs remediation: "Add initContainer to create keystore from cert"
+
+### Interpreting Audit and JSON Files
+
+#### Audit Log Format
+
+The audit log (`recover_identity_audit.log`) contains:
+
+```
+[2024-12-18T18:45:00Z] === PREFLIGHT CHECKS ===
+[2024-12-18T18:45:00Z] Preflight checks PASSED
+[2024-12-18T18:45:01Z] === WORKSPACE SETUP ===
+[2024-12-18T18:45:01Z] Workspace setup complete
+[2024-12-18T18:45:02Z] === CREDENTIALS DISCOVERY ===
+[2024-12-18T18:45:02Z] Keycloak credentials found: /root/identity-backup/keycloak-admin-credentials.txt
+[2024-12-18T18:45:02Z] FreeIPA credentials NOT FOUND in backup
+[2024-12-18T18:45:03Z] === KEYCLOAK ADMIN VERIFICATION ===
+[2024-12-18T18:45:03Z] Keycloak backup credentials found
+...
+```
+
+**Key Sections to Review**:
+- Look for `FAILED` or `CRITICAL` entries
+- Check for `REMEDIATION REQUIRED` messages
+- Review `CA MATCH` or `CA MISMATCH` findings
+- Note any warnings about missing credentials or keystores
+
+#### JSON Steps Format
+
+The JSON file (`recover_identity_steps.json`) contains structured step data:
+
+```json
+[
+  {
+    "timestamp": "2024-12-18T18:45:00Z",
+    "action": "Preflight checks",
+    "command": "verify tools and kubeconfig",
+    "result": "SUCCESS",
+    "note": "All required tools present"
+  },
+  {
+    "timestamp": "2024-12-18T18:45:02Z",
+    "action": "Credentials discovery",
+    "command": "check keycloak credentials",
+    "result": "FOUND",
+    "note": "Backup file exists"
+  },
+  ...
+]
+```
+
+**Parsing with jq**:
+
+```bash
+# View all steps
+cat /opt/vmstation-org/copilot-identity-fixing-automate/recover_identity_steps.json | jq .
+
+# Filter failed steps
+cat /opt/vmstation-org/copilot-identity-fixing-automate/recover_identity_steps.json | jq '.[] | select(.result == "FAILED")'
+
+# Filter by action
+cat /opt/vmstation-org/copilot-identity-fixing-automate/recover_identity_steps.json | jq '.[] | select(.action | contains("Certificate"))'
+
+# Count successes
+cat /opt/vmstation-org/copilot-identity-fixing-automate/recover_identity_steps.json | jq '[.[] | select(.result == "SUCCESS")] | length'
+```
+
+#### Summary Files Format
+
+**Keycloak Summary** (`keycloak_summary.txt`):
+
+```
+method=backup_credentials
+username=admin
+success=true
+message=Backup credentials file exists at /root/identity-backup/keycloak-admin-credentials.txt
+```
+
+**FreeIPA Summary** (`freeipa_summary.txt`):
+
+```
+method=recovery_required
+username=admin
+success=false
+message=No backup credentials found
+remediation=Use ipa-server-install recovery mode or restore from backup
+```
+
+**Fields**:
+- `method`: How access was verified or should be recovered
+- `username`: Admin username
+- `success`: Boolean indicating if access is verified
+- `message`: Human-readable status message
+- `remediation`: (Optional) Steps to remediate if access is not available
+
+### Security Considerations
+
+#### What the Script Does NOT Do
+
+**Never Written to Logs**:
+- Raw passwords
+- Authentication tokens
+- Secret values from Kubernetes secrets
+- Private keys
+
+**Never Performed Automatically**:
+- Creating new admin passwords (provides guidance only)
+- Modifying Kubernetes secrets
+- Executing add-user commands (provides commands only)
+- Restarting pods (provides guidance only)
+
+#### What the Script DOES Do
+
+**Safe Operations**:
+- Read-only checks of pod contents
+- Fingerprint computation of public certificates
+- File existence checks
+- Read credentials from backup files (but doesn't log contents)
+- Generate audit logs with sanitized content
+
+**Credential Handling**:
+- If script detects that admin password needs to be created, it:
+  - Logs the need for password creation
+  - Provides the command for operator to run
+  - Does NOT generate or set passwords automatically
+- If credentials are found in backup:
+  - Records the location
+  - Does NOT read or log the actual password values
+
+#### Recommendations
+
+1. **Credential Storage**:
+   - Store credentials in `/root/identity-backup/` with mode 600
+   - After verification, rotate passwords if they were created
+   - Store production credentials in Ansible Vault
+
+2. **Intermediate CA**:
+   - For production, use intermediate CA signed by FreeIPA
+   - Do NOT place FreeIPA root private key into Kubernetes secrets
+   - Create intermediate CA with limited lifetime and scope
+
+3. **Audit Log Retention**:
+   - Audit logs do not contain secrets but may contain sensitive metadata
+   - Retain logs for troubleshooting but rotate/archive regularly
+   - Set appropriate access controls (mode 600)
+
+### Cleanup
+
+#### Standard Cleanup
+
+Remove verification workspace (keeps backups):
+
+```bash
+rm -rf /opt/vmstation-org/copilot-identity-fixing-automate
+```
+
+#### Force Cleanup with Wrapper
+
+Use `--force-cleanup` to backup and remove previous results:
+
+```bash
+sudo ./scripts/automate-identity-dns-and-coredns.sh --force-cleanup
+```
+
+This will:
+- Backup previous workspace to timestamped directory
+- Remove DNS records extraction from `/tmp/freeipa-dns-records`
+- Start fresh
+
+#### Cleanup DNS Records
+
+```bash
+rm -rf /tmp/freeipa-dns-records
+```
+
+### Troubleshooting Verification
+
+#### Issue: Script reports missing tools
+
+**Diagnosis**:
+```bash
+# Check for missing tools
+for tool in kubectl curl openssl jq python3; do
+  command -v $tool || echo "Missing: $tool"
+done
+```
+
+**Solution**:
+```bash
+# Install missing tools (Debian/Ubuntu)
+sudo apt-get install -y kubectl curl openssl jq python3
+
+# Install missing tools (RHEL/CentOS)
+sudo dnf install -y kubectl curl openssl jq python3
+```
+
+#### Issue: Cannot access workspace
+
+**Diagnosis**:
+```bash
+ls -la /opt/vmstation-org/copilot-identity-fixing-automate
+```
+
+**Solution**:
+```bash
+# Script must be run as root or with sudo
+sudo ./scripts/verify-identity-and-certs.sh
+
+# Or change to root
+sudo bash
+./scripts/verify-identity-and-certs.sh
+```
+
+#### Issue: ClusterIssuer not found
+
+**Diagnosis**:
+```bash
+kubectl get clusterissuer
+kubectl get clusterissuer -o name | grep freeipa
+```
+
+**Solution**:
+- Verify cert-manager is installed: `kubectl get pods -n cert-manager`
+- Check if ClusterIssuer was created during identity stack deployment
+- Review identity deployment playbook logs
+
+#### Issue: CA fingerprints mismatch
+
+**Diagnosis**:
+```bash
+# Review audit log
+cat /opt/vmstation-org/copilot-identity-fixing-automate/recover_identity_audit.log | grep "CA"
+```
+
+**Solution**:
+
+**Option 1: Update ClusterIssuer secret**
+```bash
+# Extract FreeIPA CA
+kubectl -n identity exec freeipa-0 -- cat /etc/ipa/ca.crt > /tmp/freeipa-ca.crt
+
+# Update ClusterIssuer secret (if you have the private key)
+kubectl -n cert-manager create secret tls freeipa-ca-secret \
+  --cert=/tmp/freeipa-ca.crt \
+  --key=/path/to/freeipa-ca.key \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+**Option 2: Create intermediate CA** (Recommended)
+```bash
+# Generate intermediate CA signed by FreeIPA
+# (requires access to FreeIPA CA signing)
+# See cert-manager documentation for intermediate CA setup
+```
+
+#### Issue: Keycloak keystore missing
+
+**Diagnosis**:
+```bash
+# Check Keycloak pod spec for initContainer
+kubectl -n identity get pod <keycloak-pod> -o yaml | grep -A 20 initContainers
+```
+
+**Solution**:
+
+**If initContainer exists**:
+```bash
+# Rolling restart to re-run initContainer
+kubectl -n identity delete pod <keycloak-pod>
+kubectl -n identity wait --for=condition=ready pod/<keycloak-pod> --timeout=300s
+```
+
+**If no initContainer**:
+- Review Keycloak Helm values or deployment manifest
+- Add initContainer to convert certificate to PKCS12 keystore
+- See `manifests/identity/` for examples
+
+---
+
 ## FAQ
 
 **Q: Do I need to run Step 4a if I'm using a DNS server?**
@@ -899,6 +1331,6 @@ For issues or questions:
 
 ---
 
-*Document Version: 1.0*  
-*Last Updated: 2024-12-16*  
+*Document Version: 1.1*  
+*Last Updated: 2024-12-18*  
 *Part of VMStation Cluster Infrastructure*
