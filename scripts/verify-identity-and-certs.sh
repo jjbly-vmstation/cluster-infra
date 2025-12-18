@@ -280,7 +280,10 @@ discover_credentials() {
     fi
     
     # Check for Helm release secrets (but don't extract passwords)
-    local helm_secret=$(kubectl --kubeconfig="$KUBECONFIG" -n "$NAMESPACE" get secrets -o name 2>/dev/null | grep "sh.helm.release.v1.keycloak" | head -1 || echo "")
+    local helm_secret
+    helm_secret=$(kubectl --kubeconfig="$KUBECONFIG" -n "$NAMESPACE" get secrets -o name 2>/dev/null \
+        | grep "sh.helm.release.v1.keycloak" \
+        | head -1 || echo "")
     if [ -n "$helm_secret" ]; then
         log_info "Found Helm release secret: $helm_secret"
         log_audit "Helm release secret detected (not extracting values)"
@@ -341,7 +344,10 @@ verify_keycloak_admin() {
     log_info "Checking for add-user script in Keycloak container..."
     log_audit "Checking for Keycloak add-user script"
     
-    local add_user_paths=("/opt/jboss/keycloak/bin/add-user-keycloak.sh" "/opt/keycloak/bin/add-user-keycloak.sh")
+    local add_user_paths=(
+        "/opt/jboss/keycloak/bin/add-user-keycloak.sh"
+        "/opt/keycloak/bin/add-user-keycloak.sh"
+    )
     local add_user_found=false
     local add_user_path=""
     
@@ -519,7 +525,10 @@ verify_certificates() {
     # Extract FreeIPA CA cert and compute fingerprint
     log_verbose "Extracting FreeIPA CA certificate..."
     local freeipa_pod="freeipa-0"
-    local freeipa_ca_paths=("/etc/ipa/ca.crt" "/etc/pki/ca-trust/source/anchors/ipa-ca.crt")
+    local freeipa_ca_paths=(
+        "/etc/ipa/ca.crt"
+        "/etc/pki/ca-trust/source/anchors/ipa-ca.crt"
+    )
     local freeipa_ca_sha256=""
     
     for ca_path in "${freeipa_ca_paths[@]}"; do
@@ -705,7 +714,10 @@ verify_key_distribution() {
     
     # Check for PKCS12 keystore
     log_verbose "Checking for PKCS12 keystore in Keycloak pod..."
-    local keystore_paths=("/etc/keycloak/keystore/keycloak.p12" "/opt/jboss/keycloak/standalone/configuration/keycloak.p12")
+    local keystore_paths=(
+        "/etc/keycloak/keystore/keycloak.p12"
+        "/opt/jboss/keycloak/standalone/configuration/keycloak.p12"
+    )
     local keystore_found=false
     local keystore_path=""
     
@@ -810,4 +822,4 @@ EOF
 }
 
 # Run main function
-main
+main "$@"

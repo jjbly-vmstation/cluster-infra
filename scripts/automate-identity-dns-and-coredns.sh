@@ -435,8 +435,5 @@ EOF
     return 0
 }
 
-# Trap errors
-trap 'log_error "Script failed at line $LINENO"' ERR
-
 # Run main function
 main "$@"
