@@ -21,6 +21,10 @@
     identity_force_replace: false
     identity_backup_before_replace: true
     
+    # FreeIPA networking and firewall automation
+    # Set to true to automatically open firewall ports if FreeIPA is not reachable
+    identity_open_firewall: false
+    
     # Role variable pass-through (roles will use their defaults if not specified)
     # Provide canonical namespace and data-dir defaults so roles have values
     namespace_identity: identity
@@ -78,6 +82,67 @@
       include_role:
         name: identity-freeipa
       tags: [freeipa]
+    
+    # Phase 6a: Ensure FreeIPA is reachable from cluster nodes
+    - name: Ensure FreeIPA uses hostNetwork for node reachability
+      include_tasks: tasks/ensure-freeipa-hostnetwork.yml
+      tags: [freeipa, freeipa-networking]
+    
+    # Phase 6b: Conditionally configure firewall if FreeIPA is not reachable
+    - name: Check if firewall automation is needed
+      when: 
+        - freeipa_reachable is defined
+        - not (freeipa_reachable | bool)
+        - identity_open_firewall | default(false) | bool
+      block:
+        - name: Attempt to open firewall ports for FreeIPA
+          include_tasks: tasks/ensure-freeipa-firewall.yml
+          tags: [freeipa, freeipa-firewall]
+        
+        - name: Re-verify FreeIPA reachability after firewall configuration
+          include_tasks: tasks/ensure-freeipa-hostnetwork.yml
+          tags: [freeipa, freeipa-networking]
+    
+    # Phase 6c: Fail if FreeIPA is still not reachable
+    - name: Fail if FreeIPA is not reachable and firewall automation is disabled
+      fail:
+        msg: |
+          ============================================================
+          FreeIPA is not reachable from cluster nodes!
+          ============================================================
+          
+          FreeIPA has been configured with hostNetwork but connectivity
+          verification failed. This may be due to firewall rules blocking
+          the required ports.
+          
+          Required ports: TCP 80,443,389,636,88,464 and UDP 88,464
+          FreeIPA Host IP: {{ freeipa_hostip.stdout | default('unknown') }}
+          
+          Solutions:
+          1. Enable automatic firewall configuration by setting:
+             identity_open_firewall=true
+             Example: ansible-playbook ... -e identity_open_firewall=true
+             Or set environment variable: IDENTITY_OPEN_FIREWALL=1
+          
+          2. Manually configure firewall on the infra node:
+             For RHEL/Rocky/AlmaLinux with firewalld:
+               firewall-cmd --permanent --add-port={80,443,389,636,88,464}/tcp
+               firewall-cmd --permanent --add-port={88,464}/udp
+               firewall-cmd --reload
+             
+             For Debian/Ubuntu with iptables:
+               iptables -A INPUT -p tcp -m multiport --dports 80,443,389,636,88,464 -j ACCEPT
+               iptables -A INPUT -p udp -m multiport --dports 88,464 -j ACCEPT
+               netfilter-persistent save
+          
+          3. Use a socat proxy as a fallback (see docs/NOTE_FREEIPA_NETWORKING.md)
+          
+          After resolving connectivity, re-run the deployment or node enrollment.
+          ============================================================
+      when:
+        - freeipa_reachable is defined
+        - not (freeipa_reachable | bool)
+        - not (identity_open_firewall | default(false) | bool)
     
     # Phase 7: Setup cert-manager and ClusterIssuer
     - name: Setup cert-manager and CA issuer
