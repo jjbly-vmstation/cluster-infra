@@ -1,0 +1,145 @@
+---
+# Task file: ensure-freeipa-firewall.yml
+# Purpose: Open firewall ports on infra node for FreeIPA if connectivity fails
+# This is an OPTIONAL task that runs only when identity_open_firewall is explicitly enabled.
+# Default: identity_open_firewall: false
+
+- name: Firewall automation disabled by default
+  debug:
+    msg: "Firewall automation is disabled. Set identity_open_firewall=true to enable automatic firewall configuration."
+  when: not (identity_open_firewall | default(false) | bool)
+
+- name: Configure firewall for FreeIPA access
+  when: identity_open_firewall | default(false) | bool
+  block:
+    - name: Gather facts for OS detection
+      setup:
+        gather_subset:
+          - '!all'
+          - '!min'
+          - 'os_family'
+
+    - name: Detect firewall management system (RHEL-like)
+      command: which firewall-cmd
+      register: firewalld_check
+      failed_when: false
+      changed_when: false
+      when: ansible_os_family in ['RedHat', 'Rocky', 'AlmaLinux']
+
+    - name: Configure firewall using firewalld (RHEL-like)
+      when: 
+        - ansible_os_family in ['RedHat', 'Rocky', 'AlmaLinux']
+        - firewalld_check.rc == 0
+      block:
+        - name: Check if firewalld is running
+          systemd:
+            name: firewalld
+            state: started
+          register: firewalld_status
+          failed_when: false
+
+        - name: Open FreeIPA TCP ports with firewalld (idempotent)
+          shell: |
+            if ! firewall-cmd --query-port={{ item }}/tcp >/dev/null 2>&1; then
+              firewall-cmd --permanent --add-port={{ item }}/tcp
+              echo "CHANGED"
+            else
+              echo "UNCHANGED"
+            fi
+          register: firewalld_tcp
+          changed_when: '"CHANGED" in firewalld_tcp.stdout'
+          loop:
+            - 80
+            - 443
+            - 389
+            - 636
+            - 88
+            - 464
+          when: firewalld_status is defined and firewalld_status.failed is defined and not firewalld_status.failed
+
+        - name: Open FreeIPA UDP ports with firewalld (idempotent)
+          shell: |
+            if ! firewall-cmd --query-port={{ item }}/udp >/dev/null 2>&1; then
+              firewall-cmd --permanent --add-port={{ item }}/udp
+              echo "CHANGED"
+            else
+              echo "UNCHANGED"
+            fi
+          register: firewalld_udp
+          changed_when: '"CHANGED" in firewalld_udp.stdout'
+          loop:
+            - 88
+            - 464
+          when: firewalld_status is defined and firewalld_status.failed is defined and not firewalld_status.failed
+
+        - name: Reload firewalld to apply changes
+          command: firewall-cmd --reload
+          when: 
+            - firewalld_tcp is defined and firewalld_tcp.changed
+            - firewalld_udp is defined and firewalld_udp.changed
+
+    - name: Detect iptables availability (Debian-like)
+      command: which iptables
+      register: iptables_check
+      failed_when: false
+      changed_when: false
+      when: ansible_os_family in ['Debian', 'Ubuntu']
+
+    - name: Configure firewall using iptables (Debian-like)
+      when:
+        - ansible_os_family in ['Debian', 'Ubuntu']
+        - iptables_check.rc == 0
+      block:
+        - name: Check and add FreeIPA TCP port rules (idempotent)
+          shell: |
+            if ! iptables -C INPUT -p tcp --dport {{ item }} -j ACCEPT 2>/dev/null; then
+              iptables -A INPUT -p tcp --dport {{ item }} -j ACCEPT
+              echo "CHANGED"
+            else
+              echo "UNCHANGED"
+            fi
+          register: iptables_tcp
+          changed_when: '"CHANGED" in iptables_tcp.stdout'
+          loop:
+            - 80
+            - 443
+            - 389
+            - 636
+            - 88
+            - 464
+
+        - name: Check and add FreeIPA UDP port rules (idempotent)
+          shell: |
+            if ! iptables -C INPUT -p udp --dport {{ item }} -j ACCEPT 2>/dev/null; then
+              iptables -A INPUT -p udp --dport {{ item }} -j ACCEPT
+              echo "CHANGED"
+            else
+              echo "UNCHANGED"
+            fi
+          register: iptables_udp
+          changed_when: '"CHANGED" in iptables_udp.stdout'
+          loop:
+            - 88
+            - 464
+
+        - name: Install iptables-persistent for rule persistence (if not present)
+          apt:
+            name: iptables-persistent
+            state: present
+            update_cache: yes
+          when: iptables_tcp.changed or iptables_udp.changed
+          register: iptables_persistent_install
+          failed_when: false
+
+        - name: Save iptables rules
+          shell: |
+            if command -v netfilter-persistent >/dev/null 2>&1; then
+              netfilter-persistent save
+            elif command -v iptables-save >/dev/null 2>&1; then
+              iptables-save > /etc/iptables/rules.v4
+            fi
+          when: iptables_tcp.changed or iptables_udp.changed
+
+    - name: Log firewall configuration complete
+      debug:
+        msg: "Firewall ports have been opened for FreeIPA access"

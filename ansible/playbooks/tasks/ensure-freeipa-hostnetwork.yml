@@ -1,0 +1,145 @@
+---
+# Task file: ensure-freeipa-hostnetwork.yml
+# Purpose: Ensure FreeIPA StatefulSet uses hostNetwork for node reachability
+# This task patches the FreeIPA StatefulSet to enable hostNetwork: true so that
+# FreeIPA listens on node IPs and is reachable from cluster nodes during enrollment.
+
+- name: Check if FreeIPA StatefulSet exists
+  command: kubectl -n {{ namespace_identity | default('identity') }} get statefulset freeipa
+  register: freeipa_sts_check
+  failed_when: false
+  changed_when: false
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+
+- name: Skip hostNetwork patch if FreeIPA not deployed
+  debug:
+    msg: "FreeIPA StatefulSet not found - skipping hostNetwork configuration"
+  when: freeipa_sts_check.rc != 0
+
+- name: Ensure FreeIPA is reachable from nodes via hostNetwork
+  when: freeipa_sts_check.rc == 0
+  block:
+    - name: Backup current FreeIPA StatefulSet configuration
+      shell: |
+        kubectl -n {{ namespace_identity | default('identity') }} get statefulset freeipa -o yaml > /tmp/freeipa-statefulset-backup-$(date +%Y%m%d-%H%M%S).yaml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: freeipa_backup
+      changed_when: true
+
+    - name: Check if hostNetwork is already enabled
+      shell: |
+        kubectl -n {{ namespace_identity | default('identity') }} get statefulset freeipa -o jsonpath='{.spec.template.spec.hostNetwork}'
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: freeipa_hostnetwork_check
+      changed_when: false
+
+    - name: Patch FreeIPA StatefulSet to enable hostNetwork
+      command: |
+        kubectl -n {{ namespace_identity | default('identity') }} patch statefulset freeipa --type=json -p='[{"op":"add","path":"/spec/template/spec/hostNetwork","value":true}]'
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: freeipa_patch
+      # Treat success if already present (op "add" on existing field returns error)
+      # or if successfully patched
+      failed_when: 
+        - freeipa_patch.rc != 0
+        - '"already exists" not in freeipa_patch.stderr'
+        - '"already set" not in freeipa_patch.stderr'
+      changed_when: 
+        - freeipa_patch.rc == 0
+        - '"patched" in freeipa_patch.stdout'
+      when: freeipa_hostnetwork_check.stdout != "true"
+
+    - name: Log hostNetwork already enabled
+      debug:
+        msg: "hostNetwork is already enabled on FreeIPA StatefulSet"
+      when: freeipa_hostnetwork_check.stdout == "true"
+
+    - name: Restart FreeIPA StatefulSet to apply hostNetwork
+      command: kubectl -n {{ namespace_identity | default('identity') }} rollout restart statefulset freeipa
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: freeipa_restart
+      changed_when: '"restarted" in freeipa_restart.stdout'
+      when: 
+        - freeipa_hostnetwork_check.stdout != "true"
+        - freeipa_patch is defined
+        - freeipa_patch.rc == 0
+
+    - name: Wait for FreeIPA pod to be ready after restart
+      shell: |
+        kubectl -n {{ namespace_identity | default('identity') }} wait --for=condition=ready pod -l app=freeipa --timeout=600s
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: freeipa_ready
+      retries: 3
+      delay: 10
+      until: freeipa_ready.rc == 0
+      changed_when: false
+
+    - name: Get FreeIPA pod hostIP
+      shell: |
+        kubectl -n {{ namespace_identity | default('identity') }} get pod -l app=freeipa -o jsonpath='{.items[0].status.hostIP}'
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: freeipa_hostip
+      changed_when: false
+
+    - name: Verify FreeIPA reachability on required ports
+      block:
+        - name: Test TCP ports (80, 443, 389, 636, 88)
+          shell: |
+            timeout 5 nc -zv {{ freeipa_hostip.stdout }} {{ item }} 2>&1 || echo "FAILED"
+          register: tcp_port_check
+          failed_when: false
+          changed_when: false
+          loop:
+            - 80
+            - 443
+            - 389
+            - 636
+            - 88
+
+        - name: Test UDP ports (88, 464)
+          shell: |
+            timeout 5 nc -zuv {{ freeipa_hostip.stdout }} {{ item }} 2>&1 || echo "FAILED"
+          register: udp_port_check
+          failed_when: false
+          changed_when: false
+          loop:
+            - 88
+            - 464
+
+        - name: Set reachability fact based on port checks
+          set_fact:
+            freeipa_reachable: >-
+              {{
+                (tcp_port_check.results | selectattr('stdout', 'search', 'FAILED') | list | length == 0) and
+                (udp_port_check.results | selectattr('stdout', 'search', 'FAILED') | list | length == 0)
+              }}
+
+        - name: Display reachability status
+          debug:
+            msg: |
+              FreeIPA Reachability Check Results:
+              Host IP: {{ freeipa_hostip.stdout }}
+              TCP Port Checks: {{ tcp_port_check.results | map(attribute='stdout') | list }}
+              UDP Port Checks: {{ udp_port_check.results | map(attribute='stdout') | list }}
+              Overall Status: {{ 'REACHABLE' if freeipa_reachable else 'NOT REACHABLE' }}
+
+      rescue:
+        - name: Set reachability to false on error
+          set_fact:
+            freeipa_reachable: false
+
+        - name: Log verification failure
+          debug:
+            msg: "FreeIPA reachability verification failed - connectivity may need firewall rules"
+
+    - name: Log successful hostNetwork configuration
+      debug:
+        msg: "FreeIPA StatefulSet successfully configured with hostNetwork and verified"
+      when: freeipa_reachable | default(false) | bool

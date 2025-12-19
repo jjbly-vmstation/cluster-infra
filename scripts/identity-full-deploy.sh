@@ -22,6 +22,7 @@
 #   KEYCLOAK_ADMIN_PASSWORD  - Keycloak admin password for automation
 #   SKIP_NODE_ENROLLMENT     - Set to "1" to skip node enrollment (default: 0)
 #   SKIP_VERIFICATION        - Set to "1" to skip final verification (default: 0)
+#   IDENTITY_OPEN_FIREWALL   - Set to "1" to auto-configure firewall for FreeIPA (default: 0)
 #   INVENTORY                - Path to Ansible inventory (default: /opt/vmstation-org/cluster-setup/ansible/inventory/hosts.yml)
 #   KUBECONFIG_PATH          - Path to kubeconfig (default: /etc/kubernetes/admin.conf)
 #
@@ -54,6 +55,7 @@ RESET_REMOVE_OLD="${RESET_REMOVE_OLD:-0}"
 REDEPLOY_AFTER_RESET="${REDEPLOY_AFTER_RESET:-1}"
 SKIP_NODE_ENROLLMENT="${SKIP_NODE_ENROLLMENT:-0}"
 SKIP_VERIFICATION="${SKIP_VERIFICATION:-0}"
+IDENTITY_OPEN_FIREWALL="${IDENTITY_OPEN_FIREWALL:-0}"
 FREEIPA_ADMIN_PASSWORD="${FREEIPA_ADMIN_PASSWORD:-}"
 KEYCLOAK_ADMIN_PASSWORD="${KEYCLOAK_ADMIN_PASSWORD:-}"
 
@@ -212,6 +214,7 @@ display_configuration() {
     log_info "  Redeploy After Reset: $REDEPLOY_AFTER_RESET"
     log_info "  Skip Node Enrollment: $SKIP_NODE_ENROLLMENT"
     log_info "  Skip Verification: $SKIP_VERIFICATION"
+    log_info "  Identity Open Firewall: $IDENTITY_OPEN_FIREWALL"
     echo ""
     
     if [[ "$DRY_RUN" == "1" ]]; then
@@ -263,8 +266,14 @@ run_deployment() {
         return 0
     fi
     
+    # Build extra-vars for Ansible
+    local extra_vars=""
+    if [[ "$IDENTITY_OPEN_FIREWALL" == "1" ]]; then
+        extra_vars="-e identity_open_firewall=true"
+    fi
+    
     # Run Ansible playbook with explicit inventory to prevent fallback to localhost
-    if ansible-playbook -i "$INVENTORY" "$playbook" --become 2>&1 | tee -a "$LOG_FILE"; then
+    if ansible-playbook -i "$INVENTORY" "$playbook" --become $extra_vars 2>&1 | tee -a "$LOG_FILE"; then
         log_success "Deployment completed successfully"
     else
         log_error "Deployment failed - check log: $LOG_FILE"
