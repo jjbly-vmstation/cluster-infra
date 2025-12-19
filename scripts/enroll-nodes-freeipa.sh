@@ -56,19 +56,19 @@ DRY_RUN="${DRY_RUN:-0}"
 
 # Logging functions
 log_info() {
-    echo -e "${BLUE}[INFO]${NC} $*"
+    echo -e "${BLUE}[INFO]${NC} $*" >&2
 }
 
 log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $*"
+    echo -e "${GREEN}[SUCCESS]${NC} $*" >&2
 }
 
 log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $*"
+    echo -e "${YELLOW}[WARN]${NC} $*" >&2
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $*"
+    echo -e "${RED}[ERROR]${NC} $*" >&2
 }
 
 log_fatal() {
@@ -283,12 +283,16 @@ create_enrollment_playbook() {
           Status: {{ 'Already enrolled' if ipa_client_configured.stat.exists else 'Newly enrolled' }}
 EOF
     
-    # Verify playbook was created
+    # Set restrictive permissions immediately after file creation
+    chmod 600 "$TMP_PLAYBOOK"
+    
+    # Verify playbook was created successfully
     if [[ ! -f "$TMP_PLAYBOOK" ]]; then
         log_fatal "Failed to create temporary playbook at $TMP_PLAYBOOK"
     fi
     
     log_success "Created enrollment playbook: $TMP_PLAYBOOK"
+    # Return the path via stdout for command substitution (logging goes to stderr)
     echo "$TMP_PLAYBOOK"
 }
 
