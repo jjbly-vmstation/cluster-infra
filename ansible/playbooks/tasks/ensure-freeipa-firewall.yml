@@ -1,0 +1,204 @@
+---
+# Task file: ensure-freeipa-firewall.yml
+# Purpose: Open firewall ports on infra_node for FreeIPA if connectivity check fails
+# This task is opt-in via identity_open_firewall variable (default: false)
+# Supports firewalld (RHEL/Alma/CentOS) and iptables/nft (Debian/Ubuntu)
+
+- name: Check if firewall automation is enabled
+  debug:
+    msg: "Firewall automation is {{ 'enabled' if identity_open_firewall | default(false) | bool else 'disabled' }}"
+
+- name: Skip firewall configuration if not enabled
+  debug:
+    msg: "Skipping firewall configuration. Set identity_open_firewall=true to enable automatic firewall rule creation."
+  when: not (identity_open_firewall | default(false) | bool)
+
+- name: Configure firewall for FreeIPA
+  when: identity_open_firewall | default(false) | bool
+  block:
+    - name: Detect OS family
+      debug:
+        msg: "Detected OS family: {{ ansible_os_family }}"
+
+    - name: Check if firewalld is available (RHEL/Alma/CentOS)
+      shell: command -v firewall-cmd
+      register: firewalld_check
+      failed_when: false
+      changed_when: false
+      when: ansible_os_family == 'RedHat'
+
+    - name: Check if firewalld service is running
+      systemd:
+        name: firewalld
+      register: firewalld_status
+      failed_when: false
+      when: 
+        - ansible_os_family == 'RedHat'
+        - firewalld_check.rc == 0
+
+    - name: Open FreeIPA ports using firewalld (RHEL/Alma/CentOS)
+      firewalld:
+        port: "{{ item }}"
+        permanent: yes
+        state: enabled
+        immediate: yes
+      loop:
+        - 80/tcp      # HTTP
+        - 443/tcp     # HTTPS
+        - 389/tcp     # LDAP
+        - 636/tcp     # LDAPS
+        - 88/tcp      # Kerberos TCP
+        - 88/udp      # Kerberos UDP
+        - 464/tcp     # kpasswd TCP
+        - 464/udp     # kpasswd UDP
+      when:
+        - ansible_os_family == 'RedHat'
+        - firewalld_check.rc == 0
+        - firewalld_status.status.ActiveState | default('') == 'active'
+      become: true
+      register: firewalld_rules
+
+    - name: Display firewalld configuration status
+      debug:
+        msg: "FreeIPA ports opened in firewalld"
+      when: 
+        - firewalld_rules is defined
+        - firewalld_rules is not skipped
+
+    - name: Check if ufw is available (Debian/Ubuntu)
+      shell: command -v ufw
+      register: ufw_check
+      failed_when: false
+      changed_when: false
+      when: ansible_os_family == 'Debian'
+
+    - name: Open FreeIPA TCP ports using ufw (Debian/Ubuntu)
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop:
+        - '80'
+        - '443'
+        - '389'
+        - '636'
+        - '88'
+        - '464'
+      when:
+        - ansible_os_family == 'Debian'
+        - ufw_check.rc == 0
+      become: true
+      register: ufw_tcp_rules
+
+    - name: Open FreeIPA UDP ports using ufw (Debian/Ubuntu)
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: udp
+      loop:
+        - '88'
+        - '464'
+      when:
+        - ansible_os_family == 'Debian'
+        - ufw_check.rc == 0
+      become: true
+      register: ufw_udp_rules
+
+    - name: Display ufw configuration status
+      debug:
+        msg: "FreeIPA ports opened in ufw"
+      when: 
+        - ufw_tcp_rules is defined
+        - ufw_tcp_rules is not skipped
+
+    - name: Fallback to iptables if no firewall manager found
+      debug:
+        msg: |
+          WARNING: No supported firewall manager found (firewalld or ufw).
+          Manual firewall configuration may be required.
+          Required ports: 80, 443, 389, 636, 88, 464 (TCP and UDP for 88, 464)
+      when:
+        - (ansible_os_family == 'RedHat' and firewalld_check.rc != 0) or
+          (ansible_os_family == 'Debian' and ufw_check.rc != 0)
+
+    - name: Create iptables rules for FreeIPA (fallback - TCP)
+      iptables:
+        chain: INPUT
+        protocol: tcp
+        destination_port: "{{ item }}"
+        jump: ACCEPT
+        comment: "FreeIPA service port"
+      loop:
+        - 80
+        - 443
+        - 389
+        - 636
+        - 88
+        - 464
+      when:
+        - (ansible_os_family == 'RedHat' and firewalld_check.rc != 0) or
+          (ansible_os_family == 'Debian' and ufw_check.rc != 0)
+      become: true
+      register: iptables_tcp_rules
+      failed_when: false
+
+    - name: Create iptables rules for FreeIPA (fallback - UDP)
+      iptables:
+        chain: INPUT
+        protocol: udp
+        destination_port: "{{ item }}"
+        jump: ACCEPT
+        comment: "FreeIPA service port"
+      loop:
+        - 88
+        - 464
+      when:
+        - (ansible_os_family == 'RedHat' and firewalld_check.rc != 0) or
+          (ansible_os_family == 'Debian' and ufw_check.rc != 0)
+      become: true
+      register: iptables_udp_rules
+      failed_when: false
+
+    - name: Save iptables rules (fallback)
+      shell: >
+        {% if ansible_os_family == 'RedHat' %}
+        iptables-save > /etc/sysconfig/iptables
+        {% elif ansible_os_family == 'Debian' %}
+        iptables-save > /etc/iptables/rules.v4
+        {% endif %}
+      when:
+        - iptables_tcp_rules is defined
+        - iptables_tcp_rules is not skipped
+        - iptables_tcp_rules is succeeded
+      become: true
+      failed_when: false
+
+    - name: Wait after firewall changes
+      pause:
+        seconds: 5
+        prompt: "Waiting for firewall changes to take effect..."
+
+    - name: Re-test connectivity after firewall configuration
+      shell: >
+        timeout 5 bash -c 'cat < /dev/null > /dev/tcp/{{ freeipa_host_ip.stdout }}/{{ item }}'
+      register: freeipa_recheck
+      failed_when: false
+      changed_when: false
+      loop:
+        - 80
+        - 443
+        - 389
+        - 636
+        - 88
+        - 464
+      become: true
+      when: freeipa_host_ip is defined and freeipa_host_ip.stdout is defined
+
+    - name: Update reachability status after firewall changes
+      set_fact:
+        freeipa_reachable: "{{ freeipa_recheck.results | selectattr('rc', 'equalto', 0) | list | length >= 4 }}"
+      when: freeipa_recheck is defined and freeipa_recheck.results is defined
+
+    - name: Display post-firewall connectivity status
+      debug:
+        msg: "FreeIPA reachability after firewall configuration: {{ 'SUCCESS' if freeipa_reachable | default(false) else 'STILL BLOCKED' }}"

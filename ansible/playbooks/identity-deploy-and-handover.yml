@@ -21,6 +21,10 @@
     identity_force_replace: false
     identity_backup_before_replace: true
     
+    # FreeIPA network configuration
+    identity_open_firewall: false
+    freeipa_ready_timeout: 600s
+    
     # Role variable pass-through (roles will use their defaults if not specified)
     # Provide canonical namespace and data-dir defaults so roles have values
     namespace_identity: identity
@@ -78,6 +82,84 @@
       include_role:
         name: identity-freeipa
       tags: [freeipa]
+    
+    # Phase 6a: Ensure FreeIPA is reachable from cluster nodes
+    # This phase patches the FreeIPA StatefulSet to enable hostNetwork
+    # so that FreeIPA listens on node IPs, making it reachable for ipa-client-install
+    - name: Ensure FreeIPA hostNetwork configuration
+      include_tasks: tasks/ensure-freeipa-hostnetwork.yml
+      tags: [freeipa, freeipa-network]
+
+    # Phase 6b: Open firewall ports if connectivity check fails (opt-in)
+    # This phase only runs if FreeIPA is not reachable after hostNetwork
+    # and identity_open_firewall is set to true
+    - name: Ensure FreeIPA firewall configuration (if needed)
+      include_tasks: tasks/ensure-freeipa-firewall.yml
+      when:
+        - not (freeipa_reachable | default(true) | bool)
+        - identity_open_firewall | default(false) | bool
+      tags: [freeipa, freeipa-firewall]
+
+    # Phase 6c: Fail with helpful message if FreeIPA still not reachable
+    - name: Check final FreeIPA reachability status
+      fail:
+        msg: |
+          ============================================================
+          FreeIPA is NOT reachable from the Ansible controller!
+          ============================================================
+          
+          FreeIPA needs to be accessible on the node IP for 
+          ipa-client-install to work during node enrollment.
+          
+          Current Status:
+            - hostNetwork: enabled
+            - Firewall automation: {{ 'attempted' if identity_open_firewall | default(false) | bool else 'disabled' }}
+            - Reachability: FAILED
+          
+          Troubleshooting Steps:
+          
+          1. Enable firewall automation (if not already enabled):
+             ansible-playbook {{ playbook_dir }}/identity-deploy-and-handover.yml -e identity_open_firewall=true
+          
+          2. Manually open firewall ports on the infra node:
+              On RHEL/Alma/CentOS:
+               firewall-cmd --permanent --add-port={80,443,389,636,88,464}/tcp
+               firewall-cmd --permanent --add-port={88,464}/udp
+               firewall-cmd --reload
+             
+             On Debian/Ubuntu:
+               ufw allow 80,443,389,636,88,464/tcp
+               ufw allow 88,464/udp
+          
+          3. Use socat as a manual fallback to forward ports:
+             socat TCP-LISTEN:389,fork TCP:{{ freeipa_pod_ip.stdout | default('<freeipa-pod-ip>') }}:389
+          
+          4. Verify connectivity manually:
+             nc -vz {{ freeipa_host_ip.stdout | default('<node-ip>') }} 389
+          
+          For more information, see: docs/NOTE_FREEIPA_NETWORKING.md
+          ============================================================
+      when:
+        - freeipa_reachable is defined
+        - not (freeipa_reachable | bool)
+        - identity_open_firewall | default(false) | bool
+      tags: [freeipa, freeipa-network]
+
+    - name: Display FreeIPA network configuration success
+      debug:
+        msg: |
+          ============================================================
+          FreeIPA Network Configuration: SUCCESS
+          ============================================================
+          FreeIPA is now reachable on node IP: {{ freeipa_host_ip.stdout | default('N/A') }}
+          hostNetwork: enabled
+          All required ports are accessible
+          Node enrollment can proceed automatically
+          ============================================================
+      when:
+        - freeipa_reachable is defined
+        - freeipa_reachable | bool
+      tags: [freeipa, freeipa-network]
     
     # Phase 7: Setup cert-manager and ClusterIssuer
     - name: Setup cert-manager and CA issuer
