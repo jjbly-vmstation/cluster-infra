@@ -21,6 +21,10 @@
     identity_force_replace: false
     identity_backup_before_replace: true
     
+    # FreeIPA network configuration
+    identity_open_firewall: false
+    freeipa_ready_timeout: 600s
+    
     # Role variable pass-through (roles will use their defaults if not specified)
     # Provide canonical namespace and data-dir defaults so roles have values
     namespace_identity: identity
