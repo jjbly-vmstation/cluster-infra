@@ -122,7 +122,7 @@
              ansible-playbook {{ playbook_dir }}/identity-deploy-and-handover.yml -e identity_open_firewall=true
           
           2. Manually open firewall ports on the infra node:
-             On RHEL/Alma/CentOS:
+              On RHEL/Alma/CentOS:
                firewall-cmd --permanent --add-port={80,443,389,636,88,464}/tcp
                firewall-cmd --permanent --add-port={88,464}/udp
                firewall-cmd --reload
@@ -132,7 +132,7 @@
                ufw allow 88,464/udp
           
           3. Use socat as a manual fallback to forward ports:
-             socat TCP-LISTEN:389,fork TCP:{{ freeipa_host_ip.stdout | default('<freeipa-pod-ip>') }}:389
+             socat TCP-LISTEN:389,fork TCP:{{ freeipa_pod_ip.stdout | default('<freeipa-pod-ip>') }}:389
           
           4. Verify connectivity manually:
              nc -vz {{ freeipa_host_ip.stdout | default('<node-ip>') }} 389

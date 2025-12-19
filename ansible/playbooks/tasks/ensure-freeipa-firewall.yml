@@ -25,7 +25,7 @@
       register: firewalld_check
       failed_when: false
       changed_when: false
-      when: ansible_os_family in ['RedHat', 'AlmaLinux', 'Rocky']
+      when: ansible_os_family == 'RedHat'
 
     - name: Check if firewalld service is running
       systemd:
@@ -33,7 +33,7 @@
       register: firewalld_status
       failed_when: false
       when: 
-        - ansible_os_family in ['RedHat', 'AlmaLinux', 'Rocky']
+        - ansible_os_family == 'RedHat'
         - firewalld_check.rc == 0
 
     - name: Open FreeIPA ports using firewalld (RHEL/Alma/CentOS)
@@ -52,7 +52,7 @@
         - 464/tcp     # kpasswd TCP
         - 464/udp     # kpasswd UDP
       when:
-        - ansible_os_family in ['RedHat', 'AlmaLinux', 'Rocky']
+        - ansible_os_family == 'RedHat'
         - firewalld_check.rc == 0
         - firewalld_status.status.ActiveState | default('') == 'active'
       become: true
@@ -118,7 +118,7 @@
           Manual firewall configuration may be required.
           Required ports: 80, 443, 389, 636, 88, 464 (TCP and UDP for 88, 464)
       when:
-        - (ansible_os_family in ['RedHat', 'AlmaLinux', 'Rocky'] and firewalld_check.rc != 0) or
+        - (ansible_os_family == 'RedHat' and firewalld_check.rc != 0) or
           (ansible_os_family == 'Debian' and ufw_check.rc != 0)
 
     - name: Create iptables rules for FreeIPA (fallback - TCP)
@@ -136,7 +136,7 @@
         - 88
         - 464
       when:
-        - (ansible_os_family in ['RedHat', 'AlmaLinux', 'Rocky'] and firewalld_check.rc != 0) or
+        - (ansible_os_family == 'RedHat' and firewalld_check.rc != 0) or
           (ansible_os_family == 'Debian' and ufw_check.rc != 0)
       become: true
       register: iptables_tcp_rules
@@ -153,7 +153,7 @@
         - 88
         - 464
       when:
-        - (ansible_os_family in ['RedHat', 'AlmaLinux', 'Rocky'] and firewalld_check.rc != 0) or
+        - (ansible_os_family == 'RedHat' and firewalld_check.rc != 0) or
           (ansible_os_family == 'Debian' and ufw_check.rc != 0)
       become: true
       register: iptables_udp_rules
@@ -161,7 +161,7 @@
 
     - name: Save iptables rules (fallback)
       shell: >
-        {% if ansible_os_family in ['RedHat', 'AlmaLinux', 'Rocky'] %}
+        {% if ansible_os_family == 'RedHat' %}
         iptables-save > /etc/sysconfig/iptables
         {% elif ansible_os_family == 'Debian' %}
         iptables-save > /etc/iptables/rules.v4

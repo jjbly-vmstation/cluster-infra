@@ -52,14 +52,13 @@
         kubectl --kubeconfig=/etc/kubernetes/admin.conf patch statefulset freeipa -n identity
         --type=json -p='[{"op":"add","path":"/spec/template/spec/hostNetwork","value":true}]'
       register: freeipa_patch
-      # If patch fails because value already exists, treat as success (idempotent)
+      # If patch fails because the field is immutable or already present, check and handle appropriately
       failed_when: 
         - freeipa_patch.rc != 0
-        - "'already set' not in freeipa_patch.stderr"
-        - "'no change' not in freeipa_patch.stderr"
+        - "'already exists' not in freeipa_patch.stderr"
       changed_when: 
         - freeipa_patch.rc == 0
-        - "'no change' not in freeipa_patch.stdout"
+        - "'patched' in freeipa_patch.stdout"
       become: true
       when: freeipa_hostnetwork_check.stdout != "true"
 
