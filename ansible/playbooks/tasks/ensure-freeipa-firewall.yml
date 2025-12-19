@@ -75,8 +75,8 @@
         - name: Reload firewalld to apply changes
           command: firewall-cmd --reload
           when: 
-            - firewalld_tcp is defined and firewalld_tcp.changed
-            - firewalld_udp is defined and firewalld_udp.changed
+            - (firewalld_tcp is defined and (firewalld_tcp.results | selectattr('changed', 'equalto', true) | list | length > 0)) or
+              (firewalld_udp is defined and (firewalld_udp.results | selectattr('changed', 'equalto', true) | list | length > 0))
 
     - name: Detect iptables availability (Debian-like)
       command: which iptables
@@ -127,7 +127,9 @@
             name: iptables-persistent
             state: present
             update_cache: yes
-          when: iptables_tcp.changed or iptables_udp.changed
+          when: 
+            - (iptables_tcp.results | selectattr('changed', 'equalto', true) | list | length > 0) or
+              (iptables_udp.results | selectattr('changed', 'equalto', true) | list | length > 0)
           register: iptables_persistent_install
           failed_when: false
 
@@ -138,7 +140,9 @@
             elif command -v iptables-save >/dev/null 2>&1; then
               iptables-save > /etc/iptables/rules.v4
             fi
-          when: iptables_tcp.changed or iptables_udp.changed
+          when: 
+            - (iptables_tcp.results | selectattr('changed', 'equalto', true) | list | length > 0) or
+              (iptables_udp.results | selectattr('changed', 'equalto', true) | list | length > 0)
 
     - name: Log firewall configuration complete
       debug:

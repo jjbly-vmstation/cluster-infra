@@ -20,14 +20,6 @@
 - name: Ensure FreeIPA is reachable from nodes via hostNetwork
   when: freeipa_sts_check.rc == 0
   block:
-    - name: Backup current FreeIPA StatefulSet configuration
-      shell: |
-        kubectl -n {{ namespace_identity | default('identity') }} get statefulset freeipa -o yaml > /tmp/freeipa-statefulset-backup-$(date +%Y%m%d-%H%M%S).yaml
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
-      register: freeipa_backup
-      changed_when: true
-
     - name: Check if hostNetwork is already enabled
       shell: |
         kubectl -n {{ namespace_identity | default('identity') }} get statefulset freeipa -o jsonpath='{.spec.template.spec.hostNetwork}'
@@ -35,6 +27,15 @@
         KUBECONFIG: /etc/kubernetes/admin.conf
       register: freeipa_hostnetwork_check
       changed_when: false
+
+    - name: Backup current FreeIPA StatefulSet configuration
+      shell: |
+        kubectl -n {{ namespace_identity | default('identity') }} get statefulset freeipa -o yaml > /tmp/freeipa-statefulset-backup-$(date +%Y%m%d-%H%M%S).yaml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: freeipa_backup
+      changed_when: true
+      when: freeipa_hostnetwork_check.stdout != "true"
 
     - name: Patch FreeIPA StatefulSet to enable hostNetwork
       command: |
@@ -90,7 +91,7 @@
 
     - name: Verify FreeIPA reachability on required ports
       block:
-        - name: Test TCP ports (80, 443, 389, 636, 88)
+        - name: Test TCP ports (80, 443, 389, 636, 88, 464)
           shell: |
             timeout 5 nc -zv {{ freeipa_hostip.stdout }} {{ item }} 2>&1 || echo "FAILED"
           register: tcp_port_check
@@ -102,6 +103,7 @@
             - 389
             - 636
             - 88
+            - 464
 
         - name: Test UDP ports (88, 464)
           shell: |
