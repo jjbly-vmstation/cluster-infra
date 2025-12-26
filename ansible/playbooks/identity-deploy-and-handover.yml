@@ -1,3 +1,8 @@
+---
+- name: Identity stack deploy and handover
+  hosts: localhost
+  connection: local
+  gather_facts: false
   vars:
     # Repository root path (auto-detect from playbook location)
     repo_root: "{{ playbook_dir | dirname | dirname }}"
@@ -12,7 +17,7 @@
     namespace_identity: identity
     namespace_cert_manager: cert-manager
     namespace_platform: platform
-    identity_data_dir: /srv/monitoring_data
+    identity_data_dir: /srv/monitoring-data
     # Set all identity/admin passwords to a simple placeholder for testing
     keycloak_admin_password: "secret"
     freeipa_admin_password: "secret"
@@ -20,25 +25,7 @@
     ca_key_password: "secret"
     ldap_bind_password: "secret"
     # enable_postgres_chown and enable_freeipa_chown default to role defaults
-    # Repository root path (auto-detect from playbook location)
-    repo_root: "{{ playbook_dir | dirname | dirname }}"
-    
-    # Control behavior
-    identity_force_replace: false
-    identity_backup_before_replace: true
-    
-    # FreeIPA network configuration
-    identity_open_firewall: false
-    freeipa_ready_timeout: 600s
-    
-    # Role variable pass-through (roles will use their defaults if not specified)
-    # Provide canonical namespace and data-dir defaults so roles have values
-    namespace_identity: identity
-    namespace_cert_manager: cert-manager
-    namespace_platform: platform
-    identity_data_dir: /srv/monitoring_data
-    # enable_postgres_chown and enable_freeipa_chown default to role defaults
-    
+
   tasks:
     # Phase 1: Prerequisites
     - name: Run identity prerequisites
