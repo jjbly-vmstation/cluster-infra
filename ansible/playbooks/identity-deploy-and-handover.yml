@@ -2,7 +2,7 @@
 - name: Identity stack deploy and handover
   hosts: localhost
   connection: local
-  gather_facts: false
+  gather_facts: true
   vars:
     # Repository root path (auto-detect from playbook location)
     repo_root: "{{ playbook_dir | dirname | dirname }}"

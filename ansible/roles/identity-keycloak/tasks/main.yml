@@ -7,14 +7,18 @@
     path: "{{ keycloak_values_file }}"
   register: keycloak_values_stat
 
-- name: Generate Keycloak admin password
+- name: Generate Keycloak admin password when not provided
   shell: openssl rand -base64 32
   register: keycloak_admin_password_gen
   become: false
+  when: keycloak_admin_password is not defined or keycloak_admin_password == ''
 
-- name: Set Keycloak admin password fact
+- name: Ensure Keycloak admin password fact is set
   set_fact:
-    keycloak_admin_password: "{{ keycloak_admin_password_gen.stdout | trim }}"
+    keycloak_admin_password: >-
+      {{ keycloak_admin_password
+         if (keycloak_admin_password is defined and keycloak_admin_password != '')
+         else (keycloak_admin_password_gen.stdout | default('') | trim) }}
 
 - name: Ensure backup directory exists for credentials
   file:
