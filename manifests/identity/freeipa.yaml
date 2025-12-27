@@ -148,10 +148,11 @@ spec:
         env:
         - name: IPA_SERVER_HOSTNAME
           value: "ipa.vmstation.local"
+        # Test-only passwords for lab environment; replace with secrets in production
         - name: PASSWORD
-          value: "CHANGEME_IPA_ADMIN_PASSWORD"
+          value: "secret"
         - name: IPA_SERVER_INSTALL_OPTS
-          value: "-U --realm=VMSTATION.LOCAL --domain=vmstation.local --ds-password=CHANGEME_DS_PASSWORD --admin-password=CHANGEME_IPA_ADMIN_PASSWORD --no-host-dns --no-ntp"
+          value: "-U --realm=VMSTATION.LOCAL --domain=vmstation.local --ds-password=secret --admin-password=secret --no-host-dns --no-ntp"
         ports:
         - containerPort: 80
           name: http
@@ -188,12 +189,6 @@ spec:
           mountPath: /tmp
         - name: run
           mountPath: /run
-        startupProbe:
-          httpGet:
-            path: /
-            port: 80
-          failureThreshold: 35
-          periodSeconds: 30
         readinessProbe:
           exec:
             command:
