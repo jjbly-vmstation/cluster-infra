@@ -81,12 +81,24 @@
         kubectl --kubeconfig=/etc/kubernetes/admin.conf wait --for=condition=ready pod/freeipa-0
         -n identity --timeout={{ freeipa_ready_timeout | default('600s') }}
       register: freeipa_ready
-      failed_when: freeipa_ready.rc != 0
+      # Treat a pure timeout as a warning (FreeIPA may still be initializing)
+      # but fail fast on other kubectl errors.
+      failed_when: freeipa_ready.rc != 0 and 'timed out waiting for the condition' not in freeipa_ready.stderr
       changed_when: false
       become: true
       when: 
         - freeipa_hostnetwork_check.stdout != "true"
         - freeipa_patch.changed | default(false)
+
+    - name: Warn if FreeIPA readiness wait timed out
+      debug:
+        msg: |
+          WARNING: kubectl wait for freeipa-0 timed out after {{ freeipa_ready_timeout | default('600s') }}.
+          Proceeding with deployment; FreeIPA may still be initializing.
+      when:
+        - freeipa_ready is defined
+        - freeipa_ready.rc != 0
+        - 'timed out waiting for the condition' in freeipa_ready.stderr
 
     - name: Get FreeIPA pod IP
       shell: >
