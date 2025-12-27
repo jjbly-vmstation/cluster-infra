@@ -147,8 +147,8 @@ Bootstrap helper for creating and managing admin accounts for FreeIPA and Keyclo
 sudo ./scripts/bootstrap-identity-admins.sh
 
 # Provide custom passwords
-sudo FREEIPA_ADMIN_PASSWORD=secret \
-     KEYCLOAK_ADMIN_PASSWORD=secret \
+sudo FREEIPA_ADMIN_PASSWORD=secret123 \
+     KEYCLOAK_ADMIN_PASSWORD=secret123 \
      ./scripts/bootstrap-identity-admins.sh
 
 # Dry-run mode

@@ -32,7 +32,7 @@ metadata:
     component: postgresql
 type: Opaque
 stringData:
-  postgresql-password: secret
+  postgresql-password: secret123
 ---
 apiVersion: apps/v1
 kind: StatefulSet

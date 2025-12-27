@@ -21,12 +21,12 @@
     namespace_platform: platform
     identity_data_dir: /srv/monitoring-data
     # Set all identity/admin passwords to a simple placeholder for testing
-    keycloak_admin_password: "secret"
+    keycloak_admin_password: "secret123"
     # FreeIPA requires passwords >= 8 characters for ipa-server-install; use an 8+ test value
     freeipa_admin_password: "secret123"
-    postgres_password: "secret"
-    ca_key_password: "secret"
-    ldap_bind_password: "secret"
+    postgres_password: "secret123"
+    ca_key_password: "secret123"
+    ldap_bind_password: "secret123"
     # enable_postgres_chown and enable_freeipa_chown default to role defaults
 
   tasks:
