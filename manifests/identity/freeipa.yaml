@@ -189,26 +189,35 @@ spec:
           mountPath: /tmp
         - name: run
           mountPath: /run
+        # Probes use systemctl to check ipa service inside the container. FreeIPA
+        # initialization can be lengthy; widen timeouts during debugging.
         readinessProbe:
           exec:
             command:
             - /usr/bin/systemctl
             - status
             - ipa
-          initialDelaySeconds: 60
-          timeoutSeconds: 10
-          periodSeconds: 10
-          failureThreshold: 30
+          initialDelaySeconds: 120
+          timeoutSeconds: 15
+          periodSeconds: 15
+          failureThreshold: 60
         livenessProbe:
           exec:
             command:
             - /usr/bin/systemctl
             - status
             - ipa
-          initialDelaySeconds: 120
-          timeoutSeconds: 10
+          initialDelaySeconds: 240
+          timeoutSeconds: 15
           periodSeconds: 30
-          failureThreshold: 10
+          failureThreshold: 30
+        # Enable debug mode for interactive troubleshooting. These are safe
+        # test-only env vars — remove them after debugging to restore normal behavior.
+        env:
+        - name: DEBUG_NO_EXIT
+          value: "1"
+        - name: DEBUG_TRACE
+          value: "1"
       volumes:
       - name: freeipa-data
         persistentVolumeClaim:
