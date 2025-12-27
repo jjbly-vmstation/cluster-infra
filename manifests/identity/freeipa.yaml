@@ -150,9 +150,9 @@ spec:
           value: "ipa.vmstation.local"
         # Test-only passwords for lab environment; replace with secrets in production
         - name: PASSWORD
-          value: "secret"
+          value: "secret123"
         - name: IPA_SERVER_INSTALL_OPTS
-          value: "-U --realm=VMSTATION.LOCAL --domain=vmstation.local --ds-password=secret --admin-password=secret --no-host-dns --no-ntp"
+          value: "-U --realm=VMSTATION.LOCAL --domain=vmstation.local --ds-password=secret123 --admin-password=secret123 --no-host-dns --no-ntp"
         ports:
         - containerPort: 80
           name: http

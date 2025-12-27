@@ -22,7 +22,8 @@
     identity_data_dir: /srv/monitoring-data
     # Set all identity/admin passwords to a simple placeholder for testing
     keycloak_admin_password: "secret"
-    freeipa_admin_password: "secret"
+    # FreeIPA requires passwords >= 8 characters for ipa-server-install; use an 8+ test value
+    freeipa_admin_password: "secret123"
     postgres_password: "secret"
     ca_key_password: "secret"
     ldap_bind_password: "secret"
