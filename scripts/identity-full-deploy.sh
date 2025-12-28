@@ -399,9 +399,9 @@ Access Information:
 Next Steps:
   1. Review credentials in /root/identity-backup/
   2. Access Keycloak admin console
-  3. Import SSO realm from /tmp/cluster-realm.json
-  4. Configure LDAP user federation
-  5. Test authentication with FreeIPA users
+    3. Verify realm 'cluster-services' and LDAP provider 'freeipa' (auto-configured)
+    4. Configure your apps (Grafana/Prometheus) to use Keycloak OIDC
+    5. Test authentication with FreeIPA users
 
 For More Information:
   - Deployment log: $LOG_FILE

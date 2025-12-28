@@ -161,6 +161,13 @@
         - freeipa_reachable is defined
         - freeipa_reachable | bool
       tags: [freeipa, freeipa-network]
+
+    # Phase 6d: Configure Keycloak SSO (realm import + LDAP federation + client secrets)
+    - name: Configure Keycloak SSO (automated)
+      include_role:
+        name: identity-sso
+      when: keycloak_configure_sso | default(true) | bool
+      tags: [sso, keycloak]
     
     # Phase 7: Setup cert-manager and ClusterIssuer
     - name: Setup cert-manager and CA issuer
@@ -190,7 +197,7 @@
             - cert-manager: Installed
             - ClusterIssuer: Created
             - TLS Certificates: Deployed for Keycloak, Grafana, Prometheus
-            - SSO Configuration: Prepared (requires manual completion)
+            - SSO Configuration: {{ 'Automated' if keycloak_configure_sso | default(true) | bool else 'Skipped' }}
           
           Access Keycloak:
             Run: kubectl get nodes -o wide
@@ -202,9 +209,9 @@
           
           Next Steps for SSO:
             1. Access Keycloak admin console
-            2. Import realm from /tmp/cluster-realm.json
-            3. Configure LDAP user federation with FreeIPA
-            4. Create OIDC client secrets for Grafana/Prometheus
+            2. Verify realm '{{ keycloak_realm | default('cluster-services') }}' exists
+            3. Verify LDAP federation provider 'freeipa'
+            4. Configure your apps (Grafana/Prometheus) to use Keycloak OIDC
             5. Deploy FreeIPA LDAP clients to cluster nodes (see playbook comments)
           
           To re-run with destructive replace:

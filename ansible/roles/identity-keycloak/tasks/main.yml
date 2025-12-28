@@ -197,33 +197,4 @@
   become: true
   changed_when: false
 
-- name: Render cluster realm configuration
-  template:
-    src: cluster-realm.json.j2
-    dest: /tmp/cluster-realm.json
-  become: true
-  when: keycloak_configure_sso | default(true) | bool
 
-- name: Display SSO configuration note
-  debug:
-    msg: |
-      ============================================================
-      Keycloak SSO Configuration
-      ============================================================
-      
-      The cluster-realm configuration has been prepared at /tmp/cluster-realm.json
-      
-      To complete SSO setup:
-      1. Access Keycloak admin console at http://192.168.4.63:30180/auth
-      2. Login with admin credentials from /root/identity-backup/keycloak-admin-credentials.txt
-      3. Import realm from /tmp/cluster-realm.json or use Keycloak API to create realm
-      4. Configure LDAP user federation:
-         - Provider: Red Hat Directory Server / FreeIPA
-         - Connection URL: ldap://freeipa.identity.svc.cluster.local:389
-         - Users DN: cn=users,cn=accounts,dc=vmstation,dc=local
-         - Bind DN: uid=admin,cn=users,cn=accounts,dc=vmstation,dc=local
-      5. Create OIDC client secrets and export to Kubernetes
-      
-      For automated configuration via API, install keycloak-admin CLI or use REST API.
-      ============================================================
-  when: keycloak_configure_sso | default(true) | bool

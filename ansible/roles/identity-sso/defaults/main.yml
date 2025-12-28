@@ -1,0 +1,36 @@
+---
+# Default variables for identity-sso role
+
+# Master switch for SSO automation.
+# When true, this role will:
+# - Import/create the Keycloak realm from the realm JSON template
+# - Configure LDAP federation against FreeIPA
+# - Export OIDC client secrets to Kubernetes secrets (monitoring namespace)
+keycloak_configure_sso: true
+
+# Keycloak access
+keycloak_admin_username: "admin"
+keycloak_admin_realm: "master"
+keycloak_admin_client_id: "admin-cli"
+keycloak_nodeport_http: 30180
+keycloak_base_path: "/auth"
+
+# Realm configuration
+keycloak_realm: "cluster-services"
+keycloak_realm_json_path: "/tmp/cluster-realm.json"
+
+# FreeIPA LDAP federation defaults
+freeipa_ldap_connection_url: "ldap://freeipa.identity.svc.cluster.local:389"
+freeipa_ldap_users_dn: "cn=users,cn=accounts,dc=vmstation,dc=local"
+freeipa_ldap_bind_dn: "uid=admin,cn=users,cn=accounts,dc=vmstation,dc=local"
+
+# Export OIDC client secrets into Kubernetes
+keycloak_export_oidc_client_secrets: true
+namespace_monitoring: "monitoring"
+keycloak_oidc_clients:
+  - client_id: grafana
+    k8s_secret_name: grafana-oidc-secret
+  - client_id: prometheus
+    k8s_secret_name: prometheus-oidc-secret
+  - client_id: loki
+    k8s_secret_name: loki-oidc-secret

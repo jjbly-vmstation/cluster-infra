@@ -1,0 +1,270 @@
+---
+# Automates Keycloak SSO configuration:
+# - Imports realm JSON (idempotent)
+# - Configures LDAP federation against FreeIPA (idempotent)
+# - Exports OIDC client secrets to Kubernetes secrets (optional)
+
+- name: Check whether SSO automation is enabled
+  assert:
+    that:
+      - keycloak_configure_sso | default(true) | bool
+    quiet: true
+  changed_when: false
+
+- name: Validate required variables are present
+  assert:
+    that:
+      - infra_node is defined
+      - namespace_identity is defined
+      - keycloak_admin_password_effective is defined
+      - (keycloak_admin_password_effective | trim) != ''
+      - freeipa_admin_password is defined
+      - (freeipa_admin_password | trim) != ''
+    fail_msg: >-
+      Missing required inputs for SSO automation.
+      Ensure Keycloak is deployed (admin secret read-back ran) and FreeIPA admin password is available.
+  changed_when: false
+
+- name: Render cluster realm configuration (authoritative)
+  template:
+    src: cluster-realm.json.j2
+    dest: "{{ keycloak_realm_json_path }}"
+    owner: root
+    group: root
+    mode: '0600'
+  become: true
+
+- name: Resolve infra node InternalIP for Keycloak NodePort access
+  shell: >-
+    KUBECONFIG=/etc/kubernetes/admin.conf kubectl get node {{ infra_node }}
+    -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}'
+  register: infra_node_ip
+  changed_when: false
+  become: true
+
+- name: Set Keycloak admin base URL
+  set_fact:
+    keycloak_admin_base_url: "http://{{ infra_node_ip.stdout | trim }}:{{ keycloak_nodeport_http }}{{ keycloak_base_path }}"
+
+- name: Request Keycloak admin access token
+  uri:
+    url: "{{ keycloak_admin_base_url }}/realms/{{ keycloak_admin_realm }}/protocol/openid-connect/token"
+    method: POST
+    headers:
+      Content-Type: application/x-www-form-urlencoded
+    body_format: form-urlencoded
+    body:
+      grant_type: password
+      client_id: "{{ keycloak_admin_client_id }}"
+      username: "{{ keycloak_admin_username }}"
+      password: "{{ keycloak_admin_password_effective }}"
+    return_content: true
+    status_code: 200
+    timeout: 60
+  register: keycloak_token
+
+- name: Set Keycloak bearer token
+  set_fact:
+    keycloak_bearer_token: "{{ keycloak_token.json.access_token }}"
+
+- name: Check if realm already exists
+  uri:
+    url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ keycloak_bearer_token }}"
+    status_code:
+      - 200
+      - 404
+    timeout: 60
+  register: keycloak_realm_check
+
+- name: Import realm from JSON when missing
+  uri:
+    url: "{{ keycloak_admin_base_url }}/admin/realms"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ keycloak_bearer_token }}"
+      Content-Type: application/json
+    body: "{{ lookup('file', keycloak_realm_json_path) }}"
+    return_content: true
+    status_code:
+      - 201
+      - 409
+    timeout: 120
+  when: keycloak_realm_check.status == 404
+  register: keycloak_realm_import
+
+- name: Fetch existing LDAP user federation providers
+  uri:
+    url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/components?type=org.keycloak.storage.UserStorageProvider"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ keycloak_bearer_token }}"
+    status_code: 200
+    timeout: 60
+  register: keycloak_user_storage_components
+
+- name: Select existing FreeIPA LDAP provider component (if present)
+  set_fact:
+    keycloak_freeipa_component: >-
+      {{ (keycloak_user_storage_components.json | default([]))
+         | selectattr('providerId', 'equalto', 'ldap')
+         | selectattr('name', 'equalto', 'freeipa')
+         | list
+         | first
+         | default({}) }}
+
+- name: Build desired FreeIPA LDAP federation component payload
+  set_fact:
+    keycloak_freeipa_component_payload:
+      name: "freeipa"
+      providerId: "ldap"
+      providerType: "org.keycloak.storage.UserStorageProvider"
+      parentId: "{{ keycloak_realm }}"
+      config:
+        enabled: ["true"]
+        vendor: ["rhds"]
+        editMode: ["READ_ONLY"]
+        importEnabled: ["true"]
+        connectionUrl: ["{{ freeipa_ldap_connection_url }}"]
+        usersDn: ["{{ freeipa_ldap_users_dn }}"]
+        bindDn: ["{{ freeipa_ldap_bind_dn }}"]
+        bindCredential: ["{{ freeipa_admin_password }}"]
+        authType: ["simple"]
+
+- name: Create FreeIPA LDAP federation provider when missing
+  uri:
+    url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/components"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ keycloak_bearer_token }}"
+      Content-Type: application/json
+    body_format: json
+    body: "{{ keycloak_freeipa_component_payload }}"
+    status_code:
+      - 201
+      - 409
+    timeout: 60
+  when: keycloak_freeipa_component == {}
+
+- name: Update FreeIPA LDAP federation provider when present
+  uri:
+    url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/components/{{ keycloak_freeipa_component.id }}"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ keycloak_bearer_token }}"
+      Content-Type: application/json
+    body_format: json
+    body: "{{ keycloak_freeipa_component_payload | combine({'id': keycloak_freeipa_component.id}, recursive=true) }}"
+    status_code: 204
+    timeout: 60
+  when: keycloak_freeipa_component != {}
+
+- name: Refresh LDAP component id (after create/update)
+  uri:
+    url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/components?type=org.keycloak.storage.UserStorageProvider"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ keycloak_bearer_token }}"
+    status_code: 200
+    timeout: 60
+  register: keycloak_user_storage_components_after
+
+- name: Set FreeIPA LDAP component id fact
+  set_fact:
+    keycloak_freeipa_component_id: >-
+      {{ (keycloak_user_storage_components_after.json | default([]))
+         | selectattr('providerId', 'equalto', 'ldap')
+         | selectattr('name', 'equalto', 'freeipa')
+         | map(attribute='id')
+         | list
+         | first
+         | default('') }}
+
+- name: Trigger full LDAP sync (best-effort)
+  uri:
+    url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/user-storage/{{ keycloak_freeipa_component_id }}/sync?action=triggerFullSync"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ keycloak_bearer_token }}"
+    status_code:
+      - 200
+      - 204
+      - 400
+      - 404
+    timeout: 120
+  when: (keycloak_freeipa_component_id | trim) != ''
+  failed_when: false
+
+- name: Export OIDC client secrets to Kubernetes (optional)
+  when: keycloak_export_oidc_client_secrets | default(true) | bool
+  block:
+    - name: Ensure monitoring namespace exists
+      shell: >-
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl create namespace {{ namespace_monitoring }}
+        --dry-run=client -o yaml | kubectl apply -f -
+      become: true
+      changed_when: false
+
+    - name: Resolve client UUIDs for OIDC clients
+      uri:
+        url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/clients?clientId={{ item.client_id }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ keycloak_bearer_token }}"
+        status_code: 200
+        timeout: 60
+      loop: "{{ keycloak_oidc_clients }}"
+      register: keycloak_client_lookup
+
+    - name: Build client UUID map
+      set_fact:
+        keycloak_client_uuid_map: >-
+          {{ keycloak_client_uuid_map | default({})
+             | combine({
+                item.item.client_id: ((item.json | default([]) | first).id | default(''))
+             }) }}
+      loop: "{{ keycloak_client_lookup.results | default([]) }}"
+
+    - name: Fetch client secrets
+      uri:
+        url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/clients/{{ keycloak_client_uuid_map[item.client_id] }}/client-secret"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ keycloak_bearer_token }}"
+        status_code: 200
+        timeout: 60
+      loop: "{{ keycloak_oidc_clients }}"
+      when: (keycloak_client_uuid_map[item.client_id] | default('') | trim) != ''
+      register: keycloak_client_secrets
+
+    - name: Apply Kubernetes secrets with OIDC client credentials
+      shell: >-
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_monitoring }}
+        create secret generic {{ item.item.k8s_secret_name }}
+        --from-literal=client-id={{ item.item.client_id }}
+        --from-literal=client-secret={{ item.json.value }}
+        --dry-run=client -o yaml | kubectl apply -f -
+      loop: "{{ keycloak_client_secrets.results | default([]) }}"
+      when: item.json is defined and (item.json.value | default('') | trim) != ''
+      become: true
+
+- name: Display automated SSO configuration result
+  debug:
+    msg: |
+      ============================================================
+      Keycloak SSO Configuration: AUTOMATED
+      ============================================================
+      Realm: {{ keycloak_realm }}
+      Realm file: {{ keycloak_realm_json_path }}
+
+      LDAP federation provider: freeipa
+      Connection URL: {{ freeipa_ldap_connection_url }}
+      Users DN: {{ freeipa_ldap_users_dn }}
+
+      OIDC client secrets exported: {{ 'yes' if keycloak_export_oidc_client_secrets | default(true) | bool else 'no' }}
+      Monitoring namespace: {{ namespace_monitoring }}
+
+      Next: Configure your apps (Grafana/Prometheus) to use Keycloak realm '{{ keycloak_realm }}'.
+      ============================================================

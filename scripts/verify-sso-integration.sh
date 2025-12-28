@@ -6,7 +6,7 @@ set -e
 
 KUBECONFIG=${KUBECONFIG:-/etc/kubernetes/admin.conf}
 NAMESPACE_IDENTITY=${NAMESPACE_IDENTITY:-identity}
-KEYCLOAK_URL=${KEYCLOAK_URL:-"http://192.168.4.63:30080"}
+KEYCLOAK_URL=${KEYCLOAK_URL:-"http://192.168.4.63:30180"}
 REALM=${REALM:-"cluster-services"}
 
 echo "=========================================="
@@ -56,8 +56,10 @@ echo "--------------------------------"
 NAMESPACE_MONITORING="monitoring"
 if kubectl --kubeconfig=$KUBECONFIG get namespace $NAMESPACE_MONITORING >/dev/null 2>&1; then
     echo "✓ Monitoring namespace exists"
-    echo "  Note: OIDC secrets must be created manually after realm import"
-    echo "  Expected secrets: grafana-oidc-secret, prometheus-oidc-secret, loki-oidc-secret"
+    echo "  Expected secrets (auto-created by identity-sso): grafana-oidc-secret, prometheus-oidc-secret, loki-oidc-secret"
+    kubectl --kubeconfig=$KUBECONFIG -n $NAMESPACE_MONITORING get secret grafana-oidc-secret prometheus-oidc-secret loki-oidc-secret >/dev/null 2>&1 \
+      && echo "  ✓ OIDC client secrets present" \
+      || echo "  ⚠ One or more OIDC client secrets missing"
 else
     echo "⚠ Monitoring namespace not yet created"
 fi
@@ -96,14 +98,10 @@ echo "  Realm: $KEYCLOAK_URL/auth/realms/$REALM"
 echo ""
 echo "Next Steps:"
 echo "  1. Access Keycloak admin console"
-echo "  2. Import realm from /tmp/cluster-realm.json"
-echo "  3. Configure LDAP user federation:"
-echo "     - User Federation > Add Provider > ldap"
-echo "     - Connection URL: ldap://freeipa.identity.svc.cluster.local:389"
-echo "     - Users DN: cn=users,cn=accounts,dc=vmstation,dc=local"
-echo "     - Bind DN: uid=admin,cn=users,cn=accounts,dc=vmstation,dc=local"
+echo "  2. Verify realm '$REALM' exists (auto-imported)"
+echo "  3. Verify LDAP user federation provider 'freeipa' (auto-configured)"
 echo "  4. Test SSO with a sample application"
-echo "  5. Create OIDC client secrets for monitoring stack"
+echo "  5. Configure apps to use OIDC client secrets in the monitoring namespace"
 echo ""
 echo "Credentials:"
 echo "  Admin: /root/identity-backup/cluster-admin-credentials.txt"

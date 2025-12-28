@@ -131,31 +131,27 @@ Expected output:
 
 ### Step 4: Import SSO Realm
 
-1. In Keycloak admin console, go to **Realm** dropdown (top left)
-2. Click **Add Realm**
-3. Click **Select file** and choose `/tmp/cluster-realm.json`
-4. Click **Create**
+This step is **automated** by the deployment playbook (role `identity-sso`) when `keycloak_configure_sso: true`.
 
-The `cluster-services` realm will be created with pre-configured OIDC clients for:
-- Grafana
-- Prometheus
-- Loki
+Verify in the Keycloak admin console:
+1. Open the realm dropdown (top-left)
+2. Confirm the `cluster-services` realm exists
+3. Confirm clients exist: `grafana`, `prometheus`, `loki`
+
+If you want to disable this automation, run the playbook with:
+```bash
+ansible-playbook ansible/playbooks/identity-deploy-and-handover.yml -e keycloak_configure_sso=false
+```
 
 ### Step 5: Configure LDAP User Federation
 
-1. In the `cluster-services` realm, go to **User Federation**
-2. Click **Add provider** → **ldap**
-3. Configure:
-   - **Edit Mode**: READ_ONLY
-   - **Vendor**: Red Hat Directory Server
-   - **Connection URL**: `ldap://freeipa.identity.svc.cluster.local:389`
-   - **Users DN**: `cn=users,cn=accounts,dc=vmstation,dc=local`
-   - **Bind Type**: simple
-   - **Bind DN**: `uid=admin,cn=users,cn=accounts,dc=vmstation,dc=local`
-   - **Bind Credential**: (FreeIPA admin password)
-4. Click **Test connection** and **Test authentication**
-5. Click **Save**
-6. Click **Synchronize all users**
+This step is **automated** by the deployment playbook (role `identity-sso`) when `keycloak_configure_sso: true`.
+
+Verify in the Keycloak admin console:
+1. Switch to realm `cluster-services`
+2. Go to **User Federation**
+3. Confirm an LDAP provider named `freeipa` exists
+4. (Optional) Use **Test connection** / **Test authentication**, then **Synchronize all users**
 
 ### Step 6: Configure FreeIPA LDAP Clients (Optional)
 
@@ -192,18 +188,22 @@ ipa group-add-member admins --users=john
 
 ### Step 8: Configure OIDC Clients for Applications
 
-For each application (Grafana, Prometheus, Loki):
 
-1. In Keycloak admin console, go to **Clients**
-2. Select the client (e.g., `grafana`)
-3. Note the **Client ID** and **Client Secret** (Credentials tab)
-4. Create Kubernetes secret:
-   ```bash
-   kubectl create secret generic grafana-oidc-secret \
-     -n monitoring \
-     --from-literal=client-id=grafana \
-     --from-literal=client-secret=<secret-from-keycloak>
-   ```
+This step is **automated** by the deployment playbook (role `identity-sso`) by default.
+
+It creates/updates these Kubernetes secrets in the `monitoring` namespace:
+- `grafana-oidc-secret`
+- `prometheus-oidc-secret`
+- `loki-oidc-secret`
+
+Each secret contains:
+- `client-id`
+- `client-secret`
+
+To disable secret export:
+```bash
+ansible-playbook ansible/playbooks/identity-deploy-and-handover.yml -e keycloak_export_oidc_client_secrets=false
+```
 
 ### Step 9: Test SSO
 
