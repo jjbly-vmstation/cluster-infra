@@ -19,8 +19,19 @@ check_resource() {
     local namespace=$2
     local name=$3
     
-    echo -n "Checking $resource $name in namespace $namespace... "
-    if kubectl --kubeconfig=$KUBECONFIG -n $namespace get $resource $name >/dev/null 2>&1; then
+    if [ -n "$namespace" ]; then
+        echo -n "Checking $resource $name in namespace $namespace... "
+        if kubectl --kubeconfig="$KUBECONFIG" -n "$namespace" get "$resource" "$name" >/dev/null 2>&1; then
+            echo "✓ EXISTS"
+            return 0
+        else
+            echo "✗ NOT FOUND"
+            return 1
+        fi
+    fi
+
+    echo -n "Checking $resource $name... "
+    if kubectl --kubeconfig="$KUBECONFIG" get "$resource" "$name" >/dev/null 2>&1; then
         echo "✓ EXISTS"
         return 0
     else
@@ -171,7 +182,7 @@ if [ $ERRORS -eq 0 ]; then
     echo "Access Keycloak:"
     NODE_IP=$(kubectl --kubeconfig=$KUBECONFIG get nodes -o jsonpath='{.items[*].status.addresses[?(@.type=="InternalIP")].address}' | awk '{print $1}')
     if [ -n "$NODE_IP" ]; then
-        echo "  http://$NODE_IP:30080/auth"
+        echo "  http://$NODE_IP:30180/auth"
     else
         echo "  Unable to determine node IP. Check 'kubectl get nodes -o wide' for node IPs"
     fi

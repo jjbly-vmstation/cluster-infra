@@ -11,6 +11,9 @@
     identity_backup_before_replace: true
     # FreeIPA network configuration
     identity_open_firewall: false
+    # IMPORTANT: hostNetwork is optional. Default to false for reliability.
+    # Enable only if you have a hard requirement for node-IP bound ports.
+    freeipa_enable_hostnetwork: false
     # FreeIPA can take a long time to initialize on first run;
     # use a generous default timeout for pod readiness checks.
     freeipa_ready_timeout: 1200s
@@ -20,13 +23,12 @@
     namespace_cert_manager: cert-manager
     namespace_platform: platform
     identity_data_dir: /srv/monitoring-data
-    # Set all identity/admin passwords to a simple placeholder for testing
-    keycloak_admin_password: "secret123"
-    # FreeIPA requires passwords >= 8 characters for ipa-server-install; use an 8+ test value
-    freeipa_admin_password: "secret123"
-    postgres_password: "secret123"
-    ca_key_password: "secret123"
-    ldap_bind_password: "secret123"
+    # Test-only credentials (>= 8 chars for FreeIPA installer). Replace with secrets in production.
+    keycloak_admin_password: "secret000"
+    freeipa_admin_password: "secret000"
+    postgres_password: "secret000"
+    ca_key_password: "secret000"
+    ldap_bind_password: "secret000"
     # enable_postgres_chown and enable_freeipa_chown default to role defaults
 
   tasks:
@@ -84,6 +86,7 @@
     # so that FreeIPA listens on node IPs, making it reachable for ipa-client-install
     - name: Ensure FreeIPA hostNetwork configuration
       include_tasks: tasks/ensure-freeipa-hostnetwork.yml
+      when: freeipa_enable_hostnetwork | default(false) | bool
       tags: [freeipa, freeipa-network]
 
     # Phase 6b: Open firewall ports if connectivity check fails (opt-in)
