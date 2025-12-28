@@ -96,6 +96,23 @@
   when: keycloak_realm_check.status == 404
   register: keycloak_realm_import
 
+- name: Fetch realm details (to obtain realm UUID)
+  uri:
+    url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ keycloak_bearer_token }}"
+    status_code: 200
+    timeout: 60
+  register: keycloak_realm_details
+  retries: 10
+  delay: 3
+  until: keycloak_realm_details.json is defined and (keycloak_realm_details.json.id | default('') | trim) != ''
+
+- name: Set Keycloak realm UUID fact
+  set_fact:
+    keycloak_realm_id: "{{ keycloak_realm_details.json.id }}"
+
 - name: Fetch existing LDAP user federation providers
   uri:
     url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/components?type=org.keycloak.storage.UserStorageProvider"
@@ -106,12 +123,68 @@
     timeout: 60
   register: keycloak_user_storage_components
 
-- name: Select existing FreeIPA LDAP provider component (if present)
+- name: Collect all existing FreeIPA LDAP provider components
   set_fact:
-    keycloak_freeipa_component: >-
+    keycloak_freeipa_components: >-
       {{ (keycloak_user_storage_components.json | default([]))
          | selectattr('providerId', 'equalto', 'ldap')
          | selectattr('name', 'equalto', 'freeipa')
+         | list }}
+
+- name: Compute FreeIPA LDAP component cleanup plan
+  set_fact:
+    keycloak_freeipa_components_good: >-
+      {{ (keycloak_freeipa_components | default([]))
+         | selectattr('parentId', 'equalto', keycloak_realm_id)
+         | list }}
+    keycloak_freeipa_components_bad: >-
+      {{ (keycloak_freeipa_components | default([]))
+         | rejectattr('parentId', 'equalto', keycloak_realm_id)
+         | list }}
+
+- name: Delete incorrect FreeIPA LDAP components (wrong parentId)
+  uri:
+    url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/components/{{ item.id }}"
+    method: DELETE
+    headers:
+      Authorization: "Bearer {{ keycloak_bearer_token }}"
+    status_code:
+      - 204
+      - 404
+    timeout: 60
+  loop: "{{ keycloak_freeipa_components_bad | default([]) }}"
+  when: (keycloak_freeipa_components_bad | default([]) | length) > 0
+
+- name: Delete duplicate FreeIPA LDAP components (keep one)
+  uri:
+    url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/components/{{ item.id }}"
+    method: DELETE
+    headers:
+      Authorization: "Bearer {{ keycloak_bearer_token }}"
+    status_code:
+      - 204
+      - 404
+    timeout: 60
+  loop: "{{ (keycloak_freeipa_components_good | default([]))[1:] }}"
+  when: (keycloak_freeipa_components_good | default([]) | length) > 1
+
+- name: Refresh LDAP user federation providers after cleanup
+  uri:
+    url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/components?type=org.keycloak.storage.UserStorageProvider"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ keycloak_bearer_token }}"
+    status_code: 200
+    timeout: 60
+  register: keycloak_user_storage_components_clean
+
+- name: Select existing FreeIPA LDAP provider component (post-cleanup)
+  set_fact:
+    keycloak_freeipa_component: >-
+      {{ (keycloak_user_storage_components_clean.json | default([]))
+         | selectattr('providerId', 'equalto', 'ldap')
+         | selectattr('name', 'equalto', 'freeipa')
+         | selectattr('parentId', 'equalto', keycloak_realm_id)
          | list
          | first
          | default({}) }}
@@ -122,7 +195,7 @@
       name: "freeipa"
       providerId: "ldap"
       providerType: "org.keycloak.storage.UserStorageProvider"
-      parentId: "{{ keycloak_realm }}"
+      parentId: "{{ keycloak_realm_id }}"
       config:
         enabled: ["true"]
         vendor: ["rhds"]
@@ -133,6 +206,16 @@
         bindDn: ["{{ freeipa_ldap_bind_dn }}"]
         bindCredential: ["{{ freeipa_admin_password }}"]
         authType: ["simple"]
+        usernameLDAPAttribute: ["uid"]
+        rdnLDAPAttribute: ["uid"]
+        uuidLDAPAttribute: ["nsuniqueid"]
+        userObjectClasses: ["inetOrgPerson,organizationalPerson"]
+        searchScope: ["1"]
+        pagination: ["true"]
+        batchSizeForSync: ["1000"]
+        connectionPooling: ["true"]
+        connectionTimeout: ["5000"]
+        readTimeout: ["60000"]
 
 - name: Create FreeIPA LDAP federation provider when missing
   uri:
