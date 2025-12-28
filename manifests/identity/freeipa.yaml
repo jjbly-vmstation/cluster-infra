@@ -141,6 +141,23 @@ spec:
       - key: node-role.kubernetes.io/control-plane
         operator: Exists
         effect: NoSchedule
+      # Pre-seed hostname so FreeIPA's installer doesn't trip over Kubernetes'
+      # /etc/hostname bind-mount (hostnamectl uses atomic replace which fails with EBUSY).
+      initContainers:
+      - name: freeipa-preseed-hostname
+        image: busybox:1.36
+        imagePullPolicy: IfNotPresent
+        command:
+        - sh
+        - -c
+        - |
+          set -eu
+          echo 'ipa.vmstation.local' > /etc/hostname
+          hostname 'ipa.vmstation.local' || true
+          echo "[freeipa-preseed-hostname] /etc/hostname=$(cat /etc/hostname)"
+          echo "[freeipa-preseed-hostname] hostname=$(hostname)"
+        securityContext:
+          privileged: true
       containers:
       - name: freeipa-server
         image: freeipa/freeipa-server:almalinux-10-4.12.2
@@ -159,6 +176,15 @@ spec:
         - name: IPA_SERVER_HOSTNAME
           value: "ipa.vmstation.local"
 
+        # Force the installer to use the pod IP as the server IP. This avoids
+        # resolving ipa.vmstation.local to the Service ClusterIP (which is not
+        # bound to any local interface inside the pod).
+        - name: IPA_SERVER_IP
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: status.podIP
+
         # Test-only password for lab environment; replace with Secrets in production.
         # Must be >= 8 characters for ipa-server-install.
         - name: PASSWORD
@@ -166,8 +192,11 @@ spec:
             secretKeyRef:
               name: freeipa-admin-creds
               key: password
+        # NOTE: Upstream freeipa-container guidance recommends NOT using
+        # `ipa-server-install --hostname ...` in containers. Instead, set the
+        # container hostname and/or `IPA_SERVER_HOSTNAME`.
         - name: IPA_SERVER_INSTALL_OPTS
-          value: "-U --hostname=ipa.vmstation.local --realm=VMSTATION.LOCAL --domain=vmstation.local --no-host-dns --no-ntp"
+          value: "-U --realm=VMSTATION.LOCAL --domain=vmstation.local --no-host-dns --no-ntp"
         ports:
         - containerPort: 80
           name: http
@@ -242,10 +271,12 @@ spec:
             - /usr/bin/systemctl
             - status
             - ipa
-          initialDelaySeconds: 240
+          # First-time FreeIPA install can be lengthy; don't kill the pod while
+          # ipa-server-install is still configuring services.
+          initialDelaySeconds: 1800
           timeoutSeconds: 15
           periodSeconds: 30
-          failureThreshold: 30
+          failureThreshold: 60
       volumes:
       - name: freeipa-data
         persistentVolumeClaim:
