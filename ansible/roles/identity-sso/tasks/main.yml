@@ -46,28 +46,93 @@
   set_fact:
     keycloak_admin_base_url: "http://{{ infra_node_ip.stdout | trim }}:{{ keycloak_nodeport_http }}{{ keycloak_base_path }}"
 
-- name: Request Keycloak admin access token
-  uri:
-    url: "{{ keycloak_admin_base_url }}/realms/{{ keycloak_admin_realm }}/protocol/openid-connect/token"
-    method: POST
-    headers:
-      Content-Type: application/x-www-form-urlencoded
-    body_format: form-urlencoded
-    body:
-      grant_type: password
-      client_id: "{{ keycloak_admin_client_id }}"
-      username: "{{ keycloak_admin_username }}"
-      password: "{{ keycloak_admin_password_effective }}"
-    return_content: true
-    status_code: 200
-    timeout: 60
-  register: keycloak_token
+- name: Request Keycloak admin access token (with retry)
+  include_tasks: refresh-token.yml
 
-- name: Set Keycloak bearer token
-  set_fact:
-    keycloak_bearer_token: "{{ keycloak_token.json.access_token }}"
+- name: Check if realm already exists (retry once on 401)
+  block:
+    - name: Check if realm already exists (attempt 1)
+      uri:
+        url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ keycloak_bearer_token }}"
+        status_code:
+          - 200
+          - 404
+          - 401
+        timeout: 60
+      register: keycloak_realm_check_attempt
 
-- name: Check if realm already exists
+    - name: Refresh token if unauthorized
+      include_tasks: refresh-token.yml
+      when: keycloak_realm_check_attempt.status == 401
+
+    - name: Check if realm already exists (attempt 2)
+      uri:
+        url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ keycloak_bearer_token }}"
+        status_code:
+          - 200
+          - 404
+        timeout: 60
+      register: keycloak_realm_check
+      when: keycloak_realm_check_attempt.status == 401
+
+    - name: Set realm check result (no retry needed)
+      set_fact:
+        keycloak_realm_check: "{{ keycloak_realm_check_attempt }}"
+      when: keycloak_realm_check_attempt.status != 401
+
+- name: Import realm from JSON when missing
+  block:
+    - name: Import realm from JSON when missing (attempt 1)
+      uri:
+        url: "{{ keycloak_admin_base_url }}/admin/realms"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ keycloak_bearer_token }}"
+          Content-Type: application/json
+        body_format: json
+        body: "{{ lookup('file', keycloak_realm_json_path) | from_json }}"
+        return_content: true
+        status_code:
+          - 201
+          - 409
+          - 401
+        timeout: 120
+      register: keycloak_realm_import_attempt
+
+    - name: Refresh token if unauthorized
+      include_tasks: refresh-token.yml
+      when: keycloak_realm_import_attempt.status == 401
+
+    - name: Import realm from JSON when missing (attempt 2)
+      uri:
+        url: "{{ keycloak_admin_base_url }}/admin/realms"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ keycloak_bearer_token }}"
+          Content-Type: application/json
+        body_format: json
+        body: "{{ lookup('file', keycloak_realm_json_path) | from_json }}"
+        return_content: true
+        status_code:
+          - 201
+          - 409
+        timeout: 120
+      register: keycloak_realm_import
+      when: keycloak_realm_import_attempt.status == 401
+
+    - name: Set realm import result (no retry needed)
+      set_fact:
+        keycloak_realm_import: "{{ keycloak_realm_import_attempt }}"
+      when: keycloak_realm_import_attempt.status != 401
+  when: keycloak_realm_check.status == 404
+
+- name: Fetch realm details (to obtain realm UUID) (attempt 1)
   uri:
     url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}"
     method: GET
@@ -75,28 +140,15 @@
       Authorization: "Bearer {{ keycloak_bearer_token }}"
     status_code:
       - 200
-      - 404
+      - 401
     timeout: 60
-  register: keycloak_realm_check
+  register: keycloak_realm_details_attempt
 
-- name: Import realm from JSON when missing
-  uri:
-    url: "{{ keycloak_admin_base_url }}/admin/realms"
-    method: POST
-    headers:
-      Authorization: "Bearer {{ keycloak_bearer_token }}"
-      Content-Type: application/json
-    body_format: json
-    body: "{{ lookup('file', keycloak_realm_json_path) | from_json }}"
-    return_content: true
-    status_code:
-      - 201
-      - 409
-    timeout: 120
-  when: keycloak_realm_check.status == 404
-  register: keycloak_realm_import
+- name: Refresh token if unauthorized
+  include_tasks: refresh-token.yml
+  when: keycloak_realm_details_attempt.status == 401
 
-- name: Fetch realm details (to obtain realm UUID)
+- name: Fetch realm details (to obtain realm UUID) (attempt 2, wait for readiness)
   uri:
     url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}"
     method: GET
@@ -108,12 +160,100 @@
   retries: 10
   delay: 3
   until: keycloak_realm_details.json is defined and (keycloak_realm_details.json.id | default('') | trim) != ''
+  when: keycloak_realm_details_attempt.status == 401
+
+- name: Set realm details result (no retry needed)
+  set_fact:
+    keycloak_realm_details: "{{ keycloak_realm_details_attempt }}"
+  when: keycloak_realm_details_attempt.status != 401
 
 - name: Set Keycloak realm UUID fact
   set_fact:
     keycloak_realm_id: "{{ keycloak_realm_details.json.id }}"
 
-- name: Fetch existing LDAP user federation providers
+- name: Verify FreeIPA LDAP service is reachable from inside the cluster (TCP)
+  block:
+    - name: Delete previous ldap-port-check job (if any)
+      shell: >-
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }}
+        delete job ldap-port-check --ignore-not-found
+      become: true
+      changed_when: false
+
+    - name: Create ldap-port-check job
+      shell: >-
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }}
+        create job ldap-port-check --image=busybox:1.36 --
+        sh -c 'set -eu; echo "Checking freeipa LDAP ports"; nc -z -w 5 freeipa.identity.svc.cluster.local 389; nc -z -w 5 freeipa.identity.svc.cluster.local 636; echo "OK"'
+      become: true
+      changed_when: true
+
+    - name: Wait for ldap-port-check job completion
+      shell: >-
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }}
+        wait --for=condition=complete job/ldap-port-check --timeout=120s
+      become: true
+      register: ldap_port_check_wait
+      changed_when: false
+
+    - name: Fetch ldap-port-check job logs
+      shell: >-
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }}
+        logs job/ldap-port-check
+      become: true
+      register: ldap_port_check_logs
+      changed_when: false
+
+    - name: Delete ldap-port-check job
+      shell: >-
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }}
+        delete job ldap-port-check --ignore-not-found
+      become: true
+      changed_when: false
+  rescue:
+    - name: Fetch ldap-port-check job logs (best-effort)
+      shell: >-
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }}
+        logs job/ldap-port-check || true
+      become: true
+      register: ldap_port_check_logs
+      changed_when: false
+
+    - name: Delete ldap-port-check job (best-effort)
+      shell: >-
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }}
+        delete job ldap-port-check --ignore-not-found || true
+      become: true
+      changed_when: false
+
+    - name: Fail with actionable LDAP reachability error
+      fail:
+        msg: |
+          FreeIPA LDAP service is not reachable from within the cluster.
+
+          Expected service DNS: freeipa.identity.svc.cluster.local
+          Expected ports: 389 (LDAP), 636 (LDAPS)
+
+          Job logs:
+          {{ (ldap_port_check_logs.stdout | default('')) if ldap_port_check_logs is defined else '' }}
+
+- name: Fetch existing LDAP user federation providers (attempt 1)
+  uri:
+    url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/components?type=org.keycloak.storage.UserStorageProvider"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ keycloak_bearer_token }}"
+    status_code:
+      - 200
+      - 401
+    timeout: 60
+  register: keycloak_user_storage_components_attempt
+
+- name: Refresh token if unauthorized
+  include_tasks: refresh-token.yml
+  when: keycloak_user_storage_components_attempt.status == 401
+
+- name: Fetch existing LDAP user federation providers (attempt 2)
   uri:
     url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/components?type=org.keycloak.storage.UserStorageProvider"
     method: GET
@@ -122,6 +262,12 @@
     status_code: 200
     timeout: 60
   register: keycloak_user_storage_components
+  when: keycloak_user_storage_components_attempt.status == 401
+
+- name: Set LDAP provider list result (no retry needed)
+  set_fact:
+    keycloak_user_storage_components: "{{ keycloak_user_storage_components_attempt }}"
+  when: keycloak_user_storage_components_attempt.status != 401
 
 - name: Collect all existing FreeIPA LDAP provider components
   set_fact:
@@ -143,32 +289,116 @@
          | list }}
 
 - name: Delete incorrect FreeIPA LDAP components (wrong parentId)
-  uri:
-    url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/components/{{ item.id }}"
-    method: DELETE
-    headers:
-      Authorization: "Bearer {{ keycloak_bearer_token }}"
-    status_code:
-      - 204
-      - 404
-    timeout: 60
-  loop: "{{ keycloak_freeipa_components_bad | default([]) }}"
-  when: (keycloak_freeipa_components_bad | default([]) | length) > 0
+  block:
+    - name: Delete incorrect FreeIPA LDAP components (attempt 1)
+      uri:
+        url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/components/{{ item.id }}"
+        method: DELETE
+        headers:
+          Authorization: "Bearer {{ keycloak_bearer_token }}"
+        status_code:
+          - 204
+          - 404
+          - 401
+        timeout: 60
+      loop: "{{ keycloak_freeipa_components_bad | default([]) }}"
+      register: keycloak_delete_bad_components_attempt
+      when: (keycloak_freeipa_components_bad | default([]) | length) > 0
+
+    - name: Detect unauthorized deletes (bad components)
+      set_fact:
+        keycloak_delete_bad_components_unauthorized: >-
+          {{ (keycloak_delete_bad_components_attempt.results | default([]))
+             | selectattr('status', 'equalto', 401)
+             | list
+             | length > 0 }}
+      when: keycloak_delete_bad_components_attempt is defined
+
+    - name: Refresh token if any delete returned 401 (bad components)
+      include_tasks: refresh-token.yml
+      when: keycloak_delete_bad_components_unauthorized | default(false) | bool
+
+    - name: Retry deletes that returned 401 (bad components)
+      uri:
+        url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/components/{{ item.id }}"
+        method: DELETE
+        headers:
+          Authorization: "Bearer {{ keycloak_bearer_token }}"
+        status_code:
+          - 204
+          - 404
+        timeout: 60
+      loop: >-
+        {{ (keycloak_delete_bad_components_attempt.results | default([]))
+           | selectattr('status', 'equalto', 401)
+           | map(attribute='item')
+           | list }}
+      when: keycloak_delete_bad_components_unauthorized | default(false) | bool
 
 - name: Delete duplicate FreeIPA LDAP components (keep one)
+  block:
+    - name: Delete duplicate FreeIPA LDAP components (attempt 1)
+      uri:
+        url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/components/{{ item.id }}"
+        method: DELETE
+        headers:
+          Authorization: "Bearer {{ keycloak_bearer_token }}"
+        status_code:
+          - 204
+          - 404
+          - 401
+        timeout: 60
+      loop: "{{ (keycloak_freeipa_components_good | default([]))[1:] }}"
+      register: keycloak_delete_duplicate_components_attempt
+      when: (keycloak_freeipa_components_good | default([]) | length) > 1
+
+    - name: Detect unauthorized deletes (duplicate components)
+      set_fact:
+        keycloak_delete_duplicate_components_unauthorized: >-
+          {{ (keycloak_delete_duplicate_components_attempt.results | default([]))
+             | selectattr('status', 'equalto', 401)
+             | list
+             | length > 0 }}
+      when: keycloak_delete_duplicate_components_attempt is defined
+
+    - name: Refresh token if any delete returned 401 (duplicate components)
+      include_tasks: refresh-token.yml
+      when: keycloak_delete_duplicate_components_unauthorized | default(false) | bool
+
+    - name: Retry deletes that returned 401 (duplicate components)
+      uri:
+        url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/components/{{ item.id }}"
+        method: DELETE
+        headers:
+          Authorization: "Bearer {{ keycloak_bearer_token }}"
+        status_code:
+          - 204
+          - 404
+        timeout: 60
+      loop: >-
+        {{ (keycloak_delete_duplicate_components_attempt.results | default([]))
+           | selectattr('status', 'equalto', 401)
+           | map(attribute='item')
+           | list }}
+      when: keycloak_delete_duplicate_components_unauthorized | default(false) | bool
+
+- name: Refresh LDAP user federation providers after cleanup (attempt 1)
   uri:
-    url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/components/{{ item.id }}"
-    method: DELETE
+    url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/components?type=org.keycloak.storage.UserStorageProvider"
+    method: GET
     headers:
       Authorization: "Bearer {{ keycloak_bearer_token }}"
     status_code:
-      - 204
-      - 404
+      - 200
+      - 401
     timeout: 60
-  loop: "{{ (keycloak_freeipa_components_good | default([]))[1:] }}"
-  when: (keycloak_freeipa_components_good | default([]) | length) > 1
+  register: keycloak_user_storage_components_clean_attempt
 
-- name: Refresh LDAP user federation providers after cleanup
+- name: Refresh token if unauthorized
+  include_tasks: refresh-token.yml
+  when: keycloak_user_storage_components_clean_attempt.status == 401
+
+- name: Refresh LDAP user federation providers after cleanup (attempt 2)
   uri:
     url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/components?type=org.keycloak.storage.UserStorageProvider"
     method: GET
@@ -177,6 +407,12 @@
     status_code: 200
     timeout: 60
   register: keycloak_user_storage_components_clean
+  when: keycloak_user_storage_components_clean_attempt.status == 401
+
+- name: Set LDAP provider list (post-cleanup) result (no retry needed)
+  set_fact:
+    keycloak_user_storage_components_clean: "{{ keycloak_user_storage_components_clean_attempt }}"
+  when: keycloak_user_storage_components_clean_attempt.status != 401
 
 - name: Select existing FreeIPA LDAP provider component (post-cleanup)
   set_fact:
@@ -218,34 +454,95 @@
         readTimeout: ["60000"]
 
 - name: Create FreeIPA LDAP federation provider when missing
-  uri:
-    url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/components"
-    method: POST
-    headers:
-      Authorization: "Bearer {{ keycloak_bearer_token }}"
-      Content-Type: application/json
-    body_format: json
-    body: "{{ keycloak_freeipa_component_payload }}"
-    status_code:
-      - 201
-      - 409
-    timeout: 60
+  block:
+    - name: Create FreeIPA LDAP federation provider when missing (attempt 1)
+      uri:
+        url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/components"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ keycloak_bearer_token }}"
+          Content-Type: application/json
+        body_format: json
+        body: "{{ keycloak_freeipa_component_payload }}"
+        status_code:
+          - 201
+          - 409
+          - 401
+        timeout: 60
+      register: keycloak_create_freeipa_component_attempt
+
+    - name: Refresh token if unauthorized
+      include_tasks: refresh-token.yml
+      when: keycloak_create_freeipa_component_attempt.status == 401
+
+    - name: Create FreeIPA LDAP federation provider when missing (attempt 2)
+      uri:
+        url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/components"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ keycloak_bearer_token }}"
+          Content-Type: application/json
+        body_format: json
+        body: "{{ keycloak_freeipa_component_payload }}"
+        status_code:
+          - 201
+          - 409
+        timeout: 60
+      when: keycloak_create_freeipa_component_attempt.status == 401
   when: keycloak_freeipa_component == {}
 
 - name: Update FreeIPA LDAP federation provider when present
-  uri:
-    url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/components/{{ keycloak_freeipa_component.id }}"
-    method: PUT
-    headers:
-      Authorization: "Bearer {{ keycloak_bearer_token }}"
-      Content-Type: application/json
-    body_format: json
-    body: "{{ keycloak_freeipa_component_payload | combine({'id': keycloak_freeipa_component.id}, recursive=true) }}"
-    status_code: 204
-    timeout: 60
+  block:
+    - name: Update FreeIPA LDAP federation provider when present (attempt 1)
+      uri:
+        url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/components/{{ keycloak_freeipa_component.id }}"
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ keycloak_bearer_token }}"
+          Content-Type: application/json
+        body_format: json
+        body: "{{ keycloak_freeipa_component_payload | combine({'id': keycloak_freeipa_component.id}, recursive=true) }}"
+        status_code:
+          - 204
+          - 401
+        timeout: 60
+      register: keycloak_update_freeipa_component_attempt
+
+    - name: Refresh token if unauthorized
+      include_tasks: refresh-token.yml
+      when: keycloak_update_freeipa_component_attempt.status == 401
+
+    - name: Update FreeIPA LDAP federation provider when present (attempt 2)
+      uri:
+        url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/components/{{ keycloak_freeipa_component.id }}"
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ keycloak_bearer_token }}"
+          Content-Type: application/json
+        body_format: json
+        body: "{{ keycloak_freeipa_component_payload | combine({'id': keycloak_freeipa_component.id}, recursive=true) }}"
+        status_code: 204
+        timeout: 60
+      when: keycloak_update_freeipa_component_attempt.status == 401
   when: keycloak_freeipa_component != {}
 
-- name: Refresh LDAP component id (after create/update)
+- name: Refresh LDAP component id (after create/update) (attempt 1)
+  uri:
+    url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/components?type=org.keycloak.storage.UserStorageProvider"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ keycloak_bearer_token }}"
+    status_code:
+      - 200
+      - 401
+    timeout: 60
+  register: keycloak_user_storage_components_after_attempt
+
+- name: Refresh token if unauthorized
+  include_tasks: refresh-token.yml
+  when: keycloak_user_storage_components_after_attempt.status == 401
+
+- name: Refresh LDAP component id (after create/update) (attempt 2)
   uri:
     url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/components?type=org.keycloak.storage.UserStorageProvider"
     method: GET
@@ -254,6 +551,12 @@
     status_code: 200
     timeout: 60
   register: keycloak_user_storage_components_after
+  when: keycloak_user_storage_components_after_attempt.status == 401
+
+- name: Set LDAP provider list (post create/update) result (no retry needed)
+  set_fact:
+    keycloak_user_storage_components_after: "{{ keycloak_user_storage_components_after_attempt }}"
+  when: keycloak_user_storage_components_after_attempt.status != 401
 
 - name: Set FreeIPA LDAP component id fact
   set_fact:
@@ -297,10 +600,43 @@
         method: GET
         headers:
           Authorization: "Bearer {{ keycloak_bearer_token }}"
-        status_code: 200
+        status_code:
+          - 200
+          - 401
         timeout: 60
       loop: "{{ keycloak_oidc_clients }}"
       register: keycloak_client_lookup
+
+    - name: Detect unauthorized responses during client UUID lookup
+      set_fact:
+        keycloak_client_lookup_unauthorized: >-
+          {{ (keycloak_client_lookup.results | default([]))
+             | selectattr('status', 'equalto', 401)
+             | list
+             | length > 0 }}
+
+    - name: Refresh token if any client UUID lookup returned 401
+      include_tasks: refresh-token.yml
+      when: keycloak_client_lookup_unauthorized | bool
+
+    - name: Retry resolving client UUIDs after token refresh
+      uri:
+        url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/clients?clientId={{ item.client_id }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ keycloak_bearer_token }}"
+        status_code: 200
+        timeout: 60
+      loop: "{{ keycloak_oidc_clients }}"
+      when: keycloak_client_lookup_unauthorized | bool
+      register: keycloak_client_lookup_retry
+
+    - name: Select effective client UUID lookup results
+      set_fact:
+        keycloak_client_lookup_effective: >-
+          {{ keycloak_client_lookup_retry
+             if (keycloak_client_lookup_unauthorized | bool)
+             else keycloak_client_lookup }}
 
     - name: Build client UUID map
       set_fact:
@@ -309,9 +645,35 @@
              | combine({
                 item.item.client_id: ((item.json | default([]) | first).id | default(''))
              }) }}
-      loop: "{{ keycloak_client_lookup.results | default([]) }}"
+      loop: "{{ keycloak_client_lookup_effective.results | default([]) }}"
 
     - name: Fetch client secrets
+      uri:
+        url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/clients/{{ keycloak_client_uuid_map[item.client_id] }}/client-secret"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ keycloak_bearer_token }}"
+        status_code:
+          - 200
+          - 401
+        timeout: 60
+      loop: "{{ keycloak_oidc_clients }}"
+      when: (keycloak_client_uuid_map[item.client_id] | default('') | trim) != ''
+      register: keycloak_client_secrets_get
+
+    - name: Detect unauthorized responses during client-secret GET
+      set_fact:
+        keycloak_client_secret_get_unauthorized: >-
+          {{ (keycloak_client_secrets_get.results | default([]))
+             | selectattr('status', 'equalto', 401)
+             | list
+             | length > 0 }}
+
+    - name: Refresh token if any client-secret GET returned 401
+      include_tasks: refresh-token.yml
+      when: keycloak_client_secret_get_unauthorized | bool
+
+    - name: Retry fetching client secrets after token refresh
       uri:
         url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/clients/{{ keycloak_client_uuid_map[item.client_id] }}/client-secret"
         method: GET
@@ -320,19 +682,152 @@
         status_code: 200
         timeout: 60
       loop: "{{ keycloak_oidc_clients }}"
+      when:
+        - keycloak_client_secret_get_unauthorized | bool
+        - (keycloak_client_uuid_map[item.client_id] | default('') | trim) != ''
+      register: keycloak_client_secrets_get_retry
+
+    - name: Select effective GET results
+      set_fact:
+        keycloak_client_secrets_get_effective: >-
+          {{ keycloak_client_secrets_get_retry
+             if (keycloak_client_secret_get_unauthorized | bool)
+             else keycloak_client_secrets_get }}
+
+    - name: Build client-secret map from GET results
+      set_fact:
+        keycloak_client_secret_get_map: >-
+          {{ keycloak_client_secret_get_map | default({})
+             | combine({
+                item.item.client_id: (((item.json | default({})).value | default('')) | trim)
+             }) }}
+      loop: "{{ keycloak_client_secrets_get_effective.results | default([]) }}"
+      when:
+        - item is defined
+        - (item.skipped | default(false)) | bool == false
+        - item.item is defined
+        - item.item.client_id is defined
+
+    - name: Build list of OIDC clients needing secret regeneration
+      set_fact:
+        keycloak_oidc_clients_needing_regen: "{{ (keycloak_oidc_clients_needing_regen | default([])) + [item] }}"
+      loop: "{{ keycloak_oidc_clients }}"
+      when:
+        - (keycloak_client_uuid_map[item.client_id] | default('') | trim) != ''
+        - keycloak_force_regenerate_client_secrets | default(false) | bool
+          or ((keycloak_client_secret_get_map[item.client_id] | default('') | trim) == '')
+
+    - name: Regenerate client secrets when GET value is missing (or forced)
+      uri:
+        url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/clients/{{ keycloak_client_uuid_map[item.client_id] }}/client-secret"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ keycloak_bearer_token }}"
+        status_code:
+          - 200
+          - 401
+        timeout: 60
+      loop: "{{ keycloak_oidc_clients_needing_regen | default([]) }}"
+      register: keycloak_client_secrets_post
+
+    - name: Detect unauthorized responses during client-secret POST
+      set_fact:
+        keycloak_client_secret_post_unauthorized: >-
+          {{ (keycloak_client_secrets_post.results | default([]))
+             | selectattr('status', 'equalto', 401)
+             | list
+             | length > 0 }}
+      when: keycloak_client_secrets_post is defined
+
+    - name: Refresh token if any client-secret POST returned 401
+      include_tasks: refresh-token.yml
+      when:
+        - keycloak_client_secrets_post is defined
+        - keycloak_client_secret_post_unauthorized | default(false) | bool
+
+    - name: Retry regenerating missing client secrets after token refresh
+      uri:
+        url: "{{ keycloak_admin_base_url }}/admin/realms/{{ keycloak_realm }}/clients/{{ keycloak_client_uuid_map[item.client_id] }}/client-secret"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ keycloak_bearer_token }}"
+        status_code: 200
+        timeout: 60
+      loop: "{{ keycloak_oidc_clients_needing_regen | default([]) }}"
+      when:
+        - keycloak_client_secrets_post is defined
+        - keycloak_client_secret_post_unauthorized | default(false) | bool
+      register: keycloak_client_secrets_post_retry
+
+    - name: Build client-secret map from POST results (regenerated secrets)
+      set_fact:
+        keycloak_client_secret_regen_map: >-
+          {{ keycloak_client_secret_regen_map | default({})
+             | combine({
+                item.item.client_id: (((item.json | default({})).value | default('')) | trim)
+             }) }}
+      loop: "{{ (keycloak_client_secrets_post.results | default([])) }}"
+      when:
+        - keycloak_client_secrets_post is defined
+        - item is defined
+        - (item.skipped | default(false)) | bool == false
+        - item.item is defined
+        - item.item.client_id is defined
+
+    - name: Overlay regenerated secrets with retry results (if any)
+      set_fact:
+        keycloak_client_secret_regen_map: >-
+          {{ keycloak_client_secret_regen_map | default({})
+             | combine({
+                item.item.client_id: (((item.json | default({})).value | default('')) | trim)
+             }) }}
+      loop: "{{ (keycloak_client_secrets_post_retry.results | default([])) }}"
+      when:
+        - keycloak_client_secrets_post_retry is defined
+        - item is defined
+        - (item.skipped | default(false)) | bool == false
+        - item.item is defined
+        - item.item.client_id is defined
+
+    - name: Build final client-secret map (GET preferred unless forced/missing)
+      set_fact:
+        keycloak_client_secret_final_map: >-
+          {{ keycloak_client_secret_final_map | default({})
+             | combine({
+                item.client_id: (
+                  (keycloak_client_secret_regen_map[item.client_id] | default('') | trim)
+                  if (
+                    (keycloak_force_regenerate_client_secrets | default(false) | bool)
+                    or ((keycloak_client_secret_get_map[item.client_id] | default('') | trim) == '')
+                  )
+                  else (keycloak_client_secret_get_map[item.client_id] | default('') | trim)
+                )
+             }) }}
+      loop: "{{ keycloak_oidc_clients }}"
       when: (keycloak_client_uuid_map[item.client_id] | default('') | trim) != ''
-      register: keycloak_client_secrets
 
     - name: Apply Kubernetes secrets with OIDC client credentials
       shell: >-
         KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_monitoring }}
-        create secret generic {{ item.item.k8s_secret_name }}
-        --from-literal=client-id={{ item.item.client_id }}
-        --from-literal=client-secret={{ item.json.value }}
+        create secret generic {{ item.k8s_secret_name }}
+        --from-literal=client-id={{ item.client_id }}
+        --from-literal=client-secret={{ keycloak_client_secret_final_map[item.client_id] }}
         --dry-run=client -o yaml | kubectl apply -f -
-      loop: "{{ keycloak_client_secrets.results | default([]) }}"
-      when: item.json is defined and (item.json.value | default('') | trim) != ''
+      loop: "{{ keycloak_oidc_clients }}"
+      when:
+        - (keycloak_client_uuid_map[item.client_id] | default('') | trim) != ''
+        - (keycloak_client_secret_final_map[item.client_id] | default('') | trim) != ''
       become: true
+
+    - name: Fail if any client secret value could not be obtained
+      fail:
+        msg: >-
+          Failed to obtain Keycloak client secret for clientId={{ item.client_id }}.
+          This usually indicates an auth/token issue or Keycloak did not return a secret value.
+      loop: "{{ keycloak_oidc_clients }}"
+      when:
+        - (keycloak_client_uuid_map[item.client_id] | default('') | trim) != ''
+        - (keycloak_client_secret_final_map[item.client_id] | default('') | trim) == ''
 
 - name: Display automated SSO configuration result
   debug:

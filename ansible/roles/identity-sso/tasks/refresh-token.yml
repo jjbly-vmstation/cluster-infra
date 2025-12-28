@@ -1,0 +1,24 @@
+---
+- name: Request Keycloak admin access token
+  uri:
+    url: "{{ keycloak_admin_base_url }}/realms/{{ keycloak_admin_realm }}/protocol/openid-connect/token"
+    method: POST
+    headers:
+      Content-Type: application/x-www-form-urlencoded
+    body_format: form-urlencoded
+    body:
+      grant_type: password
+      client_id: "{{ keycloak_admin_client_id }}"
+      username: "{{ keycloak_admin_username }}"
+      password: "{{ keycloak_admin_password_effective }}"
+    return_content: true
+    status_code: 200
+    timeout: 60
+  register: keycloak_token
+  retries: 5
+  delay: 2
+  until: keycloak_token.json is defined and (keycloak_token.json.access_token | default('') | trim) != ''
+
+- name: Set Keycloak bearer token
+  set_fact:
+    keycloak_bearer_token: "{{ keycloak_token.json.access_token }}"

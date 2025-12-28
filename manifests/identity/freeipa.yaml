@@ -176,14 +176,12 @@ spec:
         - name: IPA_SERVER_HOSTNAME
           value: "ipa.vmstation.local"
 
-        # Force the installer to use the pod IP as the server IP. This avoids
-        # resolving ipa.vmstation.local to the Service ClusterIP (which is not
-        # bound to any local interface inside the pod).
+        # Disable FreeIPA's internal “update self IP in DNS” mechanism.
+        # In constrained cluster DNS environments this can fail during startup
+        # (nsupdate -g / GSSAPI errors) and prevent the pod from becoming Ready.
+        # Upstream container behavior supports using `no-update` here.
         - name: IPA_SERVER_IP
-          valueFrom:
-            fieldRef:
-              apiVersion: v1
-              fieldPath: status.podIP
+          value: "no-update"
 
         # Test-only password for lab environment; replace with Secrets in production.
         # Must be >= 8 characters for ipa-server-install.

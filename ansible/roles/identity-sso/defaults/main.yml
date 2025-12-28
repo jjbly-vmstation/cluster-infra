@@ -26,6 +26,9 @@ freeipa_ldap_bind_dn: "uid=admin,cn=users,cn=accounts,dc=vmstation,dc=local"
 
 # Export OIDC client secrets into Kubernetes
 keycloak_export_oidc_client_secrets: true
+# Only regenerate client secrets if Keycloak does not return a usable `value`
+# from the GET client-secret endpoint, or if this flag is explicitly enabled.
+keycloak_force_regenerate_client_secrets: false
 namespace_monitoring: "monitoring"
 keycloak_oidc_clients:
   - client_id: grafana
