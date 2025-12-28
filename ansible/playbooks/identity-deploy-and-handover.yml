@@ -23,12 +23,14 @@
     namespace_cert_manager: cert-manager
     namespace_platform: platform
     identity_data_dir: /srv/monitoring-data
-    # Test-only credentials (>= 8 chars for FreeIPA installer). Replace with secrets in production.
-    keycloak_admin_password: "secret000"
-    freeipa_admin_password: "secret000"
-    postgres_password: "secret000"
-    ca_key_password: "secret000"
-    ldap_bind_password: "secret000"
+    # Credentials
+    # Environment variables exported by the orchestrator should take precedence.
+    # FreeIPA requires >= 8 chars.
+    keycloak_admin_password: "{{ lookup('env', 'KEYCLOAK_ADMIN_PASSWORD') | default('secret000', true) }}"
+    freeipa_admin_password: "{{ lookup('env', 'FREEIPA_ADMIN_PASSWORD') | default('secret000', true) }}"
+    postgres_password: "{{ lookup('env', 'POSTGRES_PASSWORD') | default('secret000', true) }}"
+    ca_key_password: "{{ lookup('env', 'CA_KEY_PASSWORD') | default('secret000', true) }}"
+    ldap_bind_password: "{{ lookup('env', 'LDAP_BIND_PASSWORD') | default('secret000', true) }}"
     # enable_postgres_chown and enable_freeipa_chown default to role defaults
 
   tasks:

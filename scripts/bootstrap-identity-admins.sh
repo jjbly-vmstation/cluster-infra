@@ -235,9 +235,15 @@ bootstrap_freeipa_admin() {
         return 0
     fi
     
-    # Wait for FreeIPA to be ready
-    if ! wait_for_pod "$freeipa_pod" 600; then
-        log_warn "FreeIPA pod not ready - skipping admin bootstrap"
+    # Wait for FreeIPA to be ready (first install can take a long time)
+    if ! wait_for_pod "$freeipa_pod" 1800; then
+        log_warn "FreeIPA pod did not become ready in time - collecting diagnostics and skipping admin bootstrap"
+        if [[ "$DRY_RUN" != "1" ]]; then
+            kubectl --kubeconfig="$KUBECONFIG" -n "$NAMESPACE_IDENTITY" describe pod "$freeipa_pod" 2>/dev/null || true
+            kubectl --kubeconfig="$KUBECONFIG" -n "$NAMESPACE_IDENTITY" logs "$freeipa_pod" -c freeipa-server --tail=200 2>/dev/null || true
+            kubectl --kubeconfig="$KUBECONFIG" -n "$NAMESPACE_IDENTITY" exec "$freeipa_pod" -c freeipa-server -- \
+                bash -lc 'systemctl status ipa --no-pager || true; tail -n 200 /var/log/ipa-server-configure-first.log 2>/dev/null || true; tail -n 200 /var/log/ipaserver-install.log 2>/dev/null || true' 2>/dev/null || true
+        fi
         return 0
     fi
     

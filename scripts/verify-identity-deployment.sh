@@ -50,7 +50,7 @@ check_pod_status() {
     local count=$(kubectl --kubeconfig=$KUBECONFIG -n $namespace get pods -l $label --no-headers 2>/dev/null | wc -l)
     
     if [ "$count" -ge "$expected" ]; then
-        local ready=$(kubectl --kubeconfig=$KUBECONFIG -n $namespace get pods -l $label -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}' | grep -c "True" || echo 0)
+        local ready=$(kubectl --kubeconfig=$KUBECONFIG -n $namespace get pods -l $label -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}' | grep -c "True" || true)
         if [ "$ready" -ge "$expected" ]; then
             echo "✓ RUNNING ($ready/$count pods ready)"
             return 0
@@ -163,9 +163,9 @@ echo "-----------------------"
 ERRORS=0
 
 # Count running pods
-POSTGRES_PODS=$(kubectl --kubeconfig=$KUBECONFIG -n $NAMESPACE_IDENTITY get pods -l app=keycloak,component=postgresql --no-headers 2>/dev/null | grep -c Running || echo 0)
-KEYCLOAK_PODS=$(kubectl --kubeconfig=$KUBECONFIG -n $NAMESPACE_IDENTITY get pods -l app.kubernetes.io/name=keycloak --no-headers 2>/dev/null | grep -c Running || echo 0)
-CERTMGR_PODS=$(kubectl --kubeconfig=$KUBECONFIG -n $NAMESPACE_CERTMGR get pods --no-headers 2>/dev/null | grep -c Running || echo 0)
+POSTGRES_PODS=$(kubectl --kubeconfig=$KUBECONFIG -n $NAMESPACE_IDENTITY get pods -l app=keycloak,component=postgresql --no-headers 2>/dev/null | grep -c Running || true)
+KEYCLOAK_PODS=$(kubectl --kubeconfig=$KUBECONFIG -n $NAMESPACE_IDENTITY get pods -l app.kubernetes.io/name=keycloak --no-headers 2>/dev/null | grep -c Running || true)
+CERTMGR_PODS=$(kubectl --kubeconfig=$KUBECONFIG -n $NAMESPACE_CERTMGR get pods --no-headers 2>/dev/null | grep -c Running || true)
 
 echo "PostgreSQL: $POSTGRES_PODS pod(s) running"
 echo "Keycloak: $KEYCLOAK_PODS pod(s) running"

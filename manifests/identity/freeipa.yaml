@@ -134,6 +134,10 @@ spec:
       labels:
         app: freeipa
     spec:
+      # FreeIPA is far more reliable when bound to the node network so its
+      # hostname can map to a stable IP and clients can reach LDAP/Kerberos.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
       # Schedule on control-plane node (masternode) only - always on
       nodeSelector:
         node-role.kubernetes.io/control-plane: ""
@@ -162,9 +166,12 @@ spec:
         # Test-only password for lab environment; replace with Secrets in production.
         # Must be >= 8 characters for ipa-server-install.
         - name: PASSWORD
-          value: "secret000"
+          valueFrom:
+            secretKeyRef:
+              name: freeipa-admin-creds
+              key: password
         - name: IPA_SERVER_INSTALL_OPTS
-          value: "-U --hostname=ipa.vmstation.local --realm=VMSTATION.LOCAL --domain=vmstation.local --ds-password=secret000 --admin-password=secret000 --no-host-dns --no-ntp"
+          value: "-U --hostname=ipa.vmstation.local --realm=VMSTATION.LOCAL --domain=vmstation.local --no-host-dns --no-ntp"
         ports:
         - containerPort: 80
           name: http

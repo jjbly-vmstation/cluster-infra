@@ -7,6 +7,22 @@
     path: "{{ freeipa_manifest }}"
   register: freeipa_manifest_stat
 
+- name: Ensure FreeIPA admin credentials secret exists (PASSWORD env)
+  shell: >-
+    kubectl --kubeconfig=/etc/kubernetes/admin.conf -n identity create secret generic freeipa-admin-creds
+    --from-literal=username=admin
+    --from-literal=password={{ freeipa_admin_password | quote }}
+    --dry-run=client -o yaml
+    | kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f -
+  when:
+    - freeipa_manifest_stat.stat.exists
+    - freeipa_admin_password is defined
+    - (freeipa_admin_password | length) > 0
+  register: freeipa_secret_apply
+  changed_when: "'created' in freeipa_secret_apply.stdout or 'configured' in freeipa_secret_apply.stdout"
+  no_log: true
+  become: true
+
 - name: Deploy FreeIPA from manifest (if available)
   shell: kubectl apply -f {{ freeipa_manifest }}
   when: freeipa_manifest_stat.stat.exists
@@ -26,6 +42,70 @@
   failed_when: false
   changed_when: "'patched' in freeipa_pv_claim_clear.stdout"
   become: true
+
+- name: Wait for FreeIPA pod to become ready (non-fatal)
+  shell: >-
+    kubectl --kubeconfig=/etc/kubernetes/admin.conf -n identity
+    wait --for=condition=ready pod/freeipa-0 --timeout={{ freeipa_ready_timeout | default('1800s') }}
+  when: freeipa_apply is defined and freeipa_apply.rc == 0
+  register: freeipa_wait
+  failed_when: false
+  changed_when: false
+  become: true
+
+- name: Collect FreeIPA diagnostics when pod is not ready
+  when:
+    - freeipa_wait is defined
+    - freeipa_wait.rc != 0
+  block:
+    - name: Describe FreeIPA pod
+      shell: kubectl --kubeconfig=/etc/kubernetes/admin.conf -n identity describe pod freeipa-0
+      register: freeipa_describe
+      failed_when: false
+      changed_when: false
+      become: true
+
+    - name: Tail FreeIPA container logs
+      shell: kubectl --kubeconfig=/etc/kubernetes/admin.conf -n identity logs freeipa-0 -c freeipa-server --tail=200
+      register: freeipa_logs
+      failed_when: false
+      changed_when: false
+      become: true
+
+    - name: Read FreeIPA install logs inside container (best-effort)
+      shell: >-
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf -n identity exec freeipa-0 -c freeipa-server --
+        bash -lc 'set -e; echo "--- systemctl status ipa ---"; systemctl status ipa --no-pager || true;
+        echo "--- ipa-server-configure-first.log (tail) ---"; tail -n 200 /var/log/ipa-server-configure-first.log 2>/dev/null || true;
+        echo "--- ipaserver-install.log (tail) ---"; tail -n 200 /var/log/ipaserver-install.log 2>/dev/null || true;
+        echo "--- journalctl -u ipa-server-configure-first.service (tail) ---"; journalctl -u ipa-server-configure-first.service -n 200 --no-pager 2>/dev/null || true'
+      register: freeipa_exec_logs
+      failed_when: false
+      changed_when: false
+      become: true
+
+    - name: Show FreeIPA diagnostics summary
+      debug:
+        msg: |
+          ============================================================
+          FreeIPA is not Ready yet - collected diagnostics
+          ============================================================
+          kubectl wait rc: {{ freeipa_wait.rc }}
+
+          --- kubectl describe pod/freeipa-0 ---
+          {{ freeipa_describe.stdout | default('') }}
+
+          --- kubectl logs freeipa-0 (tail) ---
+          {{ freeipa_logs.stdout | default('') }}
+
+          --- kubectl exec log tails ---
+          {{ freeipa_exec_logs.stdout | default('') }}
+          ============================================================
+
+  rescue:
+    - name: Warn if diagnostics collection failed
+      debug:
+        msg: "WARNING: Failed to collect FreeIPA diagnostics. Please run: kubectl -n identity describe pod freeipa-0 && kubectl -n identity logs freeipa-0 -c freeipa-server --tail=200"
 
 - name: Inform about missing FreeIPA manifest
   debug:
