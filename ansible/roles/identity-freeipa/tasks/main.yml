@@ -43,7 +43,7 @@
   changed_when: "'patched' in freeipa_pv_claim_clear.stdout"
   become: true
 
-- name: Wait for FreeIPA pod to become ready (non-fatal)
+- name: Wait for FreeIPA pod to become ready (fail-fast by default)
   shell: >-
     kubectl --kubeconfig=/etc/kubernetes/admin.conf -n identity
     wait --for=condition=ready pod/freeipa-0 --timeout={{ freeipa_ready_timeout | default('1800s') }}
@@ -101,6 +101,14 @@
           --- kubectl exec log tails ---
           {{ freeipa_exec_logs.stdout | default('') }}
           ============================================================
+
+    - name: Fail deployment when FreeIPA is not Ready (default behavior)
+      fail:
+        msg: >-
+          FreeIPA did not become Ready within {{ freeipa_ready_timeout | default('1800s') }}.
+          See the diagnostics above for details.
+          To continue without failing (not recommended), set freeipa_wait_fatal=false.
+      when: freeipa_wait_fatal | default(true) | bool
 
   rescue:
     - name: Warn if diagnostics collection failed

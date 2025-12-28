@@ -173,6 +173,42 @@
 
 - name: Verify FreeIPA LDAP service is reachable from inside the cluster (TCP)
   block:
+    - name: Preflight: show CoreDNS and service/endpoints status (diagnostic)
+      shell: >-
+        set -eu;
+        export KUBECONFIG=/etc/kubernetes/admin.conf;
+        echo '--- CoreDNS (kube-system) ---';
+        kubectl -n kube-system get deploy coredns 2>/dev/null || true;
+        kubectl -n kube-system get pods -l k8s-app=kube-dns -o wide 2>/dev/null || true;
+        kubectl -n kube-system get svc kube-dns 2>/dev/null || true;
+        echo '--- FreeIPA Service/Endpoints ({{ namespace_identity }}) ---';
+        kubectl -n {{ namespace_identity }} get svc freeipa -o wide 2>/dev/null || true;
+        kubectl -n {{ namespace_identity }} get endpoints freeipa -o wide 2>/dev/null || true;
+        kubectl -n {{ namespace_identity }} get pod freeipa-0 -o wide 2>/dev/null || true
+      become: true
+      changed_when: false
+      failed_when: false
+
+    - name: Preflight: ensure FreeIPA Service has endpoints (fail fast)
+      shell: >-
+        KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }}
+        get endpoints freeipa -o jsonpath='{.subsets[*].addresses[*].ip}'
+      become: true
+      register: freeipa_endpoints_ips
+      changed_when: false
+
+    - name: Fail if FreeIPA Service has no endpoints
+      fail:
+        msg: |
+          Service freeipa in namespace {{ namespace_identity }} has no endpoints.
+          FreeIPA pod likely isn't Ready or the Service selector doesn't match.
+
+          Quick checks:
+          - kubectl -n {{ namespace_identity }} get pod freeipa-0 -o wide
+          - kubectl -n {{ namespace_identity }} describe svc freeipa
+          - kubectl -n {{ namespace_identity }} get endpoints freeipa -o wide
+      when: (freeipa_endpoints_ips.stdout | default('') | trim) == ''
+
     - name: Delete previous ldap-port-check job (if any)
       shell: >-
         KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }}
@@ -184,17 +220,46 @@
       shell: >-
         KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }}
         create job ldap-port-check --image=busybox:1.36 --
-        sh -c 'set -eu; echo "Checking freeipa LDAP ports"; nc -z -w 5 freeipa.identity.svc.cluster.local 389; nc -z -w 5 freeipa.identity.svc.cluster.local 636; echo "OK"'
+        sh -c 'set -eu;
+        echo "Checking freeipa LDAP ports";
+        echo "--- /etc/resolv.conf ---"; cat /etc/resolv.conf || true; echo "-----------------------";
+        cluster_host="kubernetes.default.svc.cluster.local";
+        cluster_ip="$(nslookup "$cluster_host" 2>/dev/null | awk "/^Address: /{print \$2; exit}" || true)";
+        if [ -z "${cluster_ip}" ]; then
+          echo "DNS lookup failed for ${cluster_host}";
+          exit 3;
+        fi;
+        echo "Resolved ${cluster_host} -> ${cluster_ip}";
+        host="freeipa.{{ namespace_identity }}.svc.cluster.local";
+        ip="$(nslookup "$host" 2>/dev/null | awk "/^Address: /{print \$2; exit}" || true)";
+        if [ -z "${ip}" ]; then
+          echo "DNS lookup failed for ${host}";
+          exit 2;
+        fi;
+        echo "Resolved ${host} -> ${ip}";
+        nc -z -w 5 "${ip}" 389;
+        nc -z -w 5 "${ip}" 636;
+        echo "OK"'
       become: true
       changed_when: true
 
-    - name: Wait for ldap-port-check job completion
+    - name: Wait for ldap-port-check job to finish (succeeded or failed)
       shell: >-
         KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }}
-        wait --for=condition=complete job/ldap-port-check --timeout=120s
+        get job ldap-port-check -o jsonpath='{.status.succeeded} {.status.failed}'
       become: true
-      register: ldap_port_check_wait
+      register: ldap_port_check_status
+      retries: 60
+      delay: 2
+      until: >-
+        ((((ldap_port_check_status.stdout | default('')) ~ ' ').split(' ')[0] | default('0') | int) > 0)
+        or ((((ldap_port_check_status.stdout | default('')) ~ ' ').split(' ')[1] | default('0') | int) > 0)
       changed_when: false
+
+    - name: Parse ldap-port-check job result counts
+      set_fact:
+        ldap_port_check_succeeded: "{{ (((ldap_port_check_status.stdout | default('')) ~ ' ').split(' ')[0] | default('0')) | int }}"
+        ldap_port_check_failed: "{{ (((ldap_port_check_status.stdout | default('')) ~ ' ').split(' ')[1] | default('0')) | int }}"
 
     - name: Fetch ldap-port-check job logs
       shell: >-
@@ -210,6 +275,28 @@
         delete job ldap-port-check --ignore-not-found
       become: true
       changed_when: false
+
+    - name: Fail if ldap-port-check job indicates failure (DNS or port reachability)
+      fail:
+        msg: |
+          FreeIPA LDAP service is not reachable from within the cluster.
+
+          Expected service DNS: freeipa.{{ namespace_identity }}.svc.cluster.local
+          Expected ports: 389 (LDAP), 636 (LDAPS)
+
+          Diagnosis:
+          {% set logs = (ldap_port_check_logs.stdout | default('')) %}
+          {% if 'DNS lookup failed for kubernetes.default.svc.cluster.local' in logs %}
+          - Cluster DNS is failing (kubernetes.default did not resolve). Verify CoreDNS/kube-dns is running and reachable.
+          {% elif ('DNS lookup failed for freeipa.' ~ namespace_identity ~ '.svc.cluster.local') in logs or 'bad address' in logs %}
+          - Cluster DNS works, but Service DNS for FreeIPA failed. Verify the Service "freeipa" exists in namespace "{{ namespace_identity }}".
+          {% else %}
+          - DNS resolved but TCP connect failed. Verify FreeIPA pod is Running/Ready and the Service selector matches the FreeIPA pod labels.
+          {% endif %}
+
+          Job logs:
+          {{ logs }}
+    when: (ldap_port_check_failed | default(0) | int) > 0
   rescue:
     - name: Fetch ldap-port-check job logs (best-effort)
       shell: >-
@@ -231,7 +318,7 @@
         msg: |
           FreeIPA LDAP service is not reachable from within the cluster.
 
-          Expected service DNS: freeipa.identity.svc.cluster.local
+          Expected service DNS: freeipa.{{ namespace_identity }}.svc.cluster.local
           Expected ports: 389 (LDAP), 636 (LDAPS)
 
           Job logs:
