@@ -1,69 +1,38 @@
-# Keycloak Helm values file for identity deployment
-# This file is used by the identity-deploy-and-handover.yml playbook
-# to deploy Keycloak with PostgreSQL on the infra node (control-plane)
-#
-# ============================================================
-# SECURITY CRITICAL: Replace all CHANGEME passwords below with
-# strong, randomly generated passwords before deployment.
-# Use: openssl rand -base64 32
-# Store passwords securely (e.g., password manager, vault)
-# ============================================================
-#
-# STORAGE CONFIGURATION:
-# The identity-deploy-and-handover.yml playbook creates:
-# - A 'manual' StorageClass for manual PV provisioning
-# - A PersistentVolume (keycloak-postgresql-pv) at /srv/monitoring-data/postgresql
-# This resolves the "PVC data-keycloak-postgresql-0 Pending" issue by providing
-# storage for the PostgreSQL database used by Keycloak.
+## Keycloak Helm values for the codecentric/keycloak chart.
+## IMPORTANT:
+## - This chart's values are NOT nested under "keycloak:" (chart v9+).
+## - "extraEnv" and "extraEnvFrom" are templated using Helm's "tpl" and must be strings.
 
-replicaCount: 1
+replicas: 1
 
-keycloak:
-  adminUser: "admin"
-  adminPassword: "admin123"
-  extraEnv:
-    - name: DB_VENDOR
-      value: postgres
-    - name: DB_ADDR
-      value: "keycloak-postgresql"
-    - name: DB_PORT
-      value: "5432"
-    - name: DB_DATABASE
-      value: "keycloak"
-    - name: DB_USER
-      value: "keycloak"
-    - name: DB_PASSWORD
-      valueFrom:
-        secretKeyRef:
-          name: keycloak-postgresql
-          key: postgresql-password
-  livenessProbe:
-    httpGet:
-      path: /health/live
-      port: http
-      scheme: HTTP
-    initialDelaySeconds: 120
-    periodSeconds: 10
-    timeoutSeconds: 5
-    failureThreshold: 10
-    successThreshold: 1
-  readinessProbe:
-    httpGet:
-      path: /health/ready
-      port: http
-      scheme: HTTP
-    initialDelaySeconds: 60
-    periodSeconds: 10
-    timeoutSeconds: 2
-    failureThreshold: 10
-    successThreshold: 1
-  startupProbe:
-    httpGet:
-      path: /health/started
-      port: http
-      scheme: HTTP
-    initialDelaySeconds: 60
-    periodSeconds: 10
-    timeoutSeconds: 2
-    failureThreshold: 90
-    successThreshold: 1
+# We run a separate PostgreSQL (deployed by identity-postgresql), so disable the subchart.
+postgresql:
+  enabled: false
+
+# Provide DB connection info to Keycloak.
+extraEnv: |
+  - name: DB_VENDOR
+    value: postgres
+  - name: DB_ADDR
+    value: "keycloak-postgresql"
+  - name: DB_PORT
+    value: "5432"
+  - name: DB_DATABASE
+    value: "keycloak"
+  - name: DB_USER
+    value: "keycloak"
+  - name: DB_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: keycloak-postgresql
+        key: postgresql-password
+
+# Create the initial admin user via KEYCLOAK_USER / KEYCLOAK_PASSWORD.
+# The Secret name will be: <release fullname>-admin (normally "keycloak-admin").
+secrets:
+  admin:
+    stringData: {}
+
+extraEnvFrom: |
+  - secretRef:
+      name: '{{ include "keycloak.fullname" . }}-admin'

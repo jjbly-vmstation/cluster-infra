@@ -29,33 +29,6 @@
     mode: '0700'
   become: true
 
-- name: Save Keycloak admin credentials to backup directory
-  copy:
-    content: |
-      ============================================================
-      Keycloak Administrator Credentials
-      ============================================================
-      Generated: {{ ansible_date_time.iso8601 }}
-      
-      URL: http://<masternode-ip>:30180/auth
-      Username: admin
-      Password: {{ keycloak_admin_password }}
-      
-      SECURITY NOTICE:
-      - This file contains sensitive credentials
-      - Keep it secure and backed up
-      - Change default passwords immediately in production
-      - This password is SEPARATE from FreeIPA admin password
-      
-      Note: FreeIPA admin password is set separately via
-      CHANGEME_IPA_ADMIN_PASSWORD in playbook variables
-      ============================================================
-    dest: "{{ backup_dir }}/keycloak-admin-credentials.txt"
-    owner: root
-    group: root
-    mode: '0600'
-  become: true
-
 - name: Generate PostgreSQL password
   shell: openssl rand -base64 32
   register: postgresql_password_gen
@@ -72,7 +45,8 @@
     helm upgrade --install keycloak {{ keycloak_helm_chart }} 
     -n {{ namespace_identity }} 
     -f {{ keycloak_values_file }} 
-    --set keycloak.adminPassword="{{ keycloak_admin_password }}"
+    --set-string secrets.admin.stringData.KEYCLOAK_USER="admin"
+    --set-string secrets.admin.stringData.KEYCLOAK_PASSWORD="{{ keycloak_admin_password }}"
     --create-namespace 
     --set postgresql.enabled=false
   when: keycloak_values_stat.stat.exists
@@ -106,6 +80,49 @@
     -l app.kubernetes.io/instance=keycloak -n {{ namespace_identity }} --timeout={{ pod_wait_timeout }}s
   register: keycloak_pod_wait
   failed_when: keycloak_pod_wait.rc != 0
+  become: true
+
+- name: Read Keycloak admin password from chart-managed secret
+  shell: >-
+    KUBECONFIG=/etc/kubernetes/admin.conf kubectl get secret keycloak-admin -n {{ namespace_identity }}
+    -o jsonpath='{.data.KEYCLOAK_PASSWORD}' | base64 -d
+  register: keycloak_admin_password_from_secret
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Set effective Keycloak admin password fact
+  set_fact:
+    keycloak_admin_password_effective: >-
+      {{ (keycloak_admin_password_from_secret.stdout | default('') | trim)
+         if (keycloak_admin_password_from_secret is defined and (keycloak_admin_password_from_secret.stdout | default('') | trim) != '')
+         else keycloak_admin_password }}
+
+- name: Save Keycloak admin credentials to backup directory (from cluster source-of-truth)
+  copy:
+    content: |
+      ============================================================
+      Keycloak Administrator Credentials
+      ============================================================
+      Generated: {{ ansible_date_time.iso8601 }}
+
+      URL: http://<masternode-ip>:30180/auth
+      Username: admin
+      Password: {{ keycloak_admin_password_effective }}
+
+      SECURITY NOTICE:
+      - This file contains sensitive credentials
+      - Keep it secure and backed up
+      - Change default passwords immediately in production
+      - This password is SEPARATE from FreeIPA admin password
+
+      Note: FreeIPA admin password is set separately via
+      CHANGEME_IPA_ADMIN_PASSWORD in playbook variables
+      ============================================================
+    dest: "{{ backup_dir }}/keycloak-admin-credentials.txt"
+    owner: root
+    group: root
+    mode: '0600'
   become: true
 
 # Fallback rollout status for visibility only - failures are intentionally ignored
