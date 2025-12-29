@@ -1,0 +1,14 @@
+---
+# Test playbook for network-remediation role
+- name: Test network-remediation role
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    remediation_enabled: true
+    diagnostics_enabled: true
+    kubeconfig: /etc/kubernetes/admin.conf
+  tasks:
+    - name: Include network-remediation role
+      include_role:
+        name: network-remediation
