@@ -35,7 +35,7 @@
 
     - name: Decide whether to clear IPVS on this host
       set_fact:
-        clear_ipvs_needed: "{{ (hostvars['localhost'].kubeproxy_mode | default('')) == 'iptables' and (ipvs_module.stdout | trim) != '' }}"
+        clear_ipvs_needed: "{{ (hostvars['localhost'].kubeproxy_mode | default('unknown')) == 'iptables' and (ipvs_module.stdout | trim) != '' }}"
 
     - name: Show whether clearing ipvs is needed
       debug:

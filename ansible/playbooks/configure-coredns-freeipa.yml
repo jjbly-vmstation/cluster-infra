@@ -131,7 +131,7 @@
     - name: Phase 1.25 - Ensure IPVS kernel state consistency
       block:
         - name: Run fix-ipvs playbook to flush stale IPVS tables when needed
-          command: ansible-playbook ansible/playbooks/fix-ipvs.yml
+          command: ansible-playbook -i {{ ansible_inventory }} ansible/playbooks/fix-ipvs.yml
           args:
             chdir: "{{ repo_root }}"
           register: fix_ipvs_run
