@@ -2,6 +2,7 @@
 # Per-node diagnostics included via include_tasks and delegated to each node
 
 - name: Check ip_forward setting
+  delegate_to: "{{ node_target }}"
   shell: sysctl net.ipv4.ip_forward
   register: node_ip_forward
   changed_when: false
@@ -9,6 +10,7 @@
   become: true
 
 - name: Check bridge netfilter settings
+  delegate_to: "{{ node_target }}"
   shell: |
     echo "br_netfilter module:"
     lsmod | grep br_netfilter || echo "NOT LOADED"
@@ -24,6 +26,7 @@
   become: true
 
 - name: Check iptables FORWARD chain
+  delegate_to: "{{ node_target }}"
   shell: |
     set -o pipefail
     echo "=== iptables FORWARD chain ==="
@@ -34,6 +37,7 @@
   become: true
 
 - name: Check iptables NAT chains
+  delegate_to: "{{ node_target }}"
   shell: |
     set -o pipefail
     echo "=== iptables NAT PREROUTING ==="
@@ -50,6 +54,7 @@
   become: true
 
 - name: Check IPVS state
+  delegate_to: "{{ node_target }}"
   shell: |
     echo "=== IPVS Module ==="
     lsmod | grep ip_vs || echo "NOT LOADED"
@@ -66,6 +71,7 @@
   become: true
 
 - name: Check network interfaces
+  delegate_to: "{{ node_target }}"
   shell: ip addr show
   register: node_interfaces
   changed_when: false
@@ -73,6 +79,7 @@
   become: true
 
 - name: Check routing table
+  delegate_to: "{{ node_target }}"
   shell: ip route show
   register: node_routes
   changed_when: false
@@ -80,6 +87,7 @@
   become: true
 
 - name: Test DNS resolution from node
+  delegate_to: "{{ node_target }}"
   shell: |
     echo "=== DNS Resolution Test ==="
     echo "Testing kubernetes.default.svc.cluster.local:"
@@ -94,10 +102,10 @@
 
 - name: Save node diagnostics
   copy:
-    dest: "{{ diagnostics_base_dir }}/node-{{ inventory_hostname }}-{{ diagnostics_timestamp }}.txt"
+    dest: "{{ diagnostics_base_dir }}/node-{{ node_target }}-{{ diagnostics_timestamp }}.txt"
     content: |
       ============================================================
-      Node Network Diagnostics: {{ inventory_hostname }}
+      Node Network Diagnostics: {{ node_target }}
       Collected: {{ ansible_date_time.iso8601 }}
       ============================================================
       

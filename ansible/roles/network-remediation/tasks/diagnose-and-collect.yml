@@ -151,8 +151,7 @@
   include_tasks: collect-node-diagnostics.yml
   loop: "{{ target_nodes }}"
   loop_control:
-    loop_var: item
-  delegate_to: "{{ item }}"
+    loop_var: node_target
   become: true
 
 - name: Create diagnostics archive
