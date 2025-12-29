@@ -173,7 +173,7 @@
 
 - name: Verify FreeIPA LDAP service is reachable from inside the cluster (TCP)
   block:
-    - name: Preflight: show CoreDNS and service/endpoints status (diagnostic)
+    - name: "Preflight: show CoreDNS and service/endpoints status (diagnostic)"
       shell: >-
         set -eu;
         export KUBECONFIG=/etc/kubernetes/admin.conf;
@@ -189,7 +189,7 @@
       changed_when: false
       failed_when: false
 
-    - name: Preflight: ensure FreeIPA Service has endpoints (fail fast)
+    - name: "Preflight: ensure FreeIPA Service has endpoints (fail fast)"
       shell: >-
         KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }}
         get endpoints freeipa -o jsonpath='{.subsets[*].addresses[*].ip}'
