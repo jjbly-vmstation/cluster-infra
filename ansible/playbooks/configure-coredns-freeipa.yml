@@ -120,6 +120,33 @@
       tags: [prerequisites, always]
 
     # =========================================================================
+    # Phase 1.25: Ensure IPVS kernel state is consistent with kube-proxy mode
+    # =========================================================================
+    - name: Phase 1.25 - Ensure IPVS kernel state consistency
+      block:
+        - name: Run fix-ipvs playbook to flush stale IPVS tables when needed
+          ansible.builtin.command:
+            cmd: ansible-playbook ansible/playbooks/fix-ipvs.yml -i inventory.ini
+          args:
+            chdir: "{{ playbook_dir | dirname | dirname }}"
+          register: fix_ipvs_run
+          failed_when: fix_ipvs_run.rc != 0
+          run_once: true
+          delegate_to: localhost
+          changed_when: "'IPVS tables flushed' in fix_ipvs_run.stdout"
+          
+        - name: Display IPVS remediation result
+          ansible.builtin.debug:
+            msg: |
+              ============================================
+              IPVS Remediation Status
+              ============================================
+              {{ 'Completed - stale IPVS state cleared' if fix_ipvs_run.changed else 'No action needed - IPVS state OK' }}
+              ============================================
+              
+      tags: [ipvs, dns, always]
+
+    # =========================================================================
     # Phase 1.5: Check CoreDNS Installation and Install if Needed
     # =========================================================================
     - name: Phase 1.5 - CoreDNS Installation Detection and Deployment

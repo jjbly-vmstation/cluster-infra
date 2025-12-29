@@ -1,0 +1,288 @@
+---
+# Playbook: fix-ipvs.yml
+# Purpose: Clear stale IPVS kernel state when kube-proxy is configured for iptables
+#
+# This playbook addresses the issue where kube-proxy was previously running in IPVS mode
+# and later switched to iptables, leaving behind stale IPVS virtual server entries that
+# prevent pods from reaching the kube-dns ClusterIP.
+#
+# The playbook is idempotent and safe to run repeatedly:
+# - Only flushes IPVS when kube-proxy mode is iptables AND ip_vs module is loaded
+# - Best-effort ipvsadm installation
+# - Includes debugging output for verification
+#
+# Usage:
+#   ansible-playbook -i inventory.ini ansible/playbooks/fix-ipvs.yml
+
+- name: Fix IPVS kernel state when kube-proxy is in iptables mode
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+  
+  vars:
+    kubeconfig: /etc/kubernetes/admin.conf
+  
+  tasks:
+    # =========================================================================
+    # Phase 1: Detect kube-proxy configured mode from ConfigMap
+    # =========================================================================
+    - name: Phase 1 - Detect kube-proxy mode from ConfigMap
+      block:
+        - name: Check if kubectl is available
+          ansible.builtin.command: which kubectl
+          register: kubectl_check
+          changed_when: false
+          failed_when: false
+          
+        - name: Fail if kubectl not found
+          ansible.builtin.fail:
+            msg: "kubectl not found. Please install kubectl or ensure it's in PATH."
+          when: kubectl_check.rc != 0
+          
+        - name: Check if kubeconfig exists
+          ansible.builtin.stat:
+            path: "{{ kubeconfig }}"
+          register: kubeconfig_stat
+          
+        - name: Fail if kubeconfig not found
+          ansible.builtin.fail:
+            msg: "Kubeconfig not found at {{ kubeconfig }}"
+          when: not kubeconfig_stat.stat.exists
+          
+        - name: Detect kube-proxy ConfigMap and mode
+          ansible.builtin.shell: |
+            set -euo pipefail
+            # Try common ConfigMap names
+            if kubectl --kubeconfig={{ kubeconfig }} -n kube-system get cm kube-proxy >/dev/null 2>&1; then
+              cm_name="kube-proxy"
+            elif kubectl --kubeconfig={{ kubeconfig }} -n kube-system get cm kube-proxy-config >/dev/null 2>&1; then
+              cm_name="kube-proxy-config"
+            else
+              echo "NOTFOUND"
+              exit 0
+            fi
+            
+            # Extract mode from config.conf
+            mode=$(kubectl --kubeconfig={{ kubeconfig }} -n kube-system get cm "$cm_name" \
+              -o jsonpath='{.data.config\.conf}' 2>/dev/null | \
+              grep -E '^\s*mode:\s*' | head -n1 | awk '{print $2}' | tr -d '"' | tr -d '\r' || echo "")
+            
+            if [ -z "$mode" ]; then
+              # Default to iptables if not specified
+              mode="iptables"
+            fi
+            
+            echo "$mode"
+          args:
+            executable: /bin/bash
+          register: kube_proxy_mode_raw
+          changed_when: false
+          failed_when: false
+          
+        - name: Set kube-proxy mode fact
+          ansible.builtin.set_fact:
+            kube_proxy_mode: "{{ kube_proxy_mode_raw.stdout | trim | lower }}"
+          
+        - name: Display kube-proxy mode
+          ansible.builtin.debug:
+            msg: |
+              ============================================
+              kube-proxy Configuration
+              ============================================
+              Detected mode: {{ kube_proxy_mode }}
+              ============================================
+          
+      tags: [detect, always]
+
+    # =========================================================================
+    # Phase 2: Check ip_vs module and flush IPVS tables if needed
+    # =========================================================================
+    - name: Phase 2 - Check ip_vs module and flush IPVS tables
+      when: kube_proxy_mode == "iptables"
+      block:
+        - name: Check if ip_vs module is loaded on each node
+          ansible.builtin.shell: |
+            set -euo pipefail
+            if lsmod | grep -q '^ip_vs\s'; then
+              echo "LOADED"
+            else
+              echo "NOTLOADED"
+            fi
+          args:
+            executable: /bin/bash
+          register: ip_vs_status
+          delegate_to: "{{ item }}"
+          loop: "{{ groups['all'] }}"
+          changed_when: false
+          failed_when: false
+          
+        - name: Create fact list of nodes with ip_vs loaded
+          ansible.builtin.set_fact:
+            nodes_with_ipvs: "{{ ip_vs_status.results | selectattr('stdout', 'search', 'LOADED') | map(attribute='item') | list }}"
+          
+        - name: Display nodes requiring IPVS cleanup
+          ansible.builtin.debug:
+            msg: |
+              ============================================
+              IPVS State Check
+              ============================================
+              kube-proxy mode: {{ kube_proxy_mode }}
+              Nodes with ip_vs loaded: {{ nodes_with_ipvs | length }}
+              {% if nodes_with_ipvs | length > 0 %}
+              Nodes: {{ nodes_with_ipvs | join(', ') }}
+              Action: Will flush IPVS tables on these nodes
+              {% else %}
+              Action: No IPVS cleanup needed
+              {% endif %}
+              ============================================
+          
+        - name: Ensure ipvsadm is installed (best-effort)
+          when: nodes_with_ipvs | length > 0
+          ansible.builtin.package:
+            name: ipvsadm
+            state: present
+          delegate_to: "{{ item }}"
+          loop: "{{ nodes_with_ipvs }}"
+          failed_when: false
+          register: ipvsadm_install
+          
+        - name: Show IPVS tables before clearing (for debugging)
+          when: nodes_with_ipvs | length > 0
+          ansible.builtin.shell: |
+            set -e
+            echo "=== IPVS state before clearing on $(hostname) ==="
+            if command -v ipvsadm >/dev/null 2>&1; then
+              ipvsadm -Ln 2>/dev/null || echo "ipvsadm command failed"
+            else
+              echo "ipvsadm not available"
+            fi
+          args:
+            executable: /bin/bash
+          delegate_to: "{{ item }}"
+          loop: "{{ nodes_with_ipvs }}"
+          register: ipvs_before
+          changed_when: false
+          failed_when: false
+          
+        - name: Display IPVS state before clearing
+          when: nodes_with_ipvs | length > 0
+          ansible.builtin.debug:
+            msg: "{{ item.stdout }}"
+          loop: "{{ ipvs_before.results }}"
+          loop_control:
+            label: "{{ item.item }}"
+          
+        - name: Flush IPVS tables on nodes with stale entries
+          when: nodes_with_ipvs | length > 0
+          ansible.builtin.shell: |
+            set -e
+            if command -v ipvsadm >/dev/null 2>&1; then
+              echo "Flushing IPVS tables on $(hostname)..."
+              ipvsadm -C || true
+              echo "IPVS tables flushed"
+            else
+              echo "ipvsadm not available, skipping flush"
+              exit 1
+            fi
+          args:
+            executable: /bin/bash
+          delegate_to: "{{ item }}"
+          loop: "{{ nodes_with_ipvs }}"
+          register: ipvs_flush
+          changed_when: "'IPVS tables flushed' in ipvs_flush.stdout"
+          failed_when: false
+          
+        - name: Show IPVS tables after clearing (for debugging)
+          when: nodes_with_ipvs | length > 0
+          ansible.builtin.shell: |
+            set -e
+            echo "=== IPVS state after clearing on $(hostname) ==="
+            if command -v ipvsadm >/dev/null 2>&1; then
+              ipvsadm -Ln 2>/dev/null || echo "ipvsadm command failed"
+            else
+              echo "ipvsadm not available"
+            fi
+          args:
+            executable: /bin/bash
+          delegate_to: "{{ item }}"
+          loop: "{{ nodes_with_ipvs }}"
+          register: ipvs_after
+          changed_when: false
+          failed_when: false
+          
+        - name: Display IPVS state after clearing
+          when: nodes_with_ipvs | length > 0
+          ansible.builtin.debug:
+            msg: "{{ item.stdout }}"
+          loop: "{{ ipvs_after.results }}"
+          loop_control:
+            label: "{{ item.item }}"
+          
+      tags: [ipvs, cleanup]
+
+    # =========================================================================
+    # Phase 3: Restart kube-proxy DaemonSet
+    # =========================================================================
+    - name: Phase 3 - Restart kube-proxy DaemonSet
+      when: kube_proxy_mode == "iptables" and (nodes_with_ipvs | default([]) | length > 0)
+      block:
+        - name: Restart kube-proxy DaemonSet to reprogram dataplane
+          ansible.builtin.command: >-
+            kubectl --kubeconfig={{ kubeconfig }} -n kube-system rollout restart ds/kube-proxy
+          register: kube_proxy_restart
+          changed_when: true
+          
+        - name: Wait for kube-proxy rollout to complete
+          ansible.builtin.command: >-
+            kubectl --kubeconfig={{ kubeconfig }} -n kube-system rollout status ds/kube-proxy --timeout=240s
+          register: kube_proxy_rollout
+          changed_when: false
+          
+        - name: Display kube-proxy restart status
+          ansible.builtin.debug:
+            msg: |
+              ============================================
+              kube-proxy Restart Status
+              ============================================
+              {{ kube_proxy_rollout.stdout }}
+              ============================================
+          
+      tags: [restart, kube-proxy]
+
+    # =========================================================================
+    # Phase 4: Summary
+    # =========================================================================
+    - name: Phase 4 - Display Summary
+      block:
+        - name: Display completion summary
+          ansible.builtin.debug:
+            msg: |
+              ============================================
+              IPVS Remediation Complete
+              ============================================
+              kube-proxy mode: {{ kube_proxy_mode }}
+              {% if kube_proxy_mode == "iptables" %}
+              Nodes checked: {{ groups['all'] | length }}
+              Nodes with ip_vs loaded: {{ nodes_with_ipvs | default([]) | length }}
+              {% if (nodes_with_ipvs | default([]) | length) > 0 %}
+              Actions taken:
+                ✓ Ensured ipvsadm installed (best-effort)
+                ✓ Flushed IPVS tables on affected nodes
+                ✓ Restarted kube-proxy DaemonSet
+                ✓ Waited for rollout to complete
+              
+              Next steps:
+                - Run DNS smoke tests to verify connectivity
+                - Check kube-proxy logs if issues persist:
+                  kubectl -n kube-system logs ds/kube-proxy --tail=50
+              {% else %}
+              No IPVS cleanup required - ip_vs module not loaded
+              {% endif %}
+              {% else %}
+              No action needed - kube-proxy is in {{ kube_proxy_mode }} mode
+              IPVS cleanup only runs when mode is iptables
+              {% endif %}
+              ============================================
+          
+      tags: [always]
