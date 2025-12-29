@@ -131,19 +131,13 @@
     - name: Phase 1.25 - Ensure IPVS kernel state consistency
       block:
         - name: Run fix-ipvs playbook to flush stale IPVS tables when needed
-          ansible.builtin.command:
-            argv:
-              - ansible-playbook
-              - ansible/playbooks/fix-ipvs.yml
-              - -i
-              - "{{ ansible_inventory }}"
+          command: ansible-playbook ansible/playbooks/fix-ipvs.yml
           args:
             chdir: "{{ repo_root }}"
           register: fix_ipvs_run
           failed_when: fix_ipvs_run.rc != 0
           run_once: true
           delegate_to: localhost
-          changed_when: "'IPVS_FLUSHED' in fix_ipvs_run.stdout"
           
         - name: Display IPVS remediation result
           ansible.builtin.debug:
