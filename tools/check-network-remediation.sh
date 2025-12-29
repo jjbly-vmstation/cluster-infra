@@ -148,10 +148,11 @@ check_ansible_syntax() {
 
     if command -v ansible-playbook &>/dev/null; then
         pushd "$REPO_ROOT/ansible" >/dev/null
-        if ansible-playbook --syntax-check "playbooks/identity-deploy-and-handover.yml" 2>&1 | grep -qi "error\|fatal"; then
-            log_fail "Ansible syntax check failed"
-        else
+        # Use exit code for reliable error detection (not grep on output)
+        if ansible-playbook --syntax-check "playbooks/identity-deploy-and-handover.yml" >/dev/null 2>&1; then
             log_pass "Ansible syntax check passed"
+        else
+            log_fail "Ansible syntax check failed"
         fi
         popd >/dev/null
     else
