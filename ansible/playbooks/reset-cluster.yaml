@@ -134,6 +134,21 @@
         iptables -X || true
       failed_when: false
 
+    # Clean IPVS state (prevents stale VIP->backend mappings when switching from IPVS to iptables mode)
+    - name: "Flush IPVS virtual server table"
+      ansible.builtin.shell: |
+        if command -v ipvsadm >/dev/null 2>&1; then
+          ipvsadm -C || true
+        fi
+      failed_when: false
+
+    - name: "Flush ipset entries"
+      ansible.builtin.shell: |
+        if command -v ipset >/dev/null 2>&1; then
+          ipset flush || true
+        fi
+      failed_when: false
+
     - name: "Flush nftables rules (optional)"
       ansible.builtin.shell: nft flush ruleset || true
       when: reset_flush_nft | bool
