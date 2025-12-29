@@ -24,6 +24,9 @@
     # Repository root path for playbook execution
     repo_root: "{{ playbook_dir | dirname | dirname }}"
     
+    # Inventory file for nested playbook execution
+    ansible_inventory: "{{ inventory_file | default('inventory.ini') }}"
+    
     # Kubernetes configuration
     kubeconfig: /etc/kubernetes/admin.conf
     
@@ -129,7 +132,7 @@
       block:
         - name: Run fix-ipvs playbook to flush stale IPVS tables when needed
           ansible.builtin.command:
-            cmd: ansible-playbook ansible/playbooks/fix-ipvs.yml -i inventory.ini
+            cmd: ansible-playbook ansible/playbooks/fix-ipvs.yml -i {{ ansible_inventory }}
           args:
             chdir: "{{ repo_root }}"
           register: fix_ipvs_run

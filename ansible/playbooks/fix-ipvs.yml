@@ -187,8 +187,12 @@
             set -e
             if command -v ipvsadm >/dev/null 2>&1; then
               echo "Flushing IPVS tables on $(hostname)..."
-              ipvsadm -C || true
-              echo "IPVS_FLUSHED"
+              if ipvsadm -C; then
+                echo "IPVS_FLUSHED"
+              else
+                echo "ipvsadm -C failed"
+                exit 1
+              fi
             else
               echo "ipvsadm not available, skipping flush"
               exit 0
