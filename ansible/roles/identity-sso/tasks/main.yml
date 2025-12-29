@@ -296,7 +296,7 @@
 
           Job logs:
           {{ logs }}
-    when: (ldap_port_check_failed | default(0) | int) > 0
+  when: (ldap_port_check_failed | default(0) | int) > 0
   rescue:
     - name: Fetch ldap-port-check job logs (best-effort)
       shell: >-
