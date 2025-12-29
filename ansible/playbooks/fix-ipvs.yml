@@ -203,12 +203,14 @@
           delegate_to: "{{ item }}"
           loop: "{{ nodes_with_ipvs }}"
           register: ipvs_flush
-          changed_when: "'IPVS_FLUSHED' in ipvs_flush.stdout"
           failed_when: false
+          # Note: changed_when on loop tasks doesn't support per-iteration logic
+          # We track changes via ipvs_was_flushed fact set below
           
         - name: Mark as changed if any IPVS tables were flushed
           when: 
             - nodes_with_ipvs | length > 0
+            - ipvs_flush.results is defined
             - ipvs_flush.results | selectattr('stdout', 'search', 'IPVS_FLUSHED') | list | length > 0
           ansible.builtin.set_fact:
             ipvs_was_flushed: true
