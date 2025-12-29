@@ -1,0 +1,129 @@
+---
+# Per-node diagnostics included via include_tasks and delegated to each node
+
+- name: Check ip_forward setting
+  shell: sysctl net.ipv4.ip_forward
+  register: node_ip_forward
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Check bridge netfilter settings
+  shell: |
+    echo "br_netfilter module:"
+    lsmod | grep br_netfilter || echo "NOT LOADED"
+    echo ""
+    echo "bridge-nf-call-iptables:"
+    sysctl net.bridge.bridge-nf-call-iptables 2>/dev/null || echo "NOT SET"
+    echo ""
+    echo "bridge-nf-call-ip6tables:"
+    sysctl net.bridge.bridge-nf-call-ip6tables 2>/dev/null || echo "NOT SET"
+  register: node_bridge_settings
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Check iptables FORWARD chain
+  shell: |
+    set -o pipefail
+    echo "=== iptables FORWARD chain ==="
+    (iptables -L FORWARD -n -v || iptables-nft -L FORWARD -n -v) 2>/dev/null || echo "Failed to read iptables"
+  register: node_iptables_forward
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Check iptables NAT chains
+  shell: |
+    set -o pipefail
+    echo "=== iptables NAT PREROUTING ==="
+    (iptables -t nat -L PREROUTING -n -v || iptables-nft -t nat -L PREROUTING -n -v) 2>/dev/null || echo "Failed"
+    echo ""
+    echo "=== iptables NAT OUTPUT ==="
+    (iptables -t nat -L OUTPUT -n -v || iptables-nft -t nat -L OUTPUT -n -v) 2>/dev/null || echo "Failed"
+    echo ""
+    echo "=== iptables NAT POSTROUTING ==="
+    (iptables -t nat -L POSTROUTING -n -v || iptables-nft -t nat -L POSTROUTING -n -v) 2>/dev/null || echo "Failed"
+  register: node_iptables_nat
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Check IPVS state
+  shell: |
+    echo "=== IPVS Module ==="
+    lsmod | grep ip_vs || echo "NOT LOADED"
+    echo ""
+    echo "=== IPVS Table ==="
+    if command -v ipvsadm >/dev/null 2>&1; then
+      ipvsadm -Ln 2>/dev/null || echo "ipvsadm present but failed to read"
+    else
+      echo "ipvsadm not installed"
+    fi
+  register: node_ipvs_state
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Check network interfaces
+  shell: ip addr show
+  register: node_interfaces
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Check routing table
+  shell: ip route show
+  register: node_routes
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Test DNS resolution from node
+  shell: |
+    echo "=== DNS Resolution Test ==="
+    echo "Testing kubernetes.default.svc.cluster.local:"
+    nslookup kubernetes.default.svc.cluster.local 2>&1 || echo "FAILED"
+    echo ""
+    echo "Testing kube-dns.kube-system.svc.cluster.local:"
+    nslookup kube-dns.kube-system.svc.cluster.local 2>&1 || echo "FAILED"
+  register: node_dns_test
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Save node diagnostics
+  copy:
+    dest: "{{ diagnostics_base_dir }}/node-{{ inventory_hostname }}-{{ diagnostics_timestamp }}.txt"
+    content: |
+      ============================================================
+      Node Network Diagnostics: {{ inventory_hostname }}
+      Collected: {{ ansible_date_time.iso8601 }}
+      ============================================================
+      
+      === IP Forward ===
+      {{ node_ip_forward.stdout | default('N/A') }}
+      
+      === Bridge Netfilter Settings ===
+      {{ node_bridge_settings.stdout | default('N/A') }}
+      
+      === iptables FORWARD Chain ===
+      {{ node_iptables_forward.stdout | default('N/A') }}
+      
+      === iptables NAT Chains ===
+      {{ node_iptables_nat.stdout | default('N/A') }}
+      
+      === IPVS State ===
+      {{ node_ipvs_state.stdout | default('N/A') }}
+      
+      === Network Interfaces ===
+      {{ node_interfaces.stdout | default('N/A') }}
+      
+      === Routing Table ===
+      {{ node_routes.stdout | default('N/A') }}
+      
+      === DNS Resolution Test ===
+      {{ node_dns_test.stdout | default('N/A') }}
+    owner: root
+    group: root
+    mode: '0644'
