@@ -134,6 +134,26 @@
         iptables -X || true
       failed_when: false
 
+    # Clean IPVS state (prevents stale VIP->backend mappings when switching from IPVS to iptables mode)
+    - name: "Flush IPVS virtual server table"
+      ansible.builtin.shell: |
+        if command -v ipvsadm >/dev/null 2>&1; then
+          ipvsadm -C || true
+        fi
+      failed_when: false
+
+    - name: "Flush ipset entries (kube-proxy ipsets)"
+      ansible.builtin.shell: |
+        if command -v ipset >/dev/null 2>&1; then
+          # Flush kubernetes-related ipsets (kube-proxy creates KUBE-* ipsets)
+          ipset list -n 2>/dev/null | grep -i '^KUBE-' | xargs -r -n1 ipset flush 2>/dev/null || true
+          # Fallback: if no KUBE-prefixed ipsets found, flush all (for older kube-proxy versions)
+          if ! ipset list -n 2>/dev/null | grep -qi '^KUBE-'; then
+            ipset flush || true
+          fi
+        fi
+      failed_when: false
+
     - name: "Flush nftables rules (optional)"
       ansible.builtin.shell: nft flush ruleset || true
       when: reset_flush_nft | bool
