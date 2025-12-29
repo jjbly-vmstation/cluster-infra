@@ -1,8 +1,8 @@
 ---
 - name: Diagnose CoreDNS / node DNS networking
   hosts: all
-  become: yes
-  gather_facts: yes
+  become: true
+  gather_facts: true
 
   vars:
     diagnostics_dir: /tmp/coredns-network-diagnostics

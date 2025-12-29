@@ -18,7 +18,7 @@
   hosts: localhost
   connection: local
   become: true
-  gather_facts: yes
+  gather_facts: true
   
   vars:
     # Kubernetes configuration
@@ -569,7 +569,7 @@
 - name: Optional - Configure /etc/hosts on All Cluster Nodes (Fallback)
   hosts: all
   become: true
-  gather_facts: yes
+  gather_facts: true
   
   vars:
     freeipa_ip: 192.168.4.63  # Masternode IP where FreeIPA is deployed
