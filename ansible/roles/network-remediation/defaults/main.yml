@@ -1,0 +1,41 @@
+---
+# defaults file for network-remediation role
+# Network validation and remediation configuration
+
+# DNS validation settings
+dns_validation_timeout: 60
+dns_validation_retries: 3
+dns_validation_pod_image: "nicolaka/netshoot:latest"
+dns_validation_namespace: "kube-system"
+
+# Diagnostics collection
+diagnostics_enabled: true
+diagnostics_base_dir: "/tmp/network-diagnostics"
+diagnostics_archive_dir: "/root/identity-backup"
+diagnostics_retention_days: 7
+
+# Network remediation settings
+remediation_enabled: true
+remediation_fix_ip_forward: true
+remediation_fix_iptables: true
+remediation_fix_br_netfilter: true
+remediation_restart_kube_proxy: true
+
+# Retry configuration
+remediation_max_attempts: 3
+remediation_retry_delay: 10
+
+# Target DNS servers for validation
+dns_test_targets:
+  - name: "kube-dns"
+    service: "kube-dns"
+    namespace: "kube-system"
+    port: 53
+  - name: "kubernetes-api"
+    domain: "kubernetes.default.svc.cluster.local"
+
+# Kubeconfig path
+kubeconfig: "/etc/kubernetes/admin.conf"
+
+# IPVS mode detection and remediation
+ipvs_cleanup_enabled: true

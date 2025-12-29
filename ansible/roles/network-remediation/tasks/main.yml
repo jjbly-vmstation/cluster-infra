@@ -1,0 +1,68 @@
+---
+# Main tasks for network-remediation role
+# Orchestrates network validation, remediation, and diagnostics collection
+
+- name: Display network remediation configuration
+  debug:
+    msg:
+      - "Network Remediation Configuration:"
+      - "  DNS Validation: enabled"
+      - "  Remediation: {{ 'enabled' if remediation_enabled else 'disabled' }}"
+      - "  Diagnostics: {{ 'enabled' if diagnostics_enabled else 'disabled' }}"
+      - "  Max Attempts: {{ remediation_max_attempts }}"
+
+- name: Initialize remediation attempt counter
+  set_fact:
+    current_remediation_attempt: 0
+    validation_passed: false
+    diagnostics_collected: false
+
+- name: Network validation and remediation loop
+  include_tasks: remediation-loop.yml
+  when: remediation_enabled | bool
+
+- name: Skip remediation (validation only)
+  block:
+    - name: Run pod-to-ClusterIP DNS validation (no remediation)
+      include_tasks: validate-pod-to-clusterip.yml
+
+    - name: Set validation result
+      set_fact:
+        validation_passed: true
+  rescue:
+    - name: Validation failed without remediation
+      debug:
+        msg: "Network validation failed and remediation is disabled"
+      
+    - name: Collect diagnostics on validation failure
+      include_tasks: diagnose-and-collect.yml
+      when: diagnostics_enabled | bool
+      
+    - name: Fail with actionable error message
+      fail:
+        msg: |
+          Network validation failed!
+          
+          Pod-to-ClusterIP DNS connectivity is broken. This typically indicates:
+          1. ip_forward is disabled on nodes
+          2. iptables FORWARD chain has DROP policy
+          3. br_netfilter module not loaded
+          4. kube-proxy not functioning correctly
+          5. CNI plugin issues
+          
+          Diagnostics collected at: {{ diagnostics_base_dir }}
+          
+          Enable remediation_enabled: true to auto-fix, or manually troubleshoot:
+          - Check: sysctl net.ipv4.ip_forward (should be 1)
+          - Check: iptables -L FORWARD (should allow CNI traffic)
+          - Check: lsmod | grep br_netfilter
+          - Check: kubectl -n kube-system logs ds/kube-proxy
+  when: not (remediation_enabled | bool)
+
+- name: Display final network validation status
+  debug:
+    msg:
+      - "=========================================="
+      - "Network Validation: {{ 'PASSED' if validation_passed else 'FAILED' }}"
+      - "Diagnostics Collected: {{ 'yes' if diagnostics_collected else 'no' }}"
+      - "=========================================="

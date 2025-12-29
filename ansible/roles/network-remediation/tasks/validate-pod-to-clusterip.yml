@@ -1,0 +1,134 @@
+---
+# Validation task: pod-to-clusterip DNS connectivity test
+# Runs an ephemeral dnsutils/netshoot pod to test ClusterIP DNS resolution
+
+- name: Get kube-dns ClusterIP
+  shell: >-
+    kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+    get svc kube-dns -o jsonpath='{.spec.clusterIP}'
+  register: kube_dns_clusterip_result
+  changed_when: false
+  failed_when: kube_dns_clusterip_result.rc != 0
+
+- name: Set kube-dns ClusterIP fact
+  set_fact:
+    kube_dns_clusterip: "{{ kube_dns_clusterip_result.stdout | trim }}"
+
+- name: Validate kube-dns ClusterIP format
+  assert:
+    that:
+      - kube_dns_clusterip is match('^([0-9]{1,3}\.){3}[0-9]{1,3}$')
+    fail_msg: "Invalid kube-dns ClusterIP: {{ kube_dns_clusterip }}"
+
+- name: Display kube-dns ClusterIP
+  debug:
+    msg: "Testing DNS connectivity to kube-dns ClusterIP: {{ kube_dns_clusterip }}"
+
+- name: Check if kube-dns endpoints exist
+  shell: >-
+    kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+    get endpoints kube-dns -o jsonpath='{.subsets[*].addresses[*].ip}'
+  register: kube_dns_endpoints
+  changed_when: false
+  failed_when: false
+
+- name: Warn if kube-dns has no endpoints
+  debug:
+    msg: "WARNING: kube-dns service has no endpoints! CoreDNS pods may not be ready."
+  when: (kube_dns_endpoints.stdout | default('') | trim) == ''
+
+- name: Generate unique pod name for DNS test
+  set_fact:
+    dns_test_pod_name: "dns-validation-{{ ansible_date_time.epoch }}"
+
+- name: Delete any previous DNS validation pod
+  shell: >-
+    kubectl --kubeconfig={{ kubeconfig }} -n {{ dns_validation_namespace }}
+    delete pod {{ dns_test_pod_name }} --ignore-not-found --wait=false
+  changed_when: false
+  failed_when: false
+
+- name: Wait for previous pod deletion
+  shell: >-
+    kubectl --kubeconfig={{ kubeconfig }} -n {{ dns_validation_namespace }}
+    get pod {{ dns_test_pod_name }} 2>/dev/null || echo "not-found"
+  register: pod_check
+  retries: 10
+  delay: 2
+  until: "'not-found' in pod_check.stdout"
+  changed_when: false
+  failed_when: false
+
+- name: Create ephemeral pod for DNS validation
+  shell: |
+    kubectl --kubeconfig={{ kubeconfig }} -n {{ dns_validation_namespace }} run {{ dns_test_pod_name }} \
+      --image={{ dns_validation_pod_image }} \
+      --restart=Never \
+      --labels=app=dns-validation \
+      --command -- sh -c '
+        set -eu
+        echo "=== DNS Validation Test ==="
+        echo "Target: kube-dns ClusterIP {{ kube_dns_clusterip }}"
+        echo ""
+        echo "--- /etc/resolv.conf ---"
+        cat /etc/resolv.conf
+        echo "--- End resolv.conf ---"
+        echo ""
+        echo "Testing DNS resolution via ClusterIP..."
+        if command -v dig >/dev/null 2>&1; then
+          dig @{{ kube_dns_clusterip }} kubernetes.default.svc.cluster.local +short +time=5 +tries=2 || exit 1
+        elif command -v nslookup >/dev/null 2>&1; then
+          nslookup kubernetes.default.svc.cluster.local {{ kube_dns_clusterip }} || exit 1
+        else
+          echo "ERROR: Neither dig nor nslookup available"
+          exit 2
+        fi
+        echo ""
+        echo "DNS validation PASSED"
+      '
+  register: dns_validation_pod_create
+  changed_when: true
+
+- name: Wait for DNS validation pod to complete
+  shell: >-
+    kubectl --kubeconfig={{ kubeconfig }} -n {{ dns_validation_namespace }}
+    get pod {{ dns_test_pod_name }} -o jsonpath='{.status.phase}'
+  register: dns_pod_phase
+  retries: "{{ dns_validation_timeout }}"
+  delay: 1
+  until: dns_pod_phase.stdout in ['Succeeded', 'Failed']
+  changed_when: false
+
+- name: Get DNS validation pod logs
+  shell: >-
+    kubectl --kubeconfig={{ kubeconfig }} -n {{ dns_validation_namespace }}
+    logs {{ dns_test_pod_name }}
+  register: dns_validation_logs
+  changed_when: false
+  failed_when: false
+
+- name: Display DNS validation logs
+  debug:
+    var: dns_validation_logs.stdout_lines
+
+- name: Check DNS validation result
+  assert:
+    that:
+      - dns_pod_phase.stdout == 'Succeeded'
+    fail_msg: |
+      DNS validation FAILED!
+      Pod phase: {{ dns_pod_phase.stdout }}
+      
+      Logs:
+      {{ dns_validation_logs.stdout }}
+
+- name: Cleanup DNS validation pod
+  shell: >-
+    kubectl --kubeconfig={{ kubeconfig }} -n {{ dns_validation_namespace }}
+    delete pod {{ dns_test_pod_name }} --ignore-not-found --wait=false
+  changed_when: false
+  failed_when: false
+
+- name: DNS validation successful
+  debug:
+    msg: "✓ Pod-to-ClusterIP DNS validation PASSED"

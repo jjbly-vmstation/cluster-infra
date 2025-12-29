@@ -41,10 +41,15 @@
         name: identity-prerequisites
       tags: [prerequisites, always]
 
-    # Phase 1a: Ensure cluster DNS service routing works (kube-dns ClusterIP)
-    - name: Ensure kube-dns ClusterIP is reachable from pods (auto-remediate kube-proxy/sysctls)
-      include_tasks: tasks/ensure-cluster-dns.yml
-      tags: [dns, coredns, kube-proxy, always]
+    # Phase 1a: Network validation and remediation (kube-dns ClusterIP connectivity)
+    - name: Validate and remediate pod-to-ClusterIP network connectivity
+      include_role:
+        name: network-remediation
+      vars:
+        remediation_enabled: true
+        remediation_max_attempts: 3
+        diagnostics_enabled: true
+      tags: [dns, coredns, kube-proxy, network, always]
     
     # Phase 2: Optional backup before destructive replace
     - name: Backup existing identity data before replace
