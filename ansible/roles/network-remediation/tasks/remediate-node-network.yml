@@ -19,23 +19,31 @@
       changed_when: false
       failed_when: false
 
-    - name: Parse kube-proxy mode
+    - name: Extract mode from config (with fallback)
       set_fact:
         detected_kubeproxy_mode: >-
-          {{ (kubeproxy_config.stdout | default('') | 
-              regex_search('mode:\s*"?([A-Za-z0-9_-]+)"?', '\1') | 
-              default(['iptables'], true))[0] }}
+          {% set mode_match = kubeproxy_config.stdout | default('') | regex_search('mode:\s*"?([A-Za-z0-9_-]+)"?', '\1') %}
+          {{ mode_match[0] if mode_match else 'iptables' }}
       when: kubeproxy_config.rc == 0
+
+    - name: Set default mode if detection failed
+      set_fact:
+        detected_kubeproxy_mode: 'iptables'
+      when: kubeproxy_config.rc != 0 or detected_kubeproxy_mode is not defined
 
     - name: Display detected kube-proxy mode
       debug:
         msg: "Detected kube-proxy mode: {{ detected_kubeproxy_mode | default('iptables') }}"
 
+- name: Determine target nodes (exclude localhost)
+  set_fact:
+    target_nodes: "{{ groups['all'] | default([]) | difference(['localhost']) }}"
+
 - name: Run remediation tasks on all nodes
   delegate_to: "{{ item }}"
   become: true
-  loop: "{{ groups['all'] | default(['localhost']) }}"
-  when: item != 'localhost'
+  loop: "{{ target_nodes }}"
+  when: target_nodes | length > 0
   block:
     - name: Check current ip_forward setting
       shell: sysctl net.ipv4.ip_forward | awk '{print $3}'
@@ -100,19 +108,29 @@
     - name: Check iptables FORWARD chain policy
       shell: |
         set -o pipefail
-        (iptables -L FORWARD -n | head -1 || iptables-nft -L FORWARD -n | head -1) | grep -oP 'policy \K\w+'
+        # Try iptables-nft first, then standard iptables
+        if command -v iptables-nft >/dev/null 2>&1; then
+          iptables-nft -L FORWARD -n 2>/dev/null | head -1 | grep -oP 'policy \K\w+' || echo "UNKNOWN"
+        elif command -v iptables >/dev/null 2>&1; then
+          iptables -L FORWARD -n 2>/dev/null | head -1 | grep -oP 'policy \K\w+' || echo "UNKNOWN"
+        else
+          echo "NOTFOUND"
+        fi
       register: iptables_forward_policy
       changed_when: false
       failed_when: false
 
-    - name: Fix iptables FORWARD chain if DROP
+    - name: Fix iptables FORWARD chain if DROP or UNKNOWN
       block:
         - name: Set FORWARD chain policy to ACCEPT
           shell: |
             if command -v iptables-nft >/dev/null 2>&1; then
               iptables-nft -P FORWARD ACCEPT
-            else
+            elif command -v iptables >/dev/null 2>&1; then
               iptables -P FORWARD ACCEPT
+            else
+              echo "No iptables command found" >&2
+              exit 1
             fi
           when: remediation_fix_iptables | bool
 
@@ -138,8 +156,9 @@
             - ansible_os_family == "RedHat"
           failed_when: false
       when:
-        - iptables_forward_policy.stdout | default('') | trim == 'DROP'
+        - iptables_forward_policy.stdout | default('') | trim in ['DROP', 'UNKNOWN']
         - remediation_fix_iptables | bool
+        - iptables_forward_policy.stdout | default('') | trim != 'NOTFOUND'
 
     - name: Check if IPVS module is loaded (when in iptables mode)
       shell: lsmod | grep ip_vs || echo "not-loaded"

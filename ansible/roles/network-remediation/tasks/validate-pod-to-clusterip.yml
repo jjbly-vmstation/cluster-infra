@@ -14,11 +14,20 @@
   set_fact:
     kube_dns_clusterip: "{{ kube_dns_clusterip_result.stdout | trim }}"
 
-- name: Validate kube-dns ClusterIP format
+- name: Validate kube-dns ClusterIP format (basic check)
   assert:
     that:
       - kube_dns_clusterip is match('^([0-9]{1,3}\.){3}[0-9]{1,3}$')
-    fail_msg: "Invalid kube-dns ClusterIP: {{ kube_dns_clusterip }}"
+    fail_msg: "Invalid kube-dns ClusterIP format: {{ kube_dns_clusterip }}"
+
+- name: Validate kube-dns ClusterIP octets (each 0-255)
+  assert:
+    that:
+      - item | int >= 0
+      - item | int <= 255
+    fail_msg: "Invalid IP octet in ClusterIP: {{ item }} (must be 0-255)"
+  loop: "{{ kube_dns_clusterip.split('.') }}"
+  when: kube_dns_clusterip is match('^([0-9]{1,3}\.){3}[0-9]{1,3}$')
 
 - name: Display kube-dns ClusterIP
   debug:

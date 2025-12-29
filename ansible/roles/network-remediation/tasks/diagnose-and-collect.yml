@@ -142,11 +142,15 @@
         mode: '0644'
       become: true
 
+- name: Determine target nodes (exclude localhost)
+  set_fact:
+    target_nodes: "{{ groups['all'] | default([]) | difference(['localhost']) }}"
+
 - name: Collect node-level diagnostics (from all nodes)
   delegate_to: "{{ item }}"
   become: true
-  loop: "{{ groups['all'] | default(['localhost']) }}"
-  when: item != 'localhost'
+  loop: "{{ target_nodes }}"
+  when: target_nodes | length > 0
   block:
     - name: Check ip_forward setting
       shell: sysctl net.ipv4.ip_forward
