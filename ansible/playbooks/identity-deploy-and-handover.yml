@@ -19,6 +19,7 @@
     freeipa_ready_timeout: 1200s
     # Role variable pass-through (roles will use their defaults if not specified)
     # Provide canonical namespace and data-dir defaults so roles have values
+    kubeconfig: /etc/kubernetes/admin.conf
     namespace_identity: identity
     namespace_cert_manager: cert-manager
     namespace_platform: platform
@@ -39,6 +40,11 @@
       include_role:
         name: identity-prerequisites
       tags: [prerequisites, always]
+
+    # Phase 1a: Ensure cluster DNS service routing works (kube-dns ClusterIP)
+    - name: Ensure kube-dns ClusterIP is reachable from pods (auto-remediate kube-proxy/sysctls)
+      include_tasks: tasks/ensure-cluster-dns.yml
+      tags: [dns, coredns, kube-proxy, always]
     
     # Phase 2: Optional backup before destructive replace
     - name: Backup existing identity data before replace

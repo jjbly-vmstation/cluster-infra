@@ -1,0 +1,100 @@
+---
+- name: Diagnose CoreDNS / node DNS networking
+  hosts: all
+  become: yes
+  gather_facts: yes
+
+  vars:
+    diagnostics_dir: /tmp/coredns-network-diagnostics
+    upstreams:
+      - 1.1.1.1
+      - 8.8.8.8
+      - 10.96.0.10
+
+  tasks:
+    - name: Ensure diagnostics directory exists
+      file:
+        path: "{{ diagnostics_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Record kernel ip_forward value
+      ansible.builtin.shell: sysctl net.ipv4.ip_forward
+      register: ip_forward
+      changed_when: false
+
+    - name: Capture iptables FORWARD chain (iptables or iptables-nft)
+      ansible.builtin.shell: |
+        set -o pipefail
+        (iptables -L FORWARD -n -v 2>/dev/null || iptables-nft -L FORWARD -n -v 2>/dev/null) || true
+      register: iptables_forward
+      changed_when: false
+
+    - name: Capture nat PREROUTING (iptables)
+      ansible.builtin.shell: |
+        set -o pipefail
+        (iptables -t nat -L PREROUTING -n -v 2>/dev/null || iptables-nft -t nat -L PREROUTING -n -v 2>/dev/null) || true
+      register: iptables_nat_prerouting
+      changed_when: false
+
+    - name: Capture iptables -t nat -L OUTPUT
+      ansible.builtin.shell: |
+        set -o pipefail
+        (iptables -t nat -L OUTPUT -n -v 2>/dev/null || iptables-nft -t nat -L OUTPUT -n -v 2>/dev/null) || true
+      register: iptables_nat_output
+      changed_when: false
+
+    - name: Test UDP/TCP reachability to upstream resolvers from node (udp via nc, tcp fallback)
+      ansible.builtin.shell: |
+        set -e
+        for ip in {{ upstreams | join(' ') }}; do
+          echo "UPSTREAM: $ip" >> {{ diagnostics_dir }}/reachability-{{ inventory_hostname }}.txt || true
+          if command -v nc >/dev/null 2>&1; then
+            nc -u -z -w3 $ip 53 && echo "udp:OK $ip" >> {{ diagnostics_dir }}/reachability-{{ inventory_hostname }}.txt || echo "udp:FAIL $ip" >> {{ diagnostics_dir }}/reachability-{{ inventory_hostname }}.txt
+            nc -z -w3 $ip 53 && echo "tcp:OK $ip" >> {{ diagnostics_dir }}/reachability-{{ inventory_hostname }}.txt || echo "tcp:FAIL $ip" >> {{ diagnostics_dir }}/reachability-{{ inventory_hostname }}.txt
+          else
+            echo "nc not present; skipping in-node UDP/TCP test" >> {{ diagnostics_dir }}/reachability-{{ inventory_hostname }}.txt
+          fi
+        done
+      register: reach_tests
+      failed_when: false
+
+    - name: Save collected diagnostics to per-node file
+      copy:
+        dest: "{{ diagnostics_dir }}/summary-{{ inventory_hostname }}.txt"
+        content: |
+          Host: {{ inventory_hostname }}
+          IPs: {{ ansible_all_ipv4_addresses | join(', ') }}
+          Kernel ip_forward: {{ ip_forward.stdout | default('') }}
+
+          --- iptables FORWARD ---
+          {{ iptables_forward.stdout | default('') }}
+
+          --- iptables nat PREROUTING ---
+          {{ iptables_nat_prerouting.stdout | default('') }}
+
+          --- iptables nat OUTPUT ---
+          {{ iptables_nat_output.stdout | default('') }}
+
+          --- reachability tests ---
+          {{ lookup('file', diagnostics_dir + '/reachability-' + inventory_hostname + '.txt') | default('no reachability file') }}
+
+    - name: Fetch diagnostics to control machine
+      ansible.builtin.fetch:
+        src: "{{ diagnostics_dir }}/summary-{{ inventory_hostname }}.txt"
+        dest: ./diagnostics/coredns/
+        flat: yes
+
+    - name: Fetch reachability raw file if present
+      ansible.builtin.fetch:
+        src: "{{ diagnostics_dir }}/reachability-{{ inventory_hostname }}.txt"
+        dest: ./diagnostics/coredns/
+        flat: yes
+      failed_when: false
+
+    - name: Show next steps message
+      ansible.builtin.debug:
+        msg: |
+          Diagnostics collected on each node and fetched to controller under ./diagnostics/coredns/.

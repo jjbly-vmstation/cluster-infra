@@ -1,0 +1,229 @@
+---
+# Ensures kube-dns ClusterIP is reachable from pods.
+# Fixes common node-level causes (ip_forward disabled, FORWARD policy DROP, missing br_netfilter)
+# and restarts kube-proxy to re-program Service/NAT rules.
+
+- name: Ensure kube-dns Service exists
+  ansible.builtin.command: >-
+    kubectl --kubeconfig={{ kubeconfig }} -n kube-system get svc kube-dns
+  register: kube_dns_svc
+  changed_when: false
+
+- name: Read kube-dns ClusterIP
+  ansible.builtin.command: >-
+    kubectl --kubeconfig={{ kubeconfig }} -n kube-system get svc kube-dns -o jsonpath={.spec.clusterIP}
+  register: kube_dns_ip
+  changed_when: false
+
+- name: Set kube-dns ClusterIP fact
+  ansible.builtin.set_fact:
+    kube_dns_cluster_ip: "{{ kube_dns_ip.stdout | trim }}"
+
+- name: Assert kube-dns ClusterIP looks valid
+  ansible.builtin.assert:
+    that:
+      - kube_dns_cluster_ip is match('^([0-9]{1,3}\.){3}[0-9]{1,3}$')
+    fail_msg: "kube-dns ClusterIP is not a valid IPv4 address: '{{ kube_dns_cluster_ip }}'"
+
+- name: Cluster DNS smoke test from a pod (kube-system) - initial
+  ansible.builtin.shell: |
+    set -euo pipefail
+    ns=kube-system
+    name=dns-smoke-{{ ansible_date_time.epoch }}
+    ip="{{ kube_dns_cluster_ip }}"
+
+    # Create a short-lived pod that tries to query kube-dns ClusterIP directly.
+    kubectl --kubeconfig={{ kubeconfig }} -n "$ns" delete pod "$name" --ignore-not-found >/dev/null 2>&1 || true
+    kubectl --kubeconfig={{ kubeconfig }} -n "$ns" run "$name" \
+      --image=nicolaka/netshoot \
+      --restart=Never \
+      --labels=app=dns-smoke \
+      --command -- sh -c "dig @${ip} kubernetes.default.svc.cluster.local +time=2 +tries=1 +short >/dev/null"
+
+    # Wait until it completes (Succeeded or Failed)
+    for i in $(seq 1 40); do
+      phase=$(kubectl --kubeconfig={{ kubeconfig }} -n "$ns" get pod "$name" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+      if [ "$phase" = "Succeeded" ]; then
+        kubectl --kubeconfig={{ kubeconfig }} -n "$ns" delete pod "$name" --ignore-not-found >/dev/null 2>&1 || true
+        exit 0
+      fi
+      if [ "$phase" = "Failed" ]; then
+        kubectl --kubeconfig={{ kubeconfig }} -n "$ns" logs "$name" --all-containers --tail=200 || true
+        kubectl --kubeconfig={{ kubeconfig }} -n "$ns" describe pod "$name" || true
+        kubectl --kubeconfig={{ kubeconfig }} -n "$ns" delete pod "$name" --ignore-not-found >/dev/null 2>&1 || true
+        exit 1
+      fi
+      sleep 1
+    done
+
+    kubectl --kubeconfig={{ kubeconfig }} -n "$ns" logs "$name" --all-containers --tail=200 || true
+    kubectl --kubeconfig={{ kubeconfig }} -n "$ns" describe pod "$name" || true
+    kubectl --kubeconfig={{ kubeconfig }} -n "$ns" delete pod "$name" --ignore-not-found >/dev/null 2>&1 || true
+    exit 2
+  args:
+    executable: /bin/bash
+  register: dns_smoke_initial
+  changed_when: false
+  failed_when: false
+
+- name: Mark whether kube-dns ClusterIP is reachable
+  ansible.builtin.set_fact:
+    kube_dns_clusterip_ok: "{{ dns_smoke_initial.rc == 0 }}"
+
+- name: Show DNS smoke test result
+  ansible.builtin.debug:
+    msg: |
+      ============================================
+      kube-dns ClusterIP smoke test
+      ============================================
+      kube-dns ClusterIP: {{ kube_dns_cluster_ip }}
+      Result: {{ 'OK' if kube_dns_clusterip_ok else 'FAILED' }} (rc={{ dns_smoke_initial.rc }})
+      ============================================
+
+- name: Remediate node sysctls/modules/iptables for Kubernetes networking
+  when: not kube_dns_clusterip_ok
+  block:
+    - name: Ensure br_netfilter and overlay modules are loaded (all nodes)
+      ansible.builtin.shell: |
+        set -e
+        modprobe br_netfilter || true
+        modprobe overlay || true
+      args:
+        executable: /bin/bash
+      delegate_to: "{{ item }}"
+      loop: "{{ groups['all'] | difference(['localhost']) }}"
+      changed_when: false
+      failed_when: false
+
+    - name: Ensure Kubernetes sysctls are persisted (all nodes)
+      ansible.builtin.blockinfile:
+        path: /etc/sysctl.d/99-kubernetes.conf
+        create: true
+        mode: '0644'
+        block: |
+          net.ipv4.ip_forward = 1
+          net.bridge.bridge-nf-call-iptables = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+      delegate_to: "{{ item }}"
+      loop: "{{ groups['all'] | difference(['localhost']) }}"
+
+    - name: Apply sysctl settings (all nodes)
+      ansible.builtin.command: sysctl --system
+      delegate_to: "{{ item }}"
+      loop: "{{ groups['all'] | difference(['localhost']) }}"
+      changed_when: false
+      failed_when: false
+
+    - name: Ensure iptables FORWARD policy is ACCEPT (all nodes)
+      ansible.builtin.shell: |
+        set -e
+        if command -v iptables >/dev/null 2>&1; then
+          iptables -P FORWARD ACCEPT || true
+        fi
+        if command -v iptables-nft >/dev/null 2>&1; then
+          iptables-nft -P FORWARD ACCEPT || true
+        fi
+      args:
+        executable: /bin/bash
+      delegate_to: "{{ item }}"
+      loop: "{{ groups['all'] | difference(['localhost']) }}"
+      changed_when: false
+      failed_when: false
+
+    - name: Restart kube-proxy DaemonSet (reprogram Service/NAT rules)
+      ansible.builtin.command: >-
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system rollout restart ds/kube-proxy
+      register: kube_proxy_restart
+      changed_when: true
+      failed_when: false
+
+    - name: Wait for kube-proxy rollout
+      ansible.builtin.command: >-
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system rollout status ds/kube-proxy --timeout=180s
+      register: kube_proxy_rollout
+      changed_when: false
+      failed_when: false
+
+    - name: Restart CoreDNS deployment (best-effort)
+      ansible.builtin.command: >-
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system rollout restart deployment/coredns
+      register: coredns_restart
+      changed_when: true
+      failed_when: false
+
+    - name: Wait for CoreDNS rollout (best-effort)
+      ansible.builtin.command: >-
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system rollout status deployment/coredns --timeout=180s
+      register: coredns_rollout
+      changed_when: false
+      failed_when: false
+
+- name: Cluster DNS smoke test from a pod (kube-system) - after remediation
+  when: not kube_dns_clusterip_ok
+  ansible.builtin.shell: |
+    set -euo pipefail
+    ns=kube-system
+    name=dns-smoke-remediated-{{ ansible_date_time.epoch }}
+    ip="{{ kube_dns_cluster_ip }}"
+
+    kubectl --kubeconfig={{ kubeconfig }} -n "$ns" delete pod "$name" --ignore-not-found >/dev/null 2>&1 || true
+    kubectl --kubeconfig={{ kubeconfig }} -n "$ns" run "$name" \
+      --image=nicolaka/netshoot \
+      --restart=Never \
+      --labels=app=dns-smoke \
+      --command -- sh -c "dig @${ip} kubernetes.default.svc.cluster.local +time=2 +tries=1 +short >/dev/null"
+
+    for i in $(seq 1 60); do
+      phase=$(kubectl --kubeconfig={{ kubeconfig }} -n "$ns" get pod "$name" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+      if [ "$phase" = "Succeeded" ]; then
+        kubectl --kubeconfig={{ kubeconfig }} -n "$ns" delete pod "$name" --ignore-not-found >/dev/null 2>&1 || true
+        exit 0
+      fi
+      if [ "$phase" = "Failed" ]; then
+        kubectl --kubeconfig={{ kubeconfig }} -n "$ns" logs "$name" --all-containers --tail=200 || true
+        kubectl --kubeconfig={{ kubeconfig }} -n "$ns" describe pod "$name" || true
+        kubectl --kubeconfig={{ kubeconfig }} -n "$ns" delete pod "$name" --ignore-not-found >/dev/null 2>&1 || true
+        exit 1
+      fi
+      sleep 1
+    done
+
+    kubectl --kubeconfig={{ kubeconfig }} -n "$ns" logs "$name" --all-containers --tail=200 || true
+    kubectl --kubeconfig={{ kubeconfig }} -n "$ns" describe pod "$name" || true
+    kubectl --kubeconfig={{ kubeconfig }} -n "$ns" delete pod "$name" --ignore-not-found >/dev/null 2>&1 || true
+    exit 2
+  args:
+    executable: /bin/bash
+  register: dns_smoke_after
+  changed_when: false
+  failed_when: false
+
+- name: Fail if kube-dns ClusterIP is still not reachable after remediation
+  when:
+    - not kube_dns_clusterip_ok
+    - dns_smoke_after.rc != 0
+  ansible.builtin.fail:
+    msg: |
+      ============================================================
+      Cluster DNS is still broken (pod -> kube-dns ClusterIP failed)
+      ============================================================
+      kube-dns ClusterIP: {{ kube_dns_cluster_ip }}
+      Smoke test rc: {{ dns_smoke_after.rc }}
+
+      Automated remediation attempted:
+      - ensured br_netfilter/overlay modules (best-effort)
+      - set sysctls (ip_forward + bridge nf-call)
+      - set iptables FORWARD policy ACCEPT (best-effort)
+      - restarted kube-proxy and coredns
+
+      Next likely causes (outside this playbook’s control):
+      - kube-proxy running in IPVS mode without ipvs kernel modules
+      - node firewall/nftables rules overriding kube-proxy
+      - Calico dataplane policy/routing issue
+
+      Suggested immediate debug commands:
+        kubectl -n kube-system get ds kube-proxy -o wide
+        kubectl -n kube-system logs ds/kube-proxy --tail=200
+        kubectl -n kube-system get svc kube-dns -o yaml
+        kubectl -n kube-system get endpoints kube-dns -o yaml
+      ============================================================
