@@ -82,7 +82,7 @@
           
         - name: Set kube-proxy mode fact
           ansible.builtin.set_fact:
-            kube_proxy_mode: "{{ kube_proxy_mode_raw.stdout | trim | lower }}"
+            kube_proxy_mode: "{{ 'iptables' if kube_proxy_mode_raw.stdout | trim | lower == 'notfound' else kube_proxy_mode_raw.stdout | trim | lower }}"
           
         - name: Display kube-proxy mode
           ansible.builtin.debug:
@@ -189,6 +189,7 @@
               echo "Flushing IPVS tables on $(hostname)..."
               if ipvsadm -C; then
                 echo "IPVS_FLUSHED"
+                exit 0
               else
                 echo "ipvsadm -C failed"
                 exit 1
@@ -202,7 +203,7 @@
           delegate_to: "{{ item }}"
           loop: "{{ nodes_with_ipvs }}"
           register: ipvs_flush
-          changed_when: false
+          changed_when: "'IPVS_FLUSHED' in ipvs_flush.stdout"
           failed_when: false
           
         - name: Mark as changed if any IPVS tables were flushed

@@ -132,7 +132,11 @@
       block:
         - name: Run fix-ipvs playbook to flush stale IPVS tables when needed
           ansible.builtin.command:
-            cmd: ansible-playbook ansible/playbooks/fix-ipvs.yml -i {{ ansible_inventory }}
+            argv:
+              - ansible-playbook
+              - ansible/playbooks/fix-ipvs.yml
+              - -i
+              - "{{ ansible_inventory }}"
           args:
             chdir: "{{ repo_root }}"
           register: fix_ipvs_run
