@@ -21,7 +21,7 @@
   block:
     - name: Get CoreDNS deployment status
       shell: >-
-        kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system
         get deployment coredns -o yaml
       register: coredns_deployment
       changed_when: false
@@ -29,7 +29,7 @@
 
     - name: Get CoreDNS pods
       shell: >-
-        kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system
         get pods -l k8s-app=kube-dns -o wide
       register: coredns_pods
       changed_when: false
@@ -37,7 +37,7 @@
 
     - name: Get kube-dns Service details
       shell: >-
-        kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system
         get svc kube-dns -o yaml
       register: kube_dns_service
       changed_when: false
@@ -45,7 +45,7 @@
 
     - name: Get kube-dns Endpoints
       shell: >-
-        kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system
         get endpoints kube-dns -o yaml
       register: kube_dns_endpoints
       changed_when: false
@@ -53,7 +53,7 @@
 
     - name: Get kube-proxy DaemonSet
       shell: >-
-        kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system
         get daemonset kube-proxy -o yaml
       register: kubeproxy_daemonset
       changed_when: false
@@ -61,7 +61,7 @@
 
     - name: Get kube-proxy pods
       shell: >-
-        kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system
         get pods -l k8s-app=kube-proxy -o wide
       register: kubeproxy_pods
       changed_when: false
@@ -69,7 +69,7 @@
 
     - name: Get kube-proxy logs
       shell: >-
-        kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system
         logs daemonset/kube-proxy --tail=500 --prefix=true
       register: kubeproxy_logs
       changed_when: false
@@ -77,7 +77,7 @@
 
     - name: Get CoreDNS logs
       shell: >-
-        kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system
         logs deployment/coredns --tail=500 --prefix=true
       register: coredns_logs
       changed_when: false
@@ -85,7 +85,7 @@
 
     - name: Get all Services in kube-system
       shell: >-
-        kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system
         get svc -o wide
       register: kube_system_services
       changed_when: false
@@ -93,7 +93,7 @@
 
     - name: Get kube-proxy ConfigMap
       shell: >-
-        kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system
         get configmap kube-proxy -o yaml
       register: kubeproxy_configmap
       changed_when: false
@@ -107,34 +107,34 @@
           Cluster Network Diagnostics
           Collected: {{ ansible_date_time.iso8601 }}
           ============================================================
-          
+
           === CoreDNS Deployment ===
           {{ coredns_deployment.stdout | default('N/A') }}
-          
+
           === CoreDNS Pods ===
           {{ coredns_pods.stdout | default('N/A') }}
-          
+
           === kube-dns Service ===
           {{ kube_dns_service.stdout | default('N/A') }}
-          
+
           === kube-dns Endpoints ===
           {{ kube_dns_endpoints.stdout | default('N/A') }}
-          
+
           === kube-proxy DaemonSet ===
           {{ kubeproxy_daemonset.stdout | default('N/A') }}
-          
+
           === kube-proxy Pods ===
           {{ kubeproxy_pods.stdout | default('N/A') }}
-          
+
           === kube-proxy ConfigMap ===
           {{ kubeproxy_configmap.stdout | default('N/A') }}
-          
+
           === kube-system Services ===
           {{ kube_system_services.stdout | default('N/A') }}
-          
+
           === kube-proxy Logs (last 500 lines) ===
           {{ kubeproxy_logs.stdout | default('N/A') }}
-          
+
           === CoreDNS Logs (last 500 lines) ===
           {{ coredns_logs.stdout | default('N/A') }}
         owner: root

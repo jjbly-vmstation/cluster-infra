@@ -4,7 +4,7 @@
 
 - name: Get kube-dns ClusterIP
   shell: >-
-    kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+    kubectl --kubeconfig={{ kubeconfig }} -n kube-system
     get svc kube-dns -o jsonpath='{.spec.clusterIP}'
   register: kube_dns_clusterip_result
   changed_when: false
@@ -35,7 +35,7 @@
 
 - name: Check if kube-dns endpoints exist
   shell: >-
-    kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+    kubectl --kubeconfig={{ kubeconfig }} -n kube-system
     get endpoints kube-dns -o jsonpath='{.subsets[*].addresses[*].ip}'
   register: kube_dns_endpoints
   changed_when: false
@@ -127,7 +127,7 @@
     fail_msg: |
       DNS validation FAILED!
       Pod phase: {{ dns_pod_phase.stdout }}
-      
+
       Logs:
       {{ dns_validation_logs.stdout }}
 

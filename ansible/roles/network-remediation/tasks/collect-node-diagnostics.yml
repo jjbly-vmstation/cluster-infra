@@ -108,28 +108,28 @@
       Node Network Diagnostics: {{ node_target }}
       Collected: {{ ansible_date_time.iso8601 }}
       ============================================================
-      
+
       === IP Forward ===
       {{ node_ip_forward.stdout | default('N/A') }}
-      
+
       === Bridge Netfilter Settings ===
       {{ node_bridge_settings.stdout | default('N/A') }}
-      
+
       === iptables FORWARD Chain ===
       {{ node_iptables_forward.stdout | default('N/A') }}
-      
+
       === iptables NAT Chains ===
       {{ node_iptables_nat.stdout | default('N/A') }}
-      
+
       === IPVS State ===
       {{ node_ipvs_state.stdout | default('N/A') }}
-      
+
       === Network Interfaces ===
       {{ node_interfaces.stdout | default('N/A') }}
-      
+
       === Routing Table ===
       {{ node_routes.stdout | default('N/A') }}
-      
+
       === DNS Resolution Test ===
       {{ node_dns_test.stdout | default('N/A') }}
     owner: root

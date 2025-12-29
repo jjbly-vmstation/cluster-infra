@@ -33,25 +33,25 @@
     - name: Validation failed without remediation
       debug:
         msg: "Network validation failed and remediation is disabled"
-      
+
     - name: Collect diagnostics on validation failure
       include_tasks: diagnose-and-collect.yml
       when: diagnostics_enabled | bool
-      
+
     - name: Fail with actionable error message
       fail:
         msg: |
           Network validation failed!
-          
+
           Pod-to-ClusterIP DNS connectivity is broken. This typically indicates:
           1. ip_forward is disabled on nodes
           2. iptables FORWARD chain has DROP policy
           3. br_netfilter module not loaded
           4. kube-proxy not functioning correctly
           5. CNI plugin issues
-          
+
           Diagnostics collected at: {{ diagnostics_base_dir }}
-          
+
           Enable remediation_enabled: true to auto-fix, or manually troubleshoot:
           - Check: sysctl net.ipv4.ip_forward (should be 1)
           - Check: iptables -L FORWARD (should allow CNI traffic)
