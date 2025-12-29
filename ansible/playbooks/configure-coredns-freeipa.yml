@@ -21,6 +21,9 @@
   gather_facts: true
   
   vars:
+    # Repository root path for playbook execution
+    repo_root: "{{ playbook_dir | dirname | dirname }}"
+    
     # Kubernetes configuration
     kubeconfig: /etc/kubernetes/admin.conf
     
@@ -128,12 +131,12 @@
           ansible.builtin.command:
             cmd: ansible-playbook ansible/playbooks/fix-ipvs.yml -i inventory.ini
           args:
-            chdir: "{{ playbook_dir | dirname | dirname }}"
+            chdir: "{{ repo_root }}"
           register: fix_ipvs_run
           failed_when: fix_ipvs_run.rc != 0
           run_once: true
           delegate_to: localhost
-          changed_when: "'IPVS tables flushed' in fix_ipvs_run.stdout"
+          changed_when: "'IPVS_FLUSHED' in fix_ipvs_run.stdout"
           
         - name: Display IPVS remediation result
           ansible.builtin.debug:

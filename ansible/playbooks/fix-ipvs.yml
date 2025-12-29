@@ -99,8 +99,12 @@
     # Phase 2: Check ip_vs module and flush IPVS tables if needed
     # =========================================================================
     - name: Phase 2 - Check ip_vs module and flush IPVS tables
-      when: kube_proxy_mode == "iptables"
       block:
+        - name: Initialize facts
+          ansible.builtin.set_fact:
+            nodes_with_ipvs: []
+            ipvs_was_flushed: false
+            
         - name: Check if ip_vs module is loaded on each node
           ansible.builtin.shell: |
             set -euo pipefail
@@ -116,10 +120,14 @@
           loop: "{{ groups['all'] }}"
           changed_when: false
           failed_when: false
+          when: kube_proxy_mode == "iptables"
           
         - name: Create fact list of nodes with ip_vs loaded
           ansible.builtin.set_fact:
             nodes_with_ipvs: "{{ ip_vs_status.results | selectattr('stdout', 'search', 'LOADED') | map(attribute='item') | list }}"
+          when: 
+            - kube_proxy_mode == "iptables"
+            - ip_vs_status.results is defined
           
         - name: Display nodes requiring IPVS cleanup
           ansible.builtin.debug:
@@ -180,18 +188,25 @@
             if command -v ipvsadm >/dev/null 2>&1; then
               echo "Flushing IPVS tables on $(hostname)..."
               ipvsadm -C || true
-              echo "IPVS tables flushed"
+              echo "IPVS_FLUSHED"
             else
               echo "ipvsadm not available, skipping flush"
-              exit 1
+              exit 0
             fi
           args:
             executable: /bin/bash
           delegate_to: "{{ item }}"
           loop: "{{ nodes_with_ipvs }}"
           register: ipvs_flush
-          changed_when: "'IPVS tables flushed' in ipvs_flush.stdout"
+          changed_when: false
           failed_when: false
+          
+        - name: Mark as changed if any IPVS tables were flushed
+          when: 
+            - nodes_with_ipvs | length > 0
+            - ipvs_flush.results | selectattr('stdout', 'search', 'IPVS_FLUSHED') | list | length > 0
+          ansible.builtin.set_fact:
+            ipvs_was_flushed: true
           
         - name: Show IPVS tables after clearing (for debugging)
           when: nodes_with_ipvs | length > 0
@@ -225,7 +240,9 @@
     # Phase 3: Restart kube-proxy DaemonSet
     # =========================================================================
     - name: Phase 3 - Restart kube-proxy DaemonSet
-      when: kube_proxy_mode == "iptables" and (nodes_with_ipvs | default([]) | length > 0)
+      when: 
+        - kube_proxy_mode == "iptables"
+        - ipvs_was_flushed | default(false) | bool
       block:
         - name: Restart kube-proxy DaemonSet to reprogram dataplane
           ansible.builtin.command: >-
