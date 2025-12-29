@@ -23,6 +23,21 @@
   changed_when: false
   failed_when: false
 
+- name: Read kube-dns Endpoint IP (best-effort)
+  ansible.builtin.command: >-
+    kubectl --kubeconfig={{ kubeconfig }} -n kube-system get endpoints kube-dns -o jsonpath={.subsets[0].addresses[0].ip}
+  register: kube_dns_endpoint_ip
+  changed_when: false
+  failed_when: false
+
+- name: Set kube-dns Endpoint IP fact
+  ansible.builtin.set_fact:
+    kube_dns_endpoint_ip: "{{ kube_dns_endpoint_ip.stdout | default('') | trim }}"
+
+- name: Show kube-dns Endpoint IP
+  ansible.builtin.debug:
+    msg: "kube-dns endpoint IP (best-effort): {{ kube_dns_endpoint_ip | default('') }}"
+
 - name: Capture kube-proxy DaemonSet (yaml)
   ansible.builtin.command: >-
     kubectl --kubeconfig={{ kubeconfig }} -n kube-system get ds kube-proxy -o yaml
@@ -98,6 +113,46 @@
   args:
     executable: /bin/bash
   register: dns_smoke_initial
+  changed_when: false
+  failed_when: false
+
+- name: Direct CoreDNS endpoint smoke test (bypass ClusterIP) - initial (best-effort)
+  when: kube_dns_endpoint_ip is defined and (kube_dns_endpoint_ip | length) > 0
+  ansible.builtin.shell: |
+    set -euo pipefail
+    ns=kube-system
+    name=dns-smoke-endpoint-initial-{{ ansible_date_time.epoch }}
+    ip="{{ kube_dns_endpoint_ip }}"
+
+    kubectl --kubeconfig={{ kubeconfig }} -n "$ns" delete pod "$name" --ignore-not-found >/dev/null 2>&1 || true
+    kubectl --kubeconfig={{ kubeconfig }} -n "$ns" run "$name" \
+      --image=nicolaka/netshoot \
+      --restart=Never \
+      --labels=app=dns-smoke \
+      --command -- sh -c "dig @${ip} kubernetes.default.svc.cluster.local +time=2 +tries=1 +short >/dev/null"
+
+    for i in $(seq 1 60); do
+      phase=$(kubectl --kubeconfig={{ kubeconfig }} -n "$ns" get pod "$name" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+      if [ "$phase" = "Succeeded" ]; then
+        kubectl --kubeconfig={{ kubeconfig }} -n "$ns" delete pod "$name" --ignore-not-found >/dev/null 2>&1 || true
+        exit 0
+      fi
+      if [ "$phase" = "Failed" ]; then
+        kubectl --kubeconfig={{ kubeconfig }} -n "$ns" logs "$name" --all-containers --tail=200 || true
+        kubectl --kubeconfig={{ kubeconfig }} -n "$ns" describe pod "$name" || true
+        kubectl --kubeconfig={{ kubeconfig }} -n "$ns" delete pod "$name" --ignore-not-found >/dev/null 2>&1 || true
+        exit 1
+      fi
+      sleep 1
+    done
+
+    kubectl --kubeconfig={{ kubeconfig }} -n "$ns" logs "$name" --all-containers --tail=200 || true
+    kubectl --kubeconfig={{ kubeconfig }} -n "$ns" describe pod "$name" || true
+    kubectl --kubeconfig={{ kubeconfig }} -n "$ns" delete pod "$name" --ignore-not-found >/dev/null 2>&1 || true
+    exit 2
+  args:
+    executable: /bin/bash
+  register: dns_smoke_endpoint_initial
   changed_when: false
   failed_when: false
 
@@ -298,6 +353,136 @@
       changed_when: false
       failed_when: false
 
+    - name: Refresh kube-dns Endpoints after restarts (yaml)
+      ansible.builtin.command: >-
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system get endpoints kube-dns -o yaml
+      register: kube_dns_ep_yaml_after
+      changed_when: false
+      failed_when: false
+
+    - name: Refresh kube-dns Endpoint IP after restarts (best-effort)
+      ansible.builtin.command: >-
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system get endpoints kube-dns -o jsonpath={.subsets[0].addresses[0].ip}
+      register: kube_dns_endpoint_ip_after
+      changed_when: false
+      failed_when: false
+
+    - name: Set kube-dns Endpoint IP fact (after restarts)
+      ansible.builtin.set_fact:
+        kube_dns_endpoint_ip_after: "{{ kube_dns_endpoint_ip_after.stdout | default('') | trim }}"
+
+    - name: Direct CoreDNS endpoint smoke test (bypass ClusterIP) - after restarts (best-effort)
+      when: kube_dns_endpoint_ip_after is defined and (kube_dns_endpoint_ip_after | length) > 0
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ns=kube-system
+        name=dns-smoke-endpoint-after-{{ ansible_date_time.epoch }}
+        ip="{{ kube_dns_endpoint_ip_after }}"
+
+        kubectl --kubeconfig={{ kubeconfig }} -n "$ns" delete pod "$name" --ignore-not-found >/dev/null 2>&1 || true
+        kubectl --kubeconfig={{ kubeconfig }} -n "$ns" run "$name" \
+          --image=nicolaka/netshoot \
+          --restart=Never \
+          --labels=app=dns-smoke \
+          --command -- sh -c "dig @${ip} kubernetes.default.svc.cluster.local +time=2 +tries=1 +short >/dev/null"
+
+        for i in $(seq 1 60); do
+          phase=$(kubectl --kubeconfig={{ kubeconfig }} -n "$ns" get pod "$name" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+          if [ "$phase" = "Succeeded" ]; then
+            kubectl --kubeconfig={{ kubeconfig }} -n "$ns" delete pod "$name" --ignore-not-found >/dev/null 2>&1 || true
+            exit 0
+          fi
+          if [ "$phase" = "Failed" ]; then
+            kubectl --kubeconfig={{ kubeconfig }} -n "$ns" logs "$name" --all-containers --tail=200 || true
+            kubectl --kubeconfig={{ kubeconfig }} -n "$ns" describe pod "$name" || true
+            kubectl --kubeconfig={{ kubeconfig }} -n "$ns" delete pod "$name" --ignore-not-found >/dev/null 2>&1 || true
+            exit 1
+          fi
+          sleep 1
+        done
+
+        kubectl --kubeconfig={{ kubeconfig }} -n "$ns" logs "$name" --all-containers --tail=200 || true
+        kubectl --kubeconfig={{ kubeconfig }} -n "$ns" describe pod "$name" || true
+        kubectl --kubeconfig={{ kubeconfig }} -n "$ns" delete pod "$name" --ignore-not-found >/dev/null 2>&1 || true
+        exit 2
+      args:
+        executable: /bin/bash
+      register: dns_smoke_endpoint_after
+      changed_when: false
+      failed_when: false
+
+    - name: If ClusterIP still failing on IPVS, flush IPVS state and restart kube-proxy (best-effort)
+      when:
+        - kube_proxy_mode | default('') | lower == 'ipvs'
+        - dns_smoke_after_kp.rc != 0
+      block:
+        - name: Flush ipvs table + kube-proxy ipsets (all nodes) (best-effort)
+          ansible.builtin.shell: |
+            set -e
+            if command -v ipvsadm >/dev/null 2>&1; then
+              ipvsadm -C || true
+            fi
+            if command -v ipset >/dev/null 2>&1; then
+              ipset flush || true
+            fi
+          args:
+            executable: /bin/bash
+          delegate_to: "{{ item }}"
+          loop: "{{ groups['all'] | difference(['localhost']) }}"
+          changed_when: false
+          failed_when: false
+
+        - name: Restart kube-proxy after IPVS flush
+          ansible.builtin.command: >-
+            kubectl --kubeconfig={{ kubeconfig }} -n kube-system rollout restart ds/kube-proxy
+          changed_when: true
+          failed_when: false
+
+        - name: Wait for kube-proxy rollout after IPVS flush
+          ansible.builtin.command: >-
+            kubectl --kubeconfig={{ kubeconfig }} -n kube-system rollout status ds/kube-proxy --timeout=240s
+          changed_when: false
+          failed_when: false
+
+        - name: Cluster DNS smoke test from a pod (kube-system) - after IPVS flush
+          ansible.builtin.shell: |
+            set -euo pipefail
+            ns=kube-system
+            name=dns-smoke-after-ipvsflush-{{ ansible_date_time.epoch }}
+            ip="{{ kube_dns_cluster_ip }}"
+
+            kubectl --kubeconfig={{ kubeconfig }} -n "$ns" delete pod "$name" --ignore-not-found >/dev/null 2>&1 || true
+            kubectl --kubeconfig={{ kubeconfig }} -n "$ns" run "$name" \
+              --image=nicolaka/netshoot \
+              --restart=Never \
+              --labels=app=dns-smoke \
+              --command -- sh -c "dig @${ip} kubernetes.default.svc.cluster.local +time=2 +tries=1 +short >/dev/null"
+
+            for i in $(seq 1 60); do
+              phase=$(kubectl --kubeconfig={{ kubeconfig }} -n "$ns" get pod "$name" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+              if [ "$phase" = "Succeeded" ]; then
+                kubectl --kubeconfig={{ kubeconfig }} -n "$ns" delete pod "$name" --ignore-not-found >/dev/null 2>&1 || true
+                exit 0
+              fi
+              if [ "$phase" = "Failed" ]; then
+                kubectl --kubeconfig={{ kubeconfig }} -n "$ns" logs "$name" --all-containers --tail=200 || true
+                kubectl --kubeconfig={{ kubeconfig }} -n "$ns" describe pod "$name" || true
+                kubectl --kubeconfig={{ kubeconfig }} -n "$ns" delete pod "$name" --ignore-not-found >/dev/null 2>&1 || true
+                exit 1
+              fi
+              sleep 1
+            done
+
+            kubectl --kubeconfig={{ kubeconfig }} -n "$ns" logs "$name" --all-containers --tail=200 || true
+            kubectl --kubeconfig={{ kubeconfig }} -n "$ns" describe pod "$name" || true
+            kubectl --kubeconfig={{ kubeconfig }} -n "$ns" delete pod "$name" --ignore-not-found >/dev/null 2>&1 || true
+            exit 2
+          args:
+            executable: /bin/bash
+          register: dns_smoke_after_ipvsflush
+          changed_when: false
+          failed_when: false
+
     - name: If still failing, force kube-proxy to iptables mode via configmap (best-effort)
       when:
         - dns_smoke_after_kp.rc != 0
@@ -385,7 +570,7 @@
 
 - name: Compute final DNS smoke-test result
   ansible.builtin.set_fact:
-    kube_dns_smoke_rc: "{{ dns_smoke_after_iptables.rc | default(dns_smoke_after_kp.rc | default(dns_smoke_initial.rc | default(1))) }}"
+    kube_dns_smoke_rc: "{{ dns_smoke_after_iptables.rc | default(dns_smoke_after_ipvsflush.rc | default(dns_smoke_after_kp.rc | default(dns_smoke_initial.rc | default(1)))) }}"
 
 - name: Update kube_dns_clusterip_ok based on final smoke-test
   ansible.builtin.set_fact:
