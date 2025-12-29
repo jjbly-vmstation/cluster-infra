@@ -34,6 +34,8 @@
     # CoreDNS configuration
     coredns_namespace: kube-system
     coredns_configmap: coredns
+    # Space-separated list of upstream DNS resolvers to use for CoreDNS forward (recommended: 1.1.1.1 8.8.8.8)
+    coredns_forwarders: "1.1.1.1 8.8.8.8"
     coredns_deployment_wait_retries: 10
     coredns_deployment_wait_delay: 3
     coredns_rollout_timeout: 120s
@@ -354,7 +356,14 @@
           ansible.builtin.set_fact:
             hosts_section_exists: "{{ 'hosts {' in current_corefile.stdout }}"
             
-        - name: Create new Corefile with FreeIPA hosts section
+        
+          
+        - name: Update existing Corefile (if hosts section already exists)
+          ansible.builtin.set_fact:
+            updated_corefile: "{{ current_corefile.stdout }}"
+          when: hosts_section_exists
+          
+        - name: Create Corefile on disk with configured forwarders
           ansible.builtin.copy:
             dest: /tmp/corefile-updated.txt
             content: |
@@ -370,7 +379,7 @@
                      ttl 30
                   }
                   prometheus :9153
-                  forward . /etc/resolv.conf {
+                  forward . {{ coredns_forwarders }} {
                      max_concurrent 1000
                   }
                   cache 30
@@ -383,36 +392,13 @@
                     fallthrough
                   }
                 }
-            mode: '0644'
           when: not hosts_section_exists
-          
-        - name: Read updated Corefile
-          ansible.builtin.slurp:
-            src: /tmp/corefile-updated.txt
-          register: corefile_content
-          when: not hosts_section_exists
-          
-        - name: Set updated_corefile variable
-          ansible.builtin.set_fact:
-            updated_corefile: "{{ corefile_content.content | b64decode }}"
-          when: not hosts_section_exists
-          
-        - name: Update existing Corefile (if hosts section already exists)
-          ansible.builtin.set_fact:
-            updated_corefile: "{{ current_corefile.stdout }}"
-          when: hosts_section_exists
-          
-        - name: Create temporary CoreDNS ConfigMap manifest file from template
-          ansible.builtin.template:
-            src: templates/coredns-configmap.yaml.j2
-            dest: /tmp/coredns-configmap-updated.yaml
-            mode: '0644'
-          when: not hosts_section_exists
-          
-        - name: Apply updated CoreDNS ConfigMap
+
+        - name: Apply updated CoreDNS ConfigMap from Corefile
           ansible.builtin.command: >
-            kubectl --kubeconfig={{ kubeconfig }}
-            apply -f /tmp/coredns-configmap-updated.yaml
+            kubectl --kubeconfig={{ kubeconfig }} -n {{ coredns_namespace }} \
+            create configmap {{ coredns_configmap }} --from-file=Corefile=/tmp/corefile-updated.txt --dry-run=client -o yaml | \
+            kubectl --kubeconfig={{ kubeconfig }} -n {{ coredns_namespace }} apply -f -
           register: configmap_apply
           changed_when: "'configured' in configmap_apply.stdout or 'created' in configmap_apply.stdout"
           when: not hosts_section_exists
