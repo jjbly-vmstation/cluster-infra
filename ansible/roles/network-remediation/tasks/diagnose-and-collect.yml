@@ -1,0 +1,320 @@
+---
+# Diagnostics collection and artifact archival
+# Collects network state, logs, and configurations for troubleshooting
+
+- name: Create diagnostics directory
+  file:
+    path: "{{ diagnostics_base_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  become: true
+
+- name: Set diagnostics timestamp
+  set_fact:
+    diagnostics_timestamp: "{{ ansible_date_time.epoch }}"
+
+- name: Collect cluster-wide diagnostics (from control plane)
+  delegate_to: localhost
+  become: false
+  block:
+    - name: Get CoreDNS deployment status
+      shell: >-
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+        get deployment coredns -o yaml
+      register: coredns_deployment
+      changed_when: false
+      failed_when: false
+
+    - name: Get CoreDNS pods
+      shell: >-
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+        get pods -l k8s-app=kube-dns -o wide
+      register: coredns_pods
+      changed_when: false
+      failed_when: false
+
+    - name: Get kube-dns Service details
+      shell: >-
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+        get svc kube-dns -o yaml
+      register: kube_dns_service
+      changed_when: false
+      failed_when: false
+
+    - name: Get kube-dns Endpoints
+      shell: >-
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+        get endpoints kube-dns -o yaml
+      register: kube_dns_endpoints
+      changed_when: false
+      failed_when: false
+
+    - name: Get kube-proxy DaemonSet
+      shell: >-
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+        get daemonset kube-proxy -o yaml
+      register: kubeproxy_daemonset
+      changed_when: false
+      failed_when: false
+
+    - name: Get kube-proxy pods
+      shell: >-
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+        get pods -l k8s-app=kube-proxy -o wide
+      register: kubeproxy_pods
+      changed_when: false
+      failed_when: false
+
+    - name: Get kube-proxy logs
+      shell: >-
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+        logs daemonset/kube-proxy --tail=500 --prefix=true
+      register: kubeproxy_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Get CoreDNS logs
+      shell: >-
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+        logs deployment/coredns --tail=500 --prefix=true
+      register: coredns_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Get all Services in kube-system
+      shell: >-
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+        get svc -o wide
+      register: kube_system_services
+      changed_when: false
+      failed_when: false
+
+    - name: Get kube-proxy ConfigMap
+      shell: >-
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+        get configmap kube-proxy -o yaml
+      register: kubeproxy_configmap
+      changed_when: false
+      failed_when: false
+
+    - name: Save cluster diagnostics
+      copy:
+        dest: "{{ diagnostics_base_dir }}/cluster-diagnostics-{{ diagnostics_timestamp }}.txt"
+        content: |
+          ============================================================
+          Cluster Network Diagnostics
+          Collected: {{ ansible_date_time.iso8601 }}
+          ============================================================
+          
+          === CoreDNS Deployment ===
+          {{ coredns_deployment.stdout | default('N/A') }}
+          
+          === CoreDNS Pods ===
+          {{ coredns_pods.stdout | default('N/A') }}
+          
+          === kube-dns Service ===
+          {{ kube_dns_service.stdout | default('N/A') }}
+          
+          === kube-dns Endpoints ===
+          {{ kube_dns_endpoints.stdout | default('N/A') }}
+          
+          === kube-proxy DaemonSet ===
+          {{ kubeproxy_daemonset.stdout | default('N/A') }}
+          
+          === kube-proxy Pods ===
+          {{ kubeproxy_pods.stdout | default('N/A') }}
+          
+          === kube-proxy ConfigMap ===
+          {{ kubeproxy_configmap.stdout | default('N/A') }}
+          
+          === kube-system Services ===
+          {{ kube_system_services.stdout | default('N/A') }}
+          
+          === kube-proxy Logs (last 500 lines) ===
+          {{ kubeproxy_logs.stdout | default('N/A') }}
+          
+          === CoreDNS Logs (last 500 lines) ===
+          {{ coredns_logs.stdout | default('N/A') }}
+        owner: root
+        group: root
+        mode: '0644'
+      become: true
+
+- name: Determine target nodes (exclude localhost)
+  set_fact:
+    target_nodes: "{{ groups['all'] | default([]) | difference(['localhost']) }}"
+
+- name: Collect node-level diagnostics (from all nodes)
+  delegate_to: "{{ item }}"
+  become: true
+  loop: "{{ target_nodes }}"
+  when: target_nodes | length > 0
+  block:
+    - name: Check ip_forward setting
+      shell: sysctl net.ipv4.ip_forward
+      register: node_ip_forward
+      changed_when: false
+      failed_when: false
+
+    - name: Check bridge netfilter settings
+      shell: |
+        echo "br_netfilter module:"
+        lsmod | grep br_netfilter || echo "NOT LOADED"
+        echo ""
+        echo "bridge-nf-call-iptables:"
+        sysctl net.bridge.bridge-nf-call-iptables 2>/dev/null || echo "NOT SET"
+        echo ""
+        echo "bridge-nf-call-ip6tables:"
+        sysctl net.bridge.bridge-nf-call-ip6tables 2>/dev/null || echo "NOT SET"
+      register: node_bridge_settings
+      changed_when: false
+      failed_when: false
+
+    - name: Check iptables FORWARD chain
+      shell: |
+        set -o pipefail
+        echo "=== iptables FORWARD chain ==="
+        (iptables -L FORWARD -n -v || iptables-nft -L FORWARD -n -v) 2>/dev/null || echo "Failed to read iptables"
+      register: node_iptables_forward
+      changed_when: false
+      failed_when: false
+
+    - name: Check iptables NAT chains
+      shell: |
+        set -o pipefail
+        echo "=== iptables NAT PREROUTING ==="
+        (iptables -t nat -L PREROUTING -n -v || iptables-nft -t nat -L PREROUTING -n -v) 2>/dev/null || echo "Failed"
+        echo ""
+        echo "=== iptables NAT OUTPUT ==="
+        (iptables -t nat -L OUTPUT -n -v || iptables-nft -t nat -L OUTPUT -n -v) 2>/dev/null || echo "Failed"
+        echo ""
+        echo "=== iptables NAT POSTROUTING ==="
+        (iptables -t nat -L POSTROUTING -n -v || iptables-nft -t nat -L POSTROUTING -n -v) 2>/dev/null || echo "Failed"
+      register: node_iptables_nat
+      changed_when: false
+      failed_when: false
+
+    - name: Check IPVS state
+      shell: |
+        echo "=== IPVS Module ==="
+        lsmod | grep ip_vs || echo "NOT LOADED"
+        echo ""
+        echo "=== IPVS Table ==="
+        if command -v ipvsadm >/dev/null 2>&1; then
+          ipvsadm -Ln 2>/dev/null || echo "ipvsadm present but failed to read"
+        else
+          echo "ipvsadm not installed"
+        fi
+      register: node_ipvs_state
+      changed_when: false
+      failed_when: false
+
+    - name: Check network interfaces
+      shell: ip addr show
+      register: node_interfaces
+      changed_when: false
+      failed_when: false
+
+    - name: Check routing table
+      shell: ip route show
+      register: node_routes
+      changed_when: false
+      failed_when: false
+
+    - name: Test DNS resolution from node
+      shell: |
+        echo "=== DNS Resolution Test ==="
+        echo "Testing kubernetes.default.svc.cluster.local:"
+        nslookup kubernetes.default.svc.cluster.local 2>&1 || echo "FAILED"
+        echo ""
+        echo "Testing kube-dns.kube-system.svc.cluster.local:"
+        nslookup kube-dns.kube-system.svc.cluster.local 2>&1 || echo "FAILED"
+      register: node_dns_test
+      changed_when: false
+      failed_when: false
+
+    - name: Save node diagnostics
+      copy:
+        dest: "{{ diagnostics_base_dir }}/node-{{ inventory_hostname }}-{{ diagnostics_timestamp }}.txt"
+        content: |
+          ============================================================
+          Node Network Diagnostics: {{ inventory_hostname }}
+          Collected: {{ ansible_date_time.iso8601 }}
+          ============================================================
+          
+          === IP Forward ===
+          {{ node_ip_forward.stdout | default('N/A') }}
+          
+          === Bridge Netfilter Settings ===
+          {{ node_bridge_settings.stdout | default('N/A') }}
+          
+          === iptables FORWARD Chain ===
+          {{ node_iptables_forward.stdout | default('N/A') }}
+          
+          === iptables NAT Chains ===
+          {{ node_iptables_nat.stdout | default('N/A') }}
+          
+          === IPVS State ===
+          {{ node_ipvs_state.stdout | default('N/A') }}
+          
+          === Network Interfaces ===
+          {{ node_interfaces.stdout | default('N/A') }}
+          
+          === Routing Table ===
+          {{ node_routes.stdout | default('N/A') }}
+          
+          === DNS Resolution Test ===
+          {{ node_dns_test.stdout | default('N/A') }}
+        owner: root
+        group: root
+        mode: '0644'
+
+- name: Create diagnostics archive
+  delegate_to: localhost
+  become: true
+  block:
+    - name: Ensure archive directory exists
+      file:
+        path: "{{ diagnostics_archive_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Create tarball of diagnostics
+      archive:
+        path: "{{ diagnostics_base_dir }}/*"
+        dest: "{{ diagnostics_archive_dir }}/network-diagnostics-{{ diagnostics_timestamp }}.tar.gz"
+        format: gz
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Display diagnostics location
+      debug:
+        msg:
+          - "Network diagnostics collected successfully"
+          - "Raw diagnostics: {{ diagnostics_base_dir }}"
+          - "Archive: {{ diagnostics_archive_dir }}/network-diagnostics-{{ diagnostics_timestamp }}.tar.gz"
+
+- name: Cleanup old diagnostics
+  find:
+    paths: "{{ diagnostics_base_dir }}"
+    age: "{{ diagnostics_retention_days }}d"
+    recurse: yes
+  register: old_diagnostics
+  become: true
+
+- name: Remove old diagnostics files
+  file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ old_diagnostics.files }}"
+  when: old_diagnostics.files | length > 0
+  become: true
+
+- name: Diagnostics collection completed
+  debug:
+    msg: "✓ Network diagnostics collected and archived"

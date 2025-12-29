@@ -33,11 +33,14 @@ cluster-infra/
 │       ├── identity-keycloak/      # Keycloak SSO server
 │       ├── identity-postgresql/    # PostgreSQL for Keycloak
 │       ├── identity-prerequisites/ # Identity stack prerequisites
+│       ├── identity-sso/           # Keycloak SSO automation (realm import, LDAP)
 │       ├── identity-storage/       # Persistent storage setup
+│       ├── network-remediation/    # Network validation and auto-remediation
 │       └── preflight-rhel10/       # RHEL10 preflight role
 ├── config/
 │   └── kubespray-defaults.env      # Kubespray configuration
 ├── docs/
+│   ├── AUTOMATED-IDENTITY-DEPLOYMENT.md  # Automated deployment guide
 │   ├── IDENTITY-SSO-SETUP.md       # Identity stack and SSO setup guide
 │   ├── KEYCLOAK-INTEGRATION.md     # Application SSO integration guide
 │   └── KUBESPRAY_DEPLOYMENT.md     # Kubespray deployment guide
@@ -221,7 +224,32 @@ The cluster includes a comprehensive identity management solution for cluster-wi
 
 ### Deployment
 
-**Option 1: Automated Full Deployment (Recommended)**
+**🚀 Fully Automated Deployment (Recommended)**
+
+The identity stack is now **100% automated** with built-in network diagnostics and self-healing:
+
+```bash
+# Single command deployment with automatic network remediation
+cd /opt/vmstation-org/cluster-infra/ansible
+sudo FORCE_RESET=1 RESET_CONFIRM=yes \
+     FREEIPA_ADMIN_PASSWORD=secret123 \
+     KEYCLOAK_ADMIN_PASSWORD=secret123 \
+     ../scripts/identity-full-deploy.sh
+```
+
+**Features:**
+- ✅ Automatic pod-to-ClusterIP DNS validation
+- ✅ Auto-remediation of network issues (ip_forward, iptables, br_netfilter, IPVS)
+- ✅ Keycloak realm import via API (no manual UI steps)
+- ✅ FreeIPA LDAP federation auto-configured
+- ✅ OIDC client secrets exported to Kubernetes
+- ✅ Comprehensive diagnostics collection on failures
+- ✅ Idempotent - safe to re-run multiple times
+- ✅ Retry logic with automatic remediation
+
+**See:** [Automated Identity Deployment Guide](docs/AUTOMATED-IDENTITY-DEPLOYMENT.md) for complete documentation.
+
+**Option 1: Automated Full Deployment**
 
 ```bash
 # Deploy complete identity stack with all phases

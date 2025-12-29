@@ -1,0 +1,233 @@
+---
+# Node-level network remediation tasks
+# Runs on all cluster nodes to fix common network/dataplane issues
+
+- name: Start network remediation on all nodes
+  debug:
+    msg: "Running network remediation on all cluster nodes"
+
+# This section runs on localhost (control plane) to gather cluster info
+- name: Detect kube-proxy mode from ConfigMap
+  delegate_to: localhost
+  become: false
+  block:
+    - name: Read kube-proxy ConfigMap
+      shell: >-
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+        get configmap kube-proxy -o jsonpath='{.data.config\.conf}'
+      register: kubeproxy_config
+      changed_when: false
+      failed_when: false
+
+    - name: Extract mode from config (with fallback)
+      set_fact:
+        detected_kubeproxy_mode: >-
+          {% set mode_match = kubeproxy_config.stdout | default('') | regex_search('mode:\s*"?([A-Za-z0-9_-]+)"?', '\1') %}
+          {{ mode_match[0] if mode_match else 'iptables' }}
+      when: kubeproxy_config.rc == 0
+
+    - name: Set default mode if detection failed
+      set_fact:
+        detected_kubeproxy_mode: 'iptables'
+      when: kubeproxy_config.rc != 0 or detected_kubeproxy_mode is not defined
+
+    - name: Display detected kube-proxy mode
+      debug:
+        msg: "Detected kube-proxy mode: {{ detected_kubeproxy_mode | default('iptables') }}"
+
+- name: Determine target nodes (exclude localhost)
+  set_fact:
+    target_nodes: "{{ groups['all'] | default([]) | difference(['localhost']) }}"
+
+- name: Run remediation tasks on all nodes
+  delegate_to: "{{ item }}"
+  become: true
+  loop: "{{ target_nodes }}"
+  when: target_nodes | length > 0
+  block:
+    - name: Check current ip_forward setting
+      shell: sysctl net.ipv4.ip_forward | awk '{print $3}'
+      register: current_ip_forward
+      changed_when: false
+
+    - name: Enable ip_forward if disabled
+      block:
+        - name: Set ip_forward via sysctl command
+          shell: sysctl -w net.ipv4.ip_forward=1
+          when: remediation_fix_ip_forward | bool
+
+        - name: Persist ip_forward in sysctl.conf
+          lineinfile:
+            path: /etc/sysctl.conf
+            regexp: '^net\.ipv4\.ip_forward'
+            line: 'net.ipv4.ip_forward = 1'
+            create: yes
+          when: remediation_fix_ip_forward | bool
+
+        - name: Apply sysctl changes
+          shell: sysctl -p
+          when: remediation_fix_ip_forward | bool
+      when: 
+        - current_ip_forward.stdout | trim != '1'
+        - remediation_fix_ip_forward | bool
+
+    - name: Check if br_netfilter module is loaded
+      shell: lsmod | grep br_netfilter || echo "not-loaded"
+      register: br_netfilter_check
+      changed_when: false
+
+    - name: Load br_netfilter module if missing
+      block:
+        - name: Load br_netfilter kernel module
+          modprobe:
+            name: br_netfilter
+            state: present
+          when: remediation_fix_br_netfilter | bool
+
+        - name: Persist br_netfilter across reboots
+          lineinfile:
+            path: /etc/modules-load.d/br_netfilter.conf
+            line: 'br_netfilter'
+            create: yes
+          when: remediation_fix_br_netfilter | bool
+
+        - name: Enable bridge netfilter sysctls
+          sysctl:
+            name: "{{ item }}"
+            value: '1'
+            state: present
+            reload: yes
+          loop:
+            - net.bridge.bridge-nf-call-iptables
+            - net.bridge.bridge-nf-call-ip6tables
+          when: remediation_fix_br_netfilter | bool
+      when:
+        - "'not-loaded' in br_netfilter_check.stdout"
+        - remediation_fix_br_netfilter | bool
+
+    - name: Check iptables FORWARD chain policy
+      shell: |
+        set -o pipefail
+        # Try iptables-nft first, then standard iptables
+        if command -v iptables-nft >/dev/null 2>&1; then
+          iptables-nft -L FORWARD -n 2>/dev/null | head -1 | grep -oP 'policy \K\w+' || echo "UNKNOWN"
+        elif command -v iptables >/dev/null 2>&1; then
+          iptables -L FORWARD -n 2>/dev/null | head -1 | grep -oP 'policy \K\w+' || echo "UNKNOWN"
+        else
+          echo "NOTFOUND"
+        fi
+      register: iptables_forward_policy
+      changed_when: false
+      failed_when: false
+
+    - name: Fix iptables FORWARD chain if DROP or UNKNOWN
+      block:
+        - name: Set FORWARD chain policy to ACCEPT
+          shell: |
+            if command -v iptables-nft >/dev/null 2>&1; then
+              iptables-nft -P FORWARD ACCEPT
+            elif command -v iptables >/dev/null 2>&1; then
+              iptables -P FORWARD ACCEPT
+            else
+              echo "No iptables command found" >&2
+              exit 1
+            fi
+          when: remediation_fix_iptables | bool
+
+        - name: Save iptables rules (Debian/Ubuntu)
+          shell: |
+            if command -v netfilter-persistent >/dev/null 2>&1; then
+              netfilter-persistent save
+            elif [ -f /etc/debian_version ]; then
+              iptables-save > /etc/iptables/rules.v4 || true
+            fi
+          when:
+            - remediation_fix_iptables | bool
+            - ansible_os_family == "Debian"
+          failed_when: false
+
+        - name: Save iptables rules (RHEL/CentOS)
+          shell: |
+            if command -v iptables-save >/dev/null 2>&1; then
+              iptables-save > /etc/sysconfig/iptables || true
+            fi
+          when:
+            - remediation_fix_iptables | bool
+            - ansible_os_family == "RedHat"
+          failed_when: false
+      when:
+        - iptables_forward_policy.stdout | default('') | trim in ['DROP', 'UNKNOWN']
+        - remediation_fix_iptables | bool
+        - iptables_forward_policy.stdout | default('') | trim != 'NOTFOUND'
+
+    - name: Check if IPVS module is loaded (when in iptables mode)
+      shell: lsmod | grep ip_vs || echo "not-loaded"
+      register: ipvs_module_check
+      changed_when: false
+      when: 
+        - ipvs_cleanup_enabled | bool
+        - detected_kubeproxy_mode | default('iptables') == 'iptables'
+
+    - name: Clear IPVS state if loaded in iptables mode
+      block:
+        - name: Install ipvsadm if needed
+          package:
+            name: ipvsadm
+            state: present
+          failed_when: false
+
+        - name: Flush IPVS table
+          shell: |
+            if command -v ipvsadm >/dev/null 2>&1; then
+              echo "Before flush:"
+              ipvsadm -Ln || true
+              echo "Flushing IPVS table..."
+              ipvsadm -C
+              echo "After flush:"
+              ipvsadm -Ln || true
+            else
+              echo "ipvsadm not available, skipping IPVS flush"
+            fi
+          register: ipvs_flush_result
+          changed_when: "'Flushing IPVS table' in ipvs_flush_result.stdout"
+          failed_when: false
+
+        - name: Display IPVS flush result
+          debug:
+            var: ipvs_flush_result.stdout_lines
+          when: ipvs_flush_result is defined
+      when:
+        - ipvs_cleanup_enabled | bool
+        - detected_kubeproxy_mode | default('iptables') == 'iptables'
+        - "'not-loaded' not in ipvs_module_check.stdout"
+
+- name: Restart kube-proxy DaemonSet
+  delegate_to: localhost
+  become: false
+  block:
+    - name: Rollout restart kube-proxy
+      shell: >-
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+        rollout restart daemonset/kube-proxy
+      register: kubeproxy_restart
+      changed_when: kubeproxy_restart.rc == 0
+      when: remediation_restart_kube_proxy | bool
+
+    - name: Wait for kube-proxy rollout to complete
+      shell: >-
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+        rollout status daemonset/kube-proxy --timeout=180s
+      register: kubeproxy_rollout_status
+      changed_when: false
+      failed_when: kubeproxy_rollout_status.rc != 0
+      when: remediation_restart_kube_proxy | bool
+
+    - name: Wait for kube-proxy pods to be ready
+      pause:
+        seconds: 15
+        prompt: "Waiting for kube-proxy pods to stabilize..."
+      when: remediation_restart_kube_proxy | bool
+
+- name: Network remediation completed
+  debug:
+    msg: "✓ Node-level network remediation completed successfully"
