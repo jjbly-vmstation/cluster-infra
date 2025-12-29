@@ -152,7 +152,6 @@
   loop: "{{ target_nodes }}"
   loop_control:
     loop_var: node_target
-  become: true
 
 - name: Create diagnostics archive
   delegate_to: localhost
