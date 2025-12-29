@@ -1,0 +1,62 @@
+*** Begin Patch
+*** Update File: f:\vmstation-org\cluster-infra\ansible\playbooks\configure-coredns-freeipa.yml
+@@
+-    coredns_configmap: coredns
++    coredns_configmap: coredns
++    # Space-separated list of upstream DNS resolvers to use for CoreDNS forward (recommended: 1.1.1.1 8.8.8.8)
++    coredns_forwarders: "1.1.1.1 8.8.8.8"
+@@
+-        - name: Create temporary CoreDNS ConfigMap manifest file from template
+-          ansible.builtin.template:
+-            src: templates/coredns-configmap.yaml.j2
+-            dest: /tmp/coredns-configmap-updated.yaml
+-            mode: '0644'
+-          when: not hosts_section_exists
+-
+-        - name: Apply updated CoreDNS ConfigMap
+-          ansible.builtin.command: >
+-            kubectl --kubeconfig={{ kubeconfig }}
+-            apply -f /tmp/coredns-configmap-updated.yaml
+-          register: configmap_apply
+-          changed_when: "'configured' in configmap_apply.stdout or 'created' in configmap_apply.stdout"
+-          when: not hosts_section_exists
++        - name: Create Corefile on disk with configured forwarders
++          ansible.builtin.copy:
++            dest: /tmp/corefile-updated.txt
++            content: |
++                .:53 {
++                  errors
++                  health {
++                     lameduck 5s
++                  }
++                  ready
++                  kubernetes cluster.local in-addr.arpa ip6.arpa {
++                     pods insecure
++                     fallthrough in-addr.arpa ip6.arpa
++                     ttl 30
++                  }
++                  prometheus :9153
++                  forward . {{ coredns_forwarders }} {
++                     max_concurrent 1000
++                  }
++                  cache 30
++                  loop
++                  reload
++                  loadbalance
++                  hosts {
++                    {{ freeipa_ip }} {{ freeipa_hostname }} ipa
++                    {{ freeipa_ip }} {{ freeipa_domain }}
++                    fallthrough
++                  }
++                }
++          when: not hosts_section_exists
++
++        - name: Apply updated CoreDNS ConfigMap from Corefile
++          ansible.builtin.command: >
++            kubectl --kubeconfig={{ kubeconfig }} -n {{ coredns_namespace }} \
++            create configmap {{ coredns_configmap }} --from-file=Corefile=/tmp/corefile-updated.txt --dry-run=client -o yaml | \
++            kubectl --kubeconfig={{ kubeconfig }} -n {{ coredns_namespace }} apply -f -
++          register: configmap_apply
++          changed_when: "'configured' in configmap_apply.stdout or 'created' in configmap_apply.stdout"
++          when: not hosts_section_exists
+*** End Patch
