@@ -1,0 +1,52 @@
+---
+# Playbook 02: Network Remediation Gate
+# Validates pod-to-ClusterIP DNS connectivity and remediates issues if found
+# This is a GATE playbook - identity deployment should not proceed if this fails
+
+- name: Network validation and remediation gate
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    kubeconfig: /etc/kubernetes/admin.conf
+    # Enable remediation by default
+    remediation_enabled: true
+    remediation_max_attempts: 3
+    diagnostics_enabled: true
+
+  pre_tasks:
+    - name: Display network gate banner
+      debug:
+        msg:
+          - "=========================================="
+          - "Network Remediation Gate"
+          - "=========================================="
+          - "This playbook validates pod-to-ClusterIP DNS connectivity"
+          - "and attempts automatic remediation if issues are found."
+          - ""
+          - "Configuration:"
+          - "  Remediation: {{ 'enabled' if remediation_enabled else 'disabled' }}"
+          - "  Max Attempts: {{ remediation_max_attempts }}"
+          - "  Diagnostics: {{ 'enabled' if diagnostics_enabled else 'disabled' }}"
+          - "=========================================="
+
+  roles:
+    - role: network-remediation
+      vars:
+        remediation_enabled: "{{ remediation_enabled | default(true) }}"
+        remediation_max_attempts: "{{ remediation_max_attempts | default(3) }}"
+        diagnostics_enabled: "{{ diagnostics_enabled | default(true) }}"
+
+  post_tasks:
+    - name: Network gate passed
+      debug:
+        msg:
+          - "=========================================="
+          - "Network Remediation Gate: PASSED"
+          - "=========================================="
+          - "✓ Pod-to-ClusterIP DNS connectivity validated"
+          - "✓ Network dataplane is functional"
+          - ""
+          - "Safe to proceed with identity stack deployment"
+          - "Run: ansible-playbook ansible/playbooks/03-deploy-db.yml"
+          - "=========================================="

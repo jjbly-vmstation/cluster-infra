@@ -1,0 +1,87 @@
+---
+# Ensure required sysctl settings and kernel modules for Kubernetes networking
+# This task ensures br_netfilter is loaded and ip_forward is enabled
+
+- name: Check if br_netfilter module is loaded
+  shell: lsmod | grep -q br_netfilter && echo "loaded" || echo "not-loaded"
+  register: br_netfilter_status
+  changed_when: false
+  become: true
+
+- name: Load br_netfilter kernel module
+  modprobe:
+    name: br_netfilter
+    state: present
+  when: br_netfilter_status.stdout == "not-loaded"
+  become: true
+  register: br_netfilter_loaded
+
+- name: Ensure br_netfilter loads on boot
+  lineinfile:
+    path: /etc/modules-load.d/k8s.conf
+    line: br_netfilter
+    create: yes
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+
+- name: Check current net.ipv4.ip_forward value
+  shell: sysctl -n net.ipv4.ip_forward
+  register: ip_forward_current
+  changed_when: false
+  become: true
+
+- name: Enable net.ipv4.ip_forward
+  sysctl:
+    name: net.ipv4.ip_forward
+    value: '1'
+    state: present
+    reload: yes
+    sysctl_file: /etc/sysctl.d/k8s.conf
+  when: ip_forward_current.stdout != "1"
+  become: true
+  register: ip_forward_enabled
+
+- name: Check current net.bridge.bridge-nf-call-iptables value
+  shell: sysctl -n net.bridge.bridge-nf-call-iptables 2>/dev/null || echo "0"
+  register: bridge_nf_call_iptables_current
+  changed_when: false
+  become: true
+
+- name: Enable net.bridge.bridge-nf-call-iptables
+  sysctl:
+    name: net.bridge.bridge-nf-call-iptables
+    value: '1'
+    state: present
+    reload: yes
+    sysctl_file: /etc/sysctl.d/k8s.conf
+  when: bridge_nf_call_iptables_current.stdout != "1"
+  become: true
+  register: bridge_nf_call_iptables_enabled
+
+- name: Check current net.bridge.bridge-nf-call-ip6tables value
+  shell: sysctl -n net.bridge.bridge-nf-call-ip6tables 2>/dev/null || echo "0"
+  register: bridge_nf_call_ip6tables_current
+  changed_when: false
+  become: true
+
+- name: Enable net.bridge.bridge-nf-call-ip6tables
+  sysctl:
+    name: net.bridge.bridge-nf-call-ip6tables
+    value: '1'
+    state: present
+    reload: yes
+    sysctl_file: /etc/sysctl.d/k8s.conf
+  when: bridge_nf_call_ip6tables_current.stdout != "1"
+  become: true
+  register: bridge_nf_call_ip6tables_enabled
+
+- name: Display sysctl and module remediation summary
+  debug:
+    msg:
+      - "Sysctl and module configuration:"
+      - "  br_netfilter: {{ 'loaded' if br_netfilter_loaded is changed else 'already loaded' }}"
+      - "  ip_forward: {{ 'enabled' if ip_forward_enabled is changed else 'already enabled' }}"
+      - "  bridge-nf-call-iptables: {{ 'enabled' if bridge_nf_call_iptables_enabled is changed else 'already enabled' }}"
+      - "  bridge-nf-call-ip6tables: {{ 'enabled' if bridge_nf_call_ip6tables_enabled is changed else 'already enabled' }}"

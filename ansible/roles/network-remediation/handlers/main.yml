@@ -1,0 +1,25 @@
+---
+# Handlers for network-remediation role
+# Triggered when remediation actions require service restarts
+
+- name: restart kube-proxy
+  shell: kubectl --kubeconfig={{ kubeconfig }} -n kube-system rollout restart daemonset/kube-proxy
+  delegate_to: localhost
+  become: false
+
+- name: wait for kube-proxy rollout
+  shell: kubectl --kubeconfig={{ kubeconfig }} -n kube-system rollout status daemonset/kube-proxy --timeout=180s
+  delegate_to: localhost
+  become: false
+
+- name: restart calico-node
+  shell: kubectl --kubeconfig={{ kubeconfig }} -n kube-system rollout restart daemonset/calico-node
+  delegate_to: localhost
+  become: false
+  when: "'calico' in cni_plugin | default('calico')"
+
+- name: wait for calico rollout
+  shell: kubectl --kubeconfig={{ kubeconfig }} -n kube-system rollout status daemonset/calico-node --timeout=180s
+  delegate_to: localhost
+  become: false
+  when: "'calico' in cni_plugin | default('calico')"

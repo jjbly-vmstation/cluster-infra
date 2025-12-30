@@ -1,0 +1,23 @@
+---
+# Detect kube-proxy proxier mode (iptables vs ipvs)
+# This task reads the kube-proxy ConfigMap to determine the configured mode
+
+- name: Read kube-proxy ConfigMap
+  shell: kubectl --kubeconfig={{ kubeconfig }} -n kube-system get configmap kube-proxy -o jsonpath='{.data.config\.conf}'
+  register: kubeproxy_config
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  failed_when: kubeproxy_config.rc != 0
+
+- name: Extract kube-proxy mode from config
+  set_fact:
+    detected_kubeproxy_mode: "{{ (kubeproxy_config.stdout | default('')) | regex_search('mode:\\s*\"?([A-Za-z0-9_-]+)\"?', '\\1') | default(['iptables'], true) | first }}"
+
+- name: Display detected kube-proxy mode
+  debug:
+    msg: "Detected kube-proxy mode: {{ detected_kubeproxy_mode }}"
+
+- name: Set proxier mode fact for use in other tasks
+  set_fact:
+    proxier_mode: "{{ detected_kubeproxy_mode }}"

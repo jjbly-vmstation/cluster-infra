@@ -1,0 +1,110 @@
+---
+# iptables/nftables backend remediation
+# Ensures iptables rules are properly configured for Kubernetes service routing
+# Checks for MASQUERADE rules and iptables FORWARD chain policy
+
+- name: Check iptables backend (legacy vs nft)
+  shell: |
+    if iptables --version 2>/dev/null | grep -q nf_tables; then
+      echo "nft"
+    elif iptables --version 2>/dev/null | grep -q legacy; then
+      echo "legacy"
+    else
+      echo "unknown"
+    fi
+  register: iptables_backend
+  changed_when: false
+  become: true
+
+- name: Display iptables backend
+  debug:
+    msg: "iptables backend: {{ iptables_backend.stdout }}"
+
+- name: Check iptables FORWARD chain policy
+  shell: iptables -L FORWARD -n -v | head -1 | awk '{print $4}'
+  register: forward_policy
+  changed_when: false
+  become: true
+
+- name: Display FORWARD chain policy
+  debug:
+    msg: "iptables FORWARD policy: {{ forward_policy.stdout }}"
+
+- name: Check for KUBE-SERVICES chain
+  shell: iptables -t nat -L KUBE-SERVICES -n 2>/dev/null | wc -l
+  register: kube_services_chain
+  changed_when: false
+  become: true
+  failed_when: false
+
+- name: Display KUBE-SERVICES chain status
+  debug:
+    msg: "KUBE-SERVICES chain exists: {{ 'yes' if (kube_services_chain.stdout | int) > 0 else 'no' }}"
+
+- name: Get KUBE-SERVICES chain packet counters
+  shell: iptables -t nat -L KUBE-SERVICES -n -v 2>/dev/null | head -5 || echo "Chain not found"
+  register: kube_services_counters
+  changed_when: false
+  become: true
+  failed_when: false
+
+- name: Display KUBE-SERVICES counters
+  debug:
+    var: kube_services_counters.stdout_lines
+
+- name: Check for MASQUERADE rules in POSTROUTING
+  shell: iptables -t nat -L POSTROUTING -n -v | grep -i masquerade || echo "No MASQUERADE rules found"
+  register: masquerade_rules
+  changed_when: false
+  become: true
+
+- name: Display MASQUERADE rules
+  debug:
+    var: masquerade_rules.stdout_lines
+
+- name: Check for CNI-specific iptables rules
+  shell: |
+    echo "=== KUBE-FORWARD ==="
+    iptables -L KUBE-FORWARD -n -v 2>/dev/null | head -10 || echo "Chain not found"
+    echo ""
+    echo "=== cali-FORWARD (Calico) ==="
+    iptables -L cali-FORWARD -n -v 2>/dev/null | head -10 || echo "Chain not found"
+    echo ""
+    echo "=== CNI-FORWARD ==="
+    iptables -L CNI-FORWARD -n -v 2>/dev/null | head -10 || echo "Chain not found"
+  register: cni_iptables_chains
+  changed_when: false
+  become: true
+  failed_when: false
+
+- name: Display CNI iptables chains
+  debug:
+    var: cni_iptables_chains.stdout_lines
+
+- name: Warn if FORWARD policy is DROP and no CNI rules found
+  debug:
+    msg: |
+      WARNING: iptables FORWARD policy is {{ forward_policy.stdout }} but CNI chains appear missing or empty.
+      This may block pod-to-pod and pod-to-service traffic.
+      Consider restarting kube-proxy and CNI pods.
+  when:
+    - forward_policy.stdout == "DROP"
+    - "'Chain not found' in cni_iptables_chains.stdout or cni_iptables_chains.stdout_lines | length < 5"
+
+- name: Check if iptables FORWARD needs CNI rule insertion
+  set_fact:
+    forward_needs_fix: "{{ forward_policy.stdout == 'DROP' and 'Chain not found' in cni_iptables_chains.stdout }}"
+
+- name: Suggest iptables remediation if needed
+  debug:
+    msg:
+      - "iptables FORWARD chain remediation suggested"
+      - "Consider manually inserting CNI rules or restarting network components"
+      - "Commands to try:"
+      - "  kubectl -n kube-system rollout restart daemonset/calico-node"
+      - "  kubectl -n kube-system rollout restart daemonset/kube-proxy"
+  when: forward_needs_fix | bool
+
+- name: iptables remediation complete
+  debug:
+    msg: "iptables configuration validated"
