@@ -206,6 +206,165 @@ ansible-playbook -i /srv/vmstation-org/cluster-setup/ansible/inventory/hosts.yml
 
 ### Identity Stack Playbooks
 
+#### Staged Deployment Playbooks (Recommended)
+
+##### `01-validate-cluster.yml`
+**Purpose**: Pre-deployment cluster validation  
+**Target Hosts**: `localhost`  
+**Checks**:
+- kubectl connectivity and version
+- Cluster node status (all Ready)
+- CoreDNS deployment and readiness
+- kube-proxy DaemonSet status
+- Storage provisioner availability
+
+**Usage**:
+```bash
+ansible-playbook ansible/playbooks/01-validate-cluster.yml
+```
+
+**Exit Codes**:
+- 0: Cluster is ready for identity deployment
+- 1: Cluster validation failed
+
+##### `02-remediate-network-gate.yml`
+**Purpose**: Network validation and remediation gate (CRITICAL)  
+**Target Hosts**: `localhost` (orchestrates node remediation)  
+**Features**:
+- Tests pod→ClusterIP DNS connectivity
+- Auto-remediates common network issues:
+  - Enables ip_forward
+  - Loads br_netfilter module
+  - Fixes iptables FORWARD chain
+  - Clears stale IPVS state
+  - Restarts kube-proxy
+- Collects diagnostics on failure
+- Retries up to 3 attempts with backoff
+
+**Usage**:
+```bash
+ansible-playbook ansible/playbooks/02-remediate-network-gate.yml
+```
+
+**Important**: Do NOT proceed with identity deployment if this fails.
+
+**Configuration**:
+```bash
+# Disable remediation (validation only)
+ansible-playbook ansible/playbooks/02-remediate-network-gate.yml -e remediation_enabled=false
+
+# Increase retries
+ansible-playbook ansible/playbooks/02-remediate-network-gate.yml -e remediation_max_attempts=5
+
+# Disable diagnostics
+ansible-playbook ansible/playbooks/02-remediate-network-gate.yml -e diagnostics_enabled=false
+```
+
+##### `03-deploy-db.yml`
+**Purpose**: Deploy PostgreSQL database for Keycloak  
+**Target Hosts**: `localhost`  
+**Components**:
+- PostgreSQL StatefulSet
+- Persistent storage
+- Database initialization
+
+**Usage**:
+```bash
+export POSTGRES_PASSWORD="your-secure-password"
+ansible-playbook ansible/playbooks/03-deploy-db.yml
+```
+
+##### `04-deploy-freeipa.yml`
+**Purpose**: Deploy FreeIPA LDAP server (optional)  
+**Target Hosts**: `localhost`  
+**Components**:
+- FreeIPA StatefulSet
+- LDAP, Kerberos, CA services
+- Network configuration (hostNetwork optional)
+
+**Usage**:
+```bash
+export FREEIPA_ADMIN_PASSWORD="your-secure-password"
+ansible-playbook ansible/playbooks/04-deploy-freeipa.yml
+
+# Enable hostNetwork for better node connectivity
+ansible-playbook ansible/playbooks/04-deploy-freeipa.yml -e freeipa_enable_hostnetwork=true
+
+# Enable automatic firewall configuration
+ansible-playbook ansible/playbooks/04-deploy-freeipa.yml -e identity_open_firewall=true
+```
+
+##### `05-deploy-keycloak.yml`
+**Purpose**: Deploy Keycloak with automated realm import  
+**Target Hosts**: `localhost`  
+**Components**:
+- Keycloak Deployment
+- Automated realm configuration via Admin API
+- LDAP federation setup (if FreeIPA deployed)
+- Client credentials configuration
+
+**Usage**:
+```bash
+export KEYCLOAK_ADMIN_PASSWORD="your-secure-password"
+ansible-playbook ansible/playbooks/05-deploy-keycloak.yml
+
+# Skip automated SSO configuration
+ansible-playbook ansible/playbooks/05-deploy-keycloak.yml -e keycloak_configure_sso=false
+```
+
+##### `06-verify-and-handover.yml`
+**Purpose**: Final verification and deployment summary  
+**Target Hosts**: `localhost`  
+**Features**:
+- Verifies all components are running
+- Counts ready replicas
+- Generates deployment summary
+- Saves handover documentation
+
+**Usage**:
+```bash
+ansible-playbook ansible/playbooks/06-verify-and-handover.yml
+```
+
+##### `fix-kubeproxy-servicecidr.yml`
+**Purpose**: Detect and fix kube-proxy service CIDR mismatches  
+**Target Hosts**: `localhost`  
+**Features**:
+- Extracts `--service-cluster-ip-range` from kube-apiserver
+- Compares with kube-proxy ConfigMap `clusterCIDR`
+- Backs up ConfigMap before changes
+- Patches ConfigMap and restarts kube-proxy
+- Validates iptables KUBE-SERVICES chain has traffic
+
+**Usage**:
+```bash
+ansible-playbook ansible/playbooks/fix-kubeproxy-servicecidr.yml
+```
+
+**When to use**:
+- KUBE-SERVICES chain shows zero packet counters
+- Services defined but not reachable
+- Startup misconfiguration suspected
+
+**Idempotency**: ✅ Safe to run multiple times - no-op if CIDRs match
+
+##### `test-idempotency.yml`
+**Purpose**: Validate deployment idempotency  
+**Target Hosts**: `localhost`  
+**Features**:
+- Runs each deployment step twice
+- Verifies no changes on second run
+- Tests network remediation
+- Tests PostgreSQL deployment
+- Tests Keycloak deployment
+
+**Usage**:
+```bash
+ansible-playbook ansible/playbooks/test-idempotency.yml
+```
+
+#### Complete Deployment Playbook
+
 #### `identity-deploy-and-handover.yml`
 **Purpose**: Deploy FreeIPA, Keycloak, PostgreSQL, and cert-manager for identity management  
 **Target Hosts**: `localhost` (runs kubectl commands on control plane)  
@@ -301,7 +460,60 @@ ansible-playbook -i inventory/mycluster/hosts.yaml \
 
 ## Deployment Workflow
 
-### Initial Deployment
+### Identity Stack Staged Deployment (Recommended)
+
+For maximum control and troubleshooting capability, use the staged deployment playbooks:
+
+```bash
+# Step 1: Validate cluster health
+ansible-playbook ansible/playbooks/01-validate-cluster.yml
+
+# Step 2: Network remediation gate (CRITICAL - do not skip)
+ansible-playbook ansible/playbooks/02-remediate-network-gate.yml
+
+# Step 3: Deploy PostgreSQL
+export POSTGRES_PASSWORD="your-secure-password"
+ansible-playbook ansible/playbooks/03-deploy-db.yml
+
+# Step 4: Deploy FreeIPA (optional, can be skipped)
+export FREEIPA_ADMIN_PASSWORD="your-secure-password"
+ansible-playbook ansible/playbooks/04-deploy-freeipa.yml
+
+# Step 5: Deploy Keycloak with automated realm import
+export KEYCLOAK_ADMIN_PASSWORD="your-secure-password"
+ansible-playbook ansible/playbooks/05-deploy-keycloak.yml
+
+# Step 6: Verify and generate handover
+ansible-playbook ansible/playbooks/06-verify-and-handover.yml
+
+# Step 7: Test idempotency (optional)
+ansible-playbook ansible/playbooks/test-idempotency.yml
+```
+
+**Advantages**:
+- ✅ Catch issues early with validation
+- ✅ Network gate prevents wasted time on broken connectivity
+- ✅ Granular control over each component
+- ✅ Easy to retry individual steps
+- ✅ Better for troubleshooting
+
+### Identity Stack Complete Deployment
+
+For a single-playbook deployment of all components:
+
+```bash
+# Set environment variables
+export POSTGRES_PASSWORD="your-secure-password"
+export KEYCLOAK_ADMIN_PASSWORD="your-secure-password"
+export FREEIPA_ADMIN_PASSWORD="your-secure-password"
+
+# Run complete deployment
+ansible-playbook ansible/playbooks/identity-deploy-and-handover.yml
+```
+
+This playbook includes network remediation automatically.
+
+### Initial Kubernetes Cluster Deployment
 ```bash
 # 1. Deploy Debian cluster (control plane + worker)
 ./deploy.sh debian
