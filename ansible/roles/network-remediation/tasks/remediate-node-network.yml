@@ -13,7 +13,7 @@
   block:
     - name: Read kube-proxy ConfigMap
       shell: >-
-        kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system
         get configmap kube-proxy -o jsonpath='{.data.config\.conf}'
       register: kubeproxy_config
       changed_when: false
@@ -21,9 +21,7 @@
 
     - name: Extract mode from config (with fallback)
       set_fact:
-        detected_kubeproxy_mode: >-
-          {% set mode_match = kubeproxy_config.stdout | default('') | regex_search('mode:\s*"?([A-Za-z0-9_-]+)"?', '\1') %}
-          {{ mode_match[0] if mode_match else 'iptables' }}
+        detected_kubeproxy_mode: "{{ (kubeproxy_config.stdout | default('') | regex_search('mode:\\s*\"?([A-Za-z0-9_-]+)\"?', '\\1') | default(['iptables'], true))[0] }}"
       when: kubeproxy_config.rc == 0
 
     - name: Set default mode if detection failed
@@ -52,7 +50,7 @@
   block:
     - name: Rollout restart kube-proxy
       shell: >-
-        kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system
         rollout restart daemonset/kube-proxy
       register: kubeproxy_restart
       changed_when: kubeproxy_restart.rc == 0
@@ -60,7 +58,7 @@
 
     - name: Wait for kube-proxy rollout to complete
       shell: >-
-        kubectl --kubeconfig={{ kubeconfig }} -n kube-system 
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system
         rollout status daemonset/kube-proxy --timeout=180s
       register: kubeproxy_rollout_status
       changed_when: false

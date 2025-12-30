@@ -10,11 +10,11 @@
 
     - name: Attempt DNS validation
       include_tasks: validate-pod-to-clusterip.yml
-      
+
     - name: Mark validation as passed
       set_fact:
         validation_passed: true
-        
+
   rescue:
     - name: DNS validation failed - starting remediation
       debug:
@@ -35,17 +35,17 @@
           - (current_remediation_attempt | int) < (remediation_max_attempts | int)
         fail_msg: |
           Network remediation failed after {{ remediation_max_attempts }} attempts.
-          
+
           DNS validation continues to fail despite:
           1. Fixing ip_forward
           2. Fixing iptables FORWARD chain
           3. Loading br_netfilter
           4. Restarting kube-proxy
           5. Clearing IPVS state (if applicable)
-          
+
           Manual intervention required. Check diagnostics at:
           {{ diagnostics_base_dir }}
-          
+
           Archived diagnostics: {{ diagnostics_archive_dir }}/network-diagnostics-{{ ansible_date_time.epoch }}.tar.gz
 
     - name: Run node-level network remediation
