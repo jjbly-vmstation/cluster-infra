@@ -1,0 +1,65 @@
+---
+# Playbook 04: Deploy FreeIPA
+# Deploys FreeIPA LDAP server for centralized identity management
+
+- name: Deploy FreeIPA
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    kubeconfig: /etc/kubernetes/admin.conf
+    namespace_identity: identity
+    freeipa_admin_password: "{{ lookup('env', 'FREEIPA_ADMIN_PASSWORD') | default('secret000', true) }}"
+    freeipa_enable_hostnetwork: false
+    identity_open_firewall: false
+
+  tasks:
+    - name: Deploy FreeIPA via identity-freeipa role
+      include_role:
+        name: identity-freeipa
+      vars:
+        kubeconfig: "{{ kubeconfig }}"
+        namespace: "{{ namespace_identity }}"
+        freeipa_ds_password: "{{ freeipa_admin_password }}"
+
+    - name: Wait for FreeIPA to be ready
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        kind: StatefulSet
+        namespace: "{{ namespace_identity }}"
+        name: freeipa
+      register: freeipa_status
+      until:
+        - freeipa_status.resources | length > 0
+        - freeipa_status.resources[0].status.readyReplicas | default(0) >= 1
+      retries: 60
+      delay: 10
+      when: freeipa_status.resources | default([]) | length > 0
+
+    - name: Get FreeIPA pod name
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        kind: Pod
+        namespace: "{{ namespace_identity }}"
+        label_selectors:
+          - app=freeipa
+      register: freeipa_pods
+
+    - name: Ensure FreeIPA hostNetwork configuration (if enabled)
+      include_tasks: "{{ playbook_dir }}/tasks/ensure-freeipa-hostnetwork.yml"
+      when: freeipa_enable_hostnetwork | default(false) | bool
+
+    - name: Display FreeIPA deployment status
+      debug:
+        msg:
+          - "=========================================="
+          - "FreeIPA Deployment: COMPLETE"
+          - "=========================================="
+          - "Namespace: {{ namespace_identity }}"
+          - "Pod: {{ freeipa_pods.resources[0].metadata.name if freeipa_pods.resources | length > 0 else 'N/A' }}"
+          - "Status: {{ freeipa_status.resources[0].status.readyReplicas | default(0) }}/{{ freeipa_status.resources[0].spec.replicas | default(1) }} ready"
+          - "hostNetwork: {{ 'enabled' if freeipa_enable_hostnetwork else 'disabled' }}"
+          - ""
+          - "Next: Deploy Keycloak"
+          - "Run: ansible-playbook ansible/playbooks/05-deploy-keycloak.yml"
+          - "=========================================="

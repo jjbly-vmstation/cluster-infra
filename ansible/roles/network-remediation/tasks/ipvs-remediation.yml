@@ -1,0 +1,114 @@
+---
+# IPVS state remediation
+# Clears IPVS table when kube-proxy is in iptables mode but IPVS modules are loaded
+# This prevents stale IPVS entries from interfering with iptables-based service routing
+
+- name: Check if IPVS modules are loaded
+  shell: lsmod | awk '/^ip_vs/ {print $1}' || true
+  register: ipvs_modules_loaded
+  changed_when: false
+  become: true
+
+- name: Display IPVS module status
+  debug:
+    msg: "IPVS modules loaded: {{ ipvs_modules_loaded.stdout_lines | default(['none']) }}"
+
+- name: Determine if IPVS cleanup is needed
+  set_fact:
+    ipvs_cleanup_required: "{{ (proxier_mode | default('iptables')) == 'iptables' and (ipvs_modules_loaded.stdout | trim) != '' }}"
+
+- name: Display IPVS cleanup decision
+  debug:
+    msg:
+      - "IPVS cleanup required: {{ ipvs_cleanup_required }}"
+      - "Proxier mode: {{ proxier_mode | default('iptables') }}"
+      - "IPVS modules present: {{ (ipvs_modules_loaded.stdout | trim) != '' }}"
+
+- name: Ensure ipvsadm is installed (when cleanup needed)
+  package:
+    name: ipvsadm
+    state: present
+  when: ipvs_cleanup_required | bool
+  become: true
+  register: ipvsadm_install
+  ignore_errors: true
+
+- name: Check ipvsadm availability
+  shell: command -v ipvsadm || echo "not-found"
+  register: ipvsadm_path
+  when: ipvs_cleanup_required | bool
+  changed_when: false
+  become: true
+
+- name: Display current IPVS table (before cleanup)
+  shell: ipvsadm -Ln || echo "ipvsadm not available or IPVS table empty"
+  register: ipvs_table_before
+  when:
+    - ipvs_cleanup_required | bool
+    - ipvsadm_path.stdout != "not-found"
+  changed_when: false
+  become: true
+  ignore_errors: true
+
+- name: Show IPVS table before cleanup
+  debug:
+    var: ipvs_table_before.stdout_lines
+  when:
+    - ipvs_cleanup_required | bool
+    - ipvs_table_before is defined
+    - ipvs_table_before.stdout is defined
+
+- name: Flush IPVS table (ipvsadm -C)
+  shell: |
+    if command -v ipvsadm >/dev/null 2>&1; then
+      echo "Flushing IPVS table..."
+      ipvsadm -C
+      echo "IPVS table flushed successfully"
+    else
+      echo "ipvsadm not available, skipping IPVS flush"
+      exit 0
+    fi
+  register: ipvs_flush_result
+  when: ipvs_cleanup_required | bool
+  changed_when: "'IPVS table flushed successfully' in ipvs_flush_result.stdout"
+  become: true
+
+- name: Display IPVS flush result
+  debug:
+    var: ipvs_flush_result.stdout_lines
+  when:
+    - ipvs_cleanup_required | bool
+    - ipvs_flush_result is defined
+
+- name: Display current IPVS table (after cleanup)
+  shell: ipvsadm -Ln || echo "IPVS table is now empty"
+  register: ipvs_table_after
+  when:
+    - ipvs_cleanup_required | bool
+    - ipvsadm_path.stdout != "not-found"
+  changed_when: false
+  become: true
+  ignore_errors: true
+
+- name: Show IPVS table after cleanup
+  debug:
+    var: ipvs_table_after.stdout_lines
+  when:
+    - ipvs_cleanup_required | bool
+    - ipvs_table_after is defined
+    - ipvs_table_after.stdout is defined
+
+- name: Notify kube-proxy restart if IPVS was flushed
+  debug:
+    msg: "IPVS table was flushed - kube-proxy will be restarted to repopulate iptables rules"
+  when:
+    - ipvs_cleanup_required | bool
+    - ipvs_flush_result is changed
+  notify:
+    - restart kube-proxy
+    - wait for kube-proxy rollout
+
+- name: Skip IPVS cleanup (not needed)
+  debug:
+    msg: "IPVS cleanup not needed - proxier mode is {{ proxier_mode | default('iptables') }} and IPVS modules are {{ 'loaded' if (ipvs_modules_loaded.stdout | trim) != '' else 'not loaded' }}"
+  when: not (ipvs_cleanup_required | bool)

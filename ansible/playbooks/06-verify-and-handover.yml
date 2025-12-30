@@ -1,0 +1,154 @@
+---
+# Playbook 06: Verify and Handover
+# Final verification and handover summary for identity stack deployment
+
+- name: Verify identity stack deployment and generate handover
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    kubeconfig: /etc/kubernetes/admin.conf
+    namespace_identity: identity
+    backup_dir: /root/identity-backup
+
+  tasks:
+    - name: Check PostgreSQL status
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        kind: StatefulSet
+        namespace: "{{ namespace_identity }}"
+        name: postgresql
+      register: postgresql_verify
+      failed_when: false
+
+    - name: Check Keycloak status
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        kind: Deployment
+        namespace: "{{ namespace_identity }}"
+        name: keycloak
+      register: keycloak_verify
+      failed_when: false
+
+    - name: Check FreeIPA status
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        kind: StatefulSet
+        namespace: "{{ namespace_identity }}"
+        name: freeipa
+      register: freeipa_verify
+      failed_when: false
+
+    - name: Get all pods in identity namespace
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        kind: Pod
+        namespace: "{{ namespace_identity }}"
+      register: identity_pods
+
+    - name: Count running pods
+      set_fact:
+        running_pods: "{{ identity_pods.resources | selectattr('status.phase', 'equalto', 'Running') | list | length }}"
+        total_pods: "{{ identity_pods.resources | length }}"
+
+    - name: Get Keycloak service NodePort
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        kind: Service
+        namespace: "{{ namespace_identity }}"
+        name: keycloak
+      register: keycloak_svc
+
+    - name: Extract Keycloak NodePort
+      set_fact:
+        keycloak_nodeport: "{{ keycloak_svc.resources[0].spec.ports | selectattr('name', 'equalto', 'http') | map(attribute='nodePort') | first | default('30180') }}"
+      when: keycloak_svc.resources | length > 0
+
+    - name: Get node IP
+      shell: kubectl --kubeconfig={{ kubeconfig }} get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}'
+      register: node_ip
+      changed_when: false
+
+    - name: Check for admin credentials file
+      stat:
+        path: "{{ backup_dir }}/cluster-admin-credentials.txt"
+      register: admin_creds_file
+
+    - name: Check for realm config file
+      stat:
+        path: /tmp/cluster-realm.json
+      register: realm_config_file
+
+    - name: Generate deployment summary
+      set_fact:
+        deployment_summary:
+          cluster_status:
+            node_ip: "{{ node_ip.stdout }}"
+            namespace: "{{ namespace_identity }}"
+            total_pods: "{{ total_pods }}"
+            running_pods: "{{ running_pods }}"
+          components:
+            postgresql:
+              deployed: "{{ postgresql_verify.resources | length > 0 }}"
+              ready: "{{ postgresql_verify.resources[0].status.readyReplicas | default(0) if postgresql_verify.resources | length > 0 else 0 }}"
+              desired: "{{ postgresql_verify.resources[0].spec.replicas | default(1) if postgresql_verify.resources | length > 0 else 0 }}"
+            keycloak:
+              deployed: "{{ keycloak_verify.resources | length > 0 }}"
+              ready: "{{ keycloak_verify.resources[0].status.readyReplicas | default(0) if keycloak_verify.resources | length > 0 else 0 }}"
+              desired: "{{ keycloak_verify.resources[0].spec.replicas | default(1) if keycloak_verify.resources | length > 0 else 0 }}"
+              url: "http://{{ node_ip.stdout }}:{{ keycloak_nodeport }}"
+            freeipa:
+              deployed: "{{ freeipa_verify.resources | length > 0 }}"
+              ready: "{{ freeipa_verify.resources[0].status.readyReplicas | default(0) if freeipa_verify.resources | length > 0 else 0 }}"
+              desired: "{{ freeipa_verify.resources[0].spec.replicas | default(1) if freeipa_verify.resources | length > 0 else 0 }}"
+          artifacts:
+            admin_credentials: "{{ admin_creds_file.stat.exists }}"
+            realm_config: "{{ realm_config_file.stat.exists }}"
+            backup_dir: "{{ backup_dir }}"
+
+    - name: Display deployment verification summary
+      debug:
+        msg:
+          - "=========================================="
+          - "Identity Stack Deployment: COMPLETE"
+          - "=========================================="
+          - ""
+          - "Cluster Information:"
+          - "  Namespace: {{ deployment_summary.cluster_status.namespace }}"
+          - "  Node IP: {{ deployment_summary.cluster_status.node_ip }}"
+          - "  Pods: {{ deployment_summary.cluster_status.running_pods }}/{{ deployment_summary.cluster_status.total_pods }} running"
+          - ""
+          - "Component Status:"
+          - "  PostgreSQL: {{ '✓' if deployment_summary.components.postgresql.deployed and deployment_summary.components.postgresql.ready >= 1 else '✗' }} ({{ deployment_summary.components.postgresql.ready }}/{{ deployment_summary.components.postgresql.desired }})"
+          - "  Keycloak: {{ '✓' if deployment_summary.components.keycloak.deployed and deployment_summary.components.keycloak.ready >= 1 else '✗' }} ({{ deployment_summary.components.keycloak.ready }}/{{ deployment_summary.components.keycloak.desired }})"
+          - "  FreeIPA: {{ '✓' if deployment_summary.components.freeipa.deployed and deployment_summary.components.freeipa.ready >= 1 else 'Not deployed' }} ({{ deployment_summary.components.freeipa.ready }}/{{ deployment_summary.components.freeipa.desired }})"
+          - ""
+          - "Access Information:"
+          - "  Keycloak URL: {{ deployment_summary.components.keycloak.url }}"
+          - "  Credentials: {{ backup_dir }}/cluster-admin-credentials.txt"
+          - ""
+          - "Configuration Files:"
+          - "  Realm Config: /tmp/cluster-realm.json"
+          - "  Backup Directory: {{ backup_dir }}"
+          - ""
+          - "Next Steps:"
+          - "  1. Access Keycloak admin console"
+          - "  2. Verify realm configuration"
+          - "  3. Configure application SSO integrations"
+          - "  4. Test idempotency with: ansible-playbook ansible/playbooks/test-idempotency.yml"
+          - "=========================================="
+
+    - name: Save deployment summary to file
+      copy:
+        content: |
+          Identity Stack Deployment Summary
+          Generated: {{ ansible_date_time.iso8601 }}
+          
+          {{ deployment_summary | to_nice_yaml }}
+        dest: "{{ backup_dir }}/deployment-summary-{{ ansible_date_time.epoch }}.txt"
+        mode: '0644'
+      become: true
+
+    - name: Deployment verification complete
+      debug:
+        msg: "✓ Identity stack deployment verified and documented"

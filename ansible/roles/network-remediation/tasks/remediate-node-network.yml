@@ -10,28 +10,11 @@
 - name: Detect kube-proxy mode from ConfigMap
   delegate_to: localhost
   become: false
-  block:
-    - name: Read kube-proxy ConfigMap
-      shell: >-
-        kubectl --kubeconfig={{ kubeconfig }} -n kube-system
-        get configmap kube-proxy -o jsonpath='{.data.config\.conf}'
-      register: kubeproxy_config
-      changed_when: false
-      failed_when: false
+  include_tasks: detect-proxier-mode.yml
 
-    - name: Extract mode from config (with fallback)
-      set_fact:
-        detected_kubeproxy_mode: "{{ (kubeproxy_config.stdout | default('') | regex_search('mode:\\s*\"?([A-Za-z0-9_-]+)\"?', '\\1') | default(['iptables'], true))[0] }}"
-      when: kubeproxy_config.rc == 0
-
-    - name: Set default mode if detection failed
-      set_fact:
-        detected_kubeproxy_mode: 'iptables'
-      when: kubeproxy_config.rc != 0 or detected_kubeproxy_mode is not defined
-
-    - name: Display detected kube-proxy mode
-      debug:
-        msg: "Detected kube-proxy mode: {{ detected_kubeproxy_mode | default('iptables') }}"
+- name: Set proxier_mode for all nodes
+  set_fact:
+    proxier_mode: "{{ detected_kubeproxy_mode }}"
 
 - name: Determine target nodes (exclude localhost)
   set_fact:

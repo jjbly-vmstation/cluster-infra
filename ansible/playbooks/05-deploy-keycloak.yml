@@ -1,0 +1,113 @@
+---
+# Playbook 05: Deploy Keycloak with Automated Realm Import
+# Deploys Keycloak SSO server and automates realm configuration via Admin API
+
+- name: Deploy Keycloak with automated realm import
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    kubeconfig: /etc/kubernetes/admin.conf
+    namespace_identity: identity
+    keycloak_admin_password: "{{ lookup('env', 'KEYCLOAK_ADMIN_PASSWORD') | default('secret000', true) }}"
+    keycloak_realm: "cluster-services"
+    keycloak_configure_sso: true
+
+  tasks:
+    - name: Deploy Keycloak via identity-keycloak role
+      include_role:
+        name: identity-keycloak
+      vars:
+        kubeconfig: "{{ kubeconfig }}"
+        namespace: "{{ namespace_identity }}"
+        admin_password: "{{ keycloak_admin_password }}"
+
+    - name: Wait for Keycloak to be ready
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        kind: Deployment
+        namespace: "{{ namespace_identity }}"
+        name: keycloak
+      register: keycloak_status
+      until:
+        - keycloak_status.resources | length > 0
+        - keycloak_status.resources[0].status.readyReplicas | default(0) >= 1
+      retries: 60
+      delay: 10
+
+    - name: Get Keycloak pod name
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        kind: Pod
+        namespace: "{{ namespace_identity }}"
+        label_selectors:
+          - app=keycloak
+      register: keycloak_pods
+
+    - name: Get Keycloak service details
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        kind: Service
+        namespace: "{{ namespace_identity }}"
+        name: keycloak
+      register: keycloak_service
+
+    - name: Extract Keycloak NodePort
+      set_fact:
+        keycloak_nodeport: "{{ keycloak_service.resources[0].spec.ports | selectattr('name', 'equalto', 'http') | map(attribute='nodePort') | first | default('30180') }}"
+      when: keycloak_service.resources | length > 0
+
+    - name: Get cluster node IP for access
+      shell: kubectl --kubeconfig={{ kubeconfig }} get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}'
+      register: node_ip
+      changed_when: false
+
+    - name: Set Keycloak admin URL
+      set_fact:
+        keycloak_admin_url: "http://{{ node_ip.stdout }}:{{ keycloak_nodeport }}"
+
+    - name: Wait for Keycloak API to be responsive
+      uri:
+        url: "{{ keycloak_admin_url }}/health/ready"
+        method: GET
+        status_code: 200
+      register: keycloak_health
+      until: keycloak_health.status == 200
+      retries: 30
+      delay: 10
+      ignore_errors: true
+
+    - name: Automated realm import (via identity-sso role)
+      include_role:
+        name: identity-sso
+      vars:
+        kubeconfig: "{{ kubeconfig }}"
+        namespace: "{{ namespace_identity }}"
+        keycloak_url: "{{ keycloak_admin_url }}"
+        keycloak_admin_user: admin
+        keycloak_admin_pass: "{{ keycloak_admin_password }}"
+        target_realm: "{{ keycloak_realm }}"
+      when: keycloak_configure_sso | default(true) | bool
+
+    - name: Display Keycloak deployment status
+      debug:
+        msg:
+          - "=========================================="
+          - "Keycloak Deployment: COMPLETE"
+          - "=========================================="
+          - "Namespace: {{ namespace_identity }}"
+          - "Pod: {{ keycloak_pods.resources[0].metadata.name if keycloak_pods.resources | length > 0 else 'N/A' }}"
+          - "Status: {{ keycloak_status.resources[0].status.readyReplicas | default(0) }}/{{ keycloak_status.resources[0].spec.replicas | default(1) }} ready"
+          - ""
+          - "Access Keycloak:"
+          - "  URL: {{ keycloak_admin_url }}"
+          - "  Username: admin"
+          - "  Password: {{ keycloak_admin_password }}"
+          - ""
+          - "Realm Configuration:"
+          - "  Automated: {{ 'yes' if keycloak_configure_sso else 'manual setup required' }}"
+          - "  Realm: {{ keycloak_realm }}"
+          - ""
+          - "Next: Verify deployment"
+          - "Run: ansible-playbook ansible/playbooks/06-verify-and-handover.yml"
+          - "=========================================="

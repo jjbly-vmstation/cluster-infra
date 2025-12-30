@@ -6,178 +6,22 @@
   debug:
     msg: "Running remediation on {{ node_target }}"
 
-- name: Check current ip_forward setting
+# Run sysctls and modules remediation on target node
+- name: Ensure sysctls and kernel modules on node
   delegate_to: "{{ node_target }}"
-  become: true
-  shell: sysctl net.ipv4.ip_forward | awk '{print $3}'
-  register: current_ip_forward
-  changed_when: false
+  include_tasks: ensure-sysctls-and-modules.yml
 
-- name: Enable ip_forward if disabled
-  when:
-    - current_ip_forward.stdout | trim != '1'
-    - remediation_fix_ip_forward | bool
-  block:
-    - name: Set ip_forward via sysctl command
-      delegate_to: "{{ node_target }}"
-      become: true
-      shell: sysctl -w net.ipv4.ip_forward=1
-
-    - name: Persist ip_forward in sysctl.conf
-      delegate_to: "{{ node_target }}"
-      become: true
-      lineinfile:
-        path: /etc/sysctl.conf
-        regexp: '^net\.ipv4\.ip_forward'
-        line: 'net.ipv4.ip_forward = 1'
-        create: yes
-
-    - name: Apply sysctl changes
-      delegate_to: "{{ node_target }}"
-      become: true
-      shell: sysctl -p
-
-- name: Check if br_netfilter module is loaded
+# Run iptables remediation on target node
+- name: Check and fix iptables configuration on node
   delegate_to: "{{ node_target }}"
-  become: true
-  shell: lsmod | grep br_netfilter || echo "not-loaded"
-  register: br_netfilter_check
-  changed_when: false
+  include_tasks: iptables-remediation.yml
 
-- name: Load br_netfilter module if missing
-  when:
-    - "'not-loaded' in br_netfilter_check.stdout"
-    - remediation_fix_br_netfilter | bool
-  block:
-    - name: Load br_netfilter kernel module
-      delegate_to: "{{ node_target }}"
-      become: true
-      modprobe:
-        name: br_netfilter
-        state: present
-
-    - name: Persist br_netfilter across reboots
-      delegate_to: "{{ node_target }}"
-      become: true
-      lineinfile:
-        path: /etc/modules-load.d/br_netfilter.conf
-        line: 'br_netfilter'
-        create: yes
-
-    - name: Enable bridge netfilter sysctls
-      delegate_to: "{{ node_target }}"
-      become: true
-      sysctl:
-        name: "{{ item }}"
-        value: '1'
-        state: present
-        reload: yes
-      loop:
-        - net.bridge.bridge-nf-call-iptables
-        - net.bridge.bridge-nf-call-ip6tables
-
-- name: Check iptables FORWARD chain policy
+# Run IPVS remediation on target node if enabled
+- name: Check and clear IPVS state on node if needed
   delegate_to: "{{ node_target }}"
-  become: true
-  shell: |
-    set -o pipefail
-    if command -v iptables-nft >/dev/null 2>&1; then
-      iptables-nft -L FORWARD -n 2>/dev/null | head -1 | grep -oP 'policy \K\w+' || echo "UNKNOWN"
-    elif command -v iptables >/dev/null 2>&1; then
-      iptables -L FORWARD -n 2>/dev/null | head -1 | grep -oP 'policy \K\w+' || echo "UNKNOWN"
-    else
-      echo "NOTFOUND"
-    fi
-  register: iptables_forward_policy
-  changed_when: false
-  failed_when: false
+  include_tasks: ipvs-remediation.yml
+  when: ipvs_cleanup_enabled | bool
 
-- name: Fix iptables FORWARD chain if DROP or UNKNOWN
-  when:
-    - iptables_forward_policy.stdout | default('') | trim in ['DROP', 'UNKNOWN']
-    - remediation_fix_iptables | bool
-    - iptables_forward_policy.stdout | default('') | trim != 'NOTFOUND'
-  block:
-    - name: Set FORWARD chain policy to ACCEPT
-      delegate_to: "{{ node_target }}"
-      become: true
-      shell: |
-        if command -v iptables-nft >/dev/null 2>&1; then
-          iptables-nft -P FORWARD ACCEPT
-        elif command -v iptables >/dev/null 2>&1; then
-          iptables -P FORWARD ACCEPT
-        else
-          echo "No iptables command found" >&2
-          exit 1
-        fi
-
-    - name: Save iptables rules (Debian/Ubuntu)
-      delegate_to: "{{ node_target }}"
-      become: true
-      shell: |
-        if command -v netfilter-persistent >/dev/null 2>&1; then
-          netfilter-persistent save
-        elif [ -f /etc/debian_version ]; then
-          iptables-save > /etc/iptables/rules.v4 || true
-        fi
-      when: ansible_os_family == "Debian"
-      failed_when: false
-
-    - name: Save iptables rules (RHEL/CentOS)
-      delegate_to: "{{ node_target }}"
-      become: true
-      shell: |
-        if command -v iptables-save >/dev/null 2>&1; then
-          iptables-save > /etc/sysconfig/iptables || true
-        fi
-      when: ansible_os_family == "RedHat"
-      failed_when: false
-
-- name: Check if IPVS module is loaded (when in iptables mode)
-  delegate_to: "{{ node_target }}"
-  become: true
-  shell: lsmod | grep ip_vs || echo "not-loaded"
-  register: ipvs_module_check
-  changed_when: false
-  when:
-    - ipvs_cleanup_enabled | bool
-    - detected_kubeproxy_mode | default('iptables') == 'iptables'
-
-- name: Clear IPVS state if loaded in iptables mode
-  when:
-    - ipvs_cleanup_enabled | bool
-    - detected_kubeproxy_mode | default('iptables') == 'iptables'
-    - "'not-loaded' not in ipvs_module_check.stdout"
-  block:
-    - name: Install ipvsadm if needed
-      delegate_to: "{{ node_target }}"
-      become: true
-      package:
-        name: ipvsadm
-        state: present
-      failed_when: false
-
-    - name: Flush IPVS table
-      delegate_to: "{{ node_target }}"
-      become: true
-      shell: |
-        if command -v ipvsadm >/dev/null 2>&1; then
-          echo "Before flush:"
-          ipvsadm -Ln || true
-          echo "Flushing IPVS table..."
-          ipvsadm -C
-          echo "After flush:"
-          ipvsadm -Ln || true
-        else
-          echo "ipvsadm not available, skipping IPVS flush"
-        fi
-      register: ipvs_flush_result
-      changed_when: "'Flushing IPVS table' in ipvs_flush_result.stdout"
-      failed_when: false
-
-    - name: Display IPVS flush result
-      delegate_to: "{{ node_target }}"
-      become: true
-      debug:
-        var: ipvs_flush_result.stdout_lines
-      when: ipvs_flush_result is defined
+- name: "Remediation completed on node {{ node_target }}"
+  debug:
+    msg: "✓ Remediation completed on {{ node_target }}"

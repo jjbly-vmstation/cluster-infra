@@ -1,0 +1,162 @@
+---
+# Playbook: Fix kube-proxy service CIDR mismatch
+# Detects kube-apiserver --service-cluster-ip-range and compares against kube-proxy
+# ConfigMap serviceCIDR. If mismatched, backs up and patches the ConfigMap, then
+# restarts kube-proxy to reprogram iptables/ipvs rules.
+
+- name: Detect and fix kube-proxy service CIDR mismatch
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    kubeconfig: /etc/kubernetes/admin.conf
+    backup_dir: /root/identity-backup
+
+  tasks:
+    - name: Ensure backup directory exists
+      file:
+        path: "{{ backup_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      become: true
+
+    - name: Get kube-apiserver service-cluster-ip-range
+      shell: |
+        kubectl --kubeconfig={{ kubeconfig }} -n kube-system get pod -l component=kube-apiserver -o yaml | \
+        grep -oP 'service-cluster-ip-range=\K[0-9./,]+' | head -1
+      register: apiserver_service_cidr
+      changed_when: false
+      failed_when: apiserver_service_cidr.rc != 0 or apiserver_service_cidr.stdout == ""
+
+    - name: Display apiserver service CIDR
+      debug:
+        msg: "kube-apiserver service-cluster-ip-range: {{ apiserver_service_cidr.stdout }}"
+
+    - name: Get kube-proxy ConfigMap
+      shell: kubectl --kubeconfig={{ kubeconfig }} -n kube-system get configmap kube-proxy -o yaml
+      register: kubeproxy_configmap
+      changed_when: false
+      failed_when: kubeproxy_configmap.rc != 0
+
+    - name: Extract current kube-proxy service CIDR
+      shell: |
+        echo '{{ kubeproxy_configmap.stdout }}' | grep -oP 'clusterCIDR:\s*"\K[^"]+' || \
+        echo '{{ kubeproxy_configmap.stdout }}' | grep -oP 'serviceNodePortRange:\s*"\K[^"]+' || \
+        echo "10.233.0.0/18"
+      register: kubeproxy_service_cidr_raw
+      changed_when: false
+
+    - name: Parse kube-proxy config for clusterCIDR (service CIDR)
+      set_fact:
+        kubeproxy_service_cidr: "{{ kubeproxy_configmap.stdout | regex_search('clusterCIDR:\\s*\"?([0-9./,]+)\"?', '\\1') | default(['unknown'], true) | first }}"
+
+    - name: Display current kube-proxy service CIDR
+      debug:
+        msg: "kube-proxy current clusterCIDR: {{ kubeproxy_service_cidr }}"
+
+    - name: Compare service CIDRs
+      set_fact:
+        cidr_mismatch: "{{ apiserver_service_cidr.stdout != kubeproxy_service_cidr }}"
+
+    - name: Display CIDR comparison result
+      debug:
+        msg:
+          - "Service CIDR Comparison:"
+          - "  kube-apiserver: {{ apiserver_service_cidr.stdout }}"
+          - "  kube-proxy: {{ kubeproxy_service_cidr }}"
+          - "  Mismatch: {{ 'YES - remediation needed' if cidr_mismatch else 'NO - configuration is correct' }}"
+
+    - name: Skip remediation if CIDRs match
+      debug:
+        msg: "✓ Service CIDRs match - no remediation needed"
+      when: not cidr_mismatch
+
+    - name: Remediate service CIDR mismatch
+      when: cidr_mismatch
+      block:
+        - name: Backup current kube-proxy ConfigMap
+          copy:
+            content: "{{ kubeproxy_configmap.stdout }}"
+            dest: "{{ backup_dir }}/kube-proxy-configmap-backup-{{ ansible_date_time.epoch }}.yaml"
+            owner: root
+            group: root
+            mode: '0644'
+          become: true
+
+        - name: Display backup location
+          debug:
+            msg: "Backup saved to {{ backup_dir }}/kube-proxy-configmap-backup-{{ ansible_date_time.epoch }}.yaml"
+
+        - name: Patch kube-proxy ConfigMap with correct service CIDR
+          shell: |
+            kubectl --kubeconfig={{ kubeconfig }} -n kube-system get configmap kube-proxy -o yaml | \
+            sed 's|clusterCIDR: "{{ kubeproxy_service_cidr }}"|clusterCIDR: "{{ apiserver_service_cidr.stdout }}"|g' | \
+            kubectl --kubeconfig={{ kubeconfig }} apply -f -
+          register: configmap_patch
+          changed_when: configmap_patch.rc == 0
+          failed_when: configmap_patch.rc != 0
+
+        - name: Display ConfigMap patch result
+          debug:
+            var: configmap_patch.stdout_lines
+
+        - name: Annotate kube-proxy DaemonSet to force restart
+          shell: |
+            kubectl --kubeconfig={{ kubeconfig }} -n kube-system annotate daemonset kube-proxy \
+            remediation.cluster-infra/service-cidr-fix="$(date +%s)" --overwrite
+          register: daemonset_annotate
+          changed_when: daemonset_annotate.rc == 0
+          failed_when: daemonset_annotate.rc != 0
+
+        - name: Restart kube-proxy DaemonSet
+          shell: kubectl --kubeconfig={{ kubeconfig }} -n kube-system rollout restart daemonset/kube-proxy
+          register: kubeproxy_restart
+          changed_when: kubeproxy_restart.rc == 0
+          failed_when: kubeproxy_restart.rc != 0
+
+        - name: Wait for kube-proxy rollout to complete
+          shell: kubectl --kubeconfig={{ kubeconfig }} -n kube-system rollout status daemonset/kube-proxy --timeout=180s
+          register: rollout_status
+          changed_when: false
+          failed_when: rollout_status.rc != 0
+
+        - name: Get updated kube-proxy logs
+          shell: |
+            POD=$(kubectl --kubeconfig={{ kubeconfig }} -n kube-system get pods -l k8s-app=kube-proxy -o jsonpath='{.items[0].metadata.name}')
+            kubectl --kubeconfig={{ kubeconfig }} -n kube-system logs ${POD} --tail=100 | grep -i "service\|cidr\|range" || echo "No relevant log entries found"
+          register: kubeproxy_logs
+          changed_when: false
+          failed_when: false
+
+        - name: Display kube-proxy logs snippet
+          debug:
+            var: kubeproxy_logs.stdout_lines
+
+        - name: Verify KUBE-SERVICES chain has traffic
+          shell: iptables -t nat -L KUBE-SERVICES -n -v | head -5
+          register: kube_services_check
+          changed_when: false
+          failed_when: false
+          become: true
+
+        - name: Display KUBE-SERVICES chain status
+          debug:
+            var: kube_services_check.stdout_lines
+
+        - name: Service CIDR remediation complete
+          debug:
+            msg:
+              - "=========================================="
+              - "Service CIDR Mismatch: FIXED"
+              - "=========================================="
+              - "✓ kube-proxy ConfigMap updated"
+              - "✓ kube-proxy DaemonSet restarted"
+              - "✓ iptables/ipvs rules reprogrammed"
+              - ""
+              - "Old CIDR: {{ kubeproxy_service_cidr }}"
+              - "New CIDR: {{ apiserver_service_cidr.stdout }}"
+              - ""
+              - "Backup: {{ backup_dir }}/kube-proxy-configmap-backup-{{ ansible_date_time.epoch }}.yaml"
+              - "=========================================="

@@ -86,14 +86,45 @@ Orchestrates the validation and remediation workflow.
 - On failure: collects diagnostics, runs remediation, retries
 - Fails after max attempts with actionable error message
 
+### kube-proxy Mode Detection (`tasks/detect-proxier-mode.yml`)
+- Reads kube-proxy ConfigMap
+- Extracts configured mode (iptables vs ipvs)
+- Sets `proxier_mode` fact for use in remediation tasks
+
+### Sysctl and Modules (`tasks/ensure-sysctls-and-modules.yml`)
+Ensures required kernel settings and modules:
+- Loads `br_netfilter` kernel module
+- Sets `net.ipv4.ip_forward=1`
+- Sets `net.bridge.bridge-nf-call-iptables=1`
+- Sets `net.bridge.bridge-nf-call-ip6tables=1`
+- Persists configuration across reboots
+
+### IPVS Remediation (`tasks/ipvs-remediation.yml`)
+- Detects IPVS modules loaded
+- Determines if cleanup is needed (iptables mode + IPVS modules)
+- Installs `ipvsadm` if needed
+- Flushes IPVS table with `ipvsadm -C`
+- Triggers kube-proxy restart via handler
+
+### iptables Remediation (`tasks/iptables-remediation.yml`)
+- Detects iptables backend (legacy vs nft)
+- Checks FORWARD chain policy
+- Validates KUBE-SERVICES chain exists and has traffic
+- Checks for MASQUERADE rules
+- Validates CNI-specific chains (KUBE-FORWARD, cali-FORWARD)
+- Provides diagnostics and warnings
+
 ### Node Remediation (`tasks/remediate-node-network.yml`)
-Runs on all cluster nodes to fix:
-- `net.ipv4.ip_forward = 1`
-- `br_netfilter` module loaded
-- `bridge-nf-call-iptables = 1`
-- iptables FORWARD chain policy ACCEPT
-- IPVS state cleared (if in iptables mode)
-- kube-proxy restarted
+Orchestrates remediation on all cluster nodes:
+- Detects kube-proxy mode
+- Runs per-node remediation tasks
+- Restarts kube-proxy DaemonSet
+
+### Per-Node Remediation (`tasks/remediate-node-network-per-node.yml`)
+Delegates to modular task files for each node:
+- Calls `ensure-sysctls-and-modules.yml`
+- Calls `iptables-remediation.yml`
+- Calls `ipvs-remediation.yml` (if enabled)
 
 ### Diagnostics Collection (`tasks/diagnose-and-collect.yml`)
 Collects:
@@ -102,6 +133,31 @@ Collects:
 - kube-proxy DaemonSet/pods/logs/ConfigMap
 - Node-level: sysctls, iptables rules, IPVS state, network interfaces, routes
 - Archives diagnostics to tar.gz
+
+### Node Diagnostics Collection (`tasks/collect-node-diagnostics.yml`)
+Per-node diagnostics collection:
+- Sysctl settings
+- Kernel modules
+- iptables rules (all tables)
+- IPVS state
+- Network interfaces and routes
+- DNS resolver configuration
+
+## Handlers
+
+### `restart kube-proxy`
+Restarts the kube-proxy DaemonSet by performing a rollout restart.
+
+### `wait for kube-proxy rollout`
+Waits for the kube-proxy rollout to complete with 180-second timeout.
+
+### `restart calico-node`
+Restarts the calico-node DaemonSet (if Calico CNI is in use).
+
+### `wait for calico rollout`
+Waits for the calico-node rollout to complete with 180-second timeout.
+
+Handlers are triggered automatically when remediation tasks make changes that require service restarts.
 
 ## Diagnostics Output
 

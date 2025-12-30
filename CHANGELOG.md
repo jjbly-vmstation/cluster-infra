@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Comprehensive Network Remediation and Staged Deployment (2025-12-30)
+
+#### Network Remediation Role Enhancements
+- **Modular task structure**: Refactored network-remediation role with separate task files for better maintainability
+  - `tasks/detect-proxier-mode.yml`: kube-proxy mode detection (iptables vs ipvs)
+  - `tasks/ensure-sysctls-and-modules.yml`: Automated sysctl and kernel module configuration
+  - `tasks/ipvs-remediation.yml`: IPVS state cleanup for iptables mode
+  - `tasks/iptables-remediation.yml`: iptables/nftables backend detection and validation
+- **Service restart handlers**: Added `handlers/main.yml` for kube-proxy and Calico DaemonSet restarts
+- **Enhanced diagnostics**: Comprehensive cluster and node-level network state collection
+- **IPVS cleanup**: Automatically flushes stale IPVS tables when kube-proxy is in iptables mode
+
+#### New Staged Deployment Playbooks
+- **`01-validate-cluster.yml`**: Pre-deployment cluster validation
+  - Validates kubectl connectivity, node status, CoreDNS, kube-proxy
+  - Checks for storage provisioner
+- **`02-remediate-network-gate.yml`**: Critical network validation and remediation gate
+  - Tests pod→ClusterIP DNS connectivity
+  - Auto-remediates: ip_forward, br_netfilter, iptables FORWARD, IPVS state
+  - Retries up to 3 attempts with diagnostics on failure
+  - **GATE**: Identity deployment should not proceed if this fails
+- **`03-deploy-db.yml`**: PostgreSQL deployment via identity-postgresql role
+- **`04-deploy-freeipa.yml`**: FreeIPA LDAP deployment (optional)
+- **`05-deploy-keycloak.yml`**: Keycloak deployment with automated realm import
+  - Uses Admin REST API for realm configuration
+  - Configures LDAP federation if FreeIPA deployed
+  - Retries with backoff for API readiness
+- **`06-verify-and-handover.yml`**: Final verification and handover documentation
+  - Verifies all components running
+  - Generates deployment summary
+  - Creates handover documentation
+- **`fix-kubeproxy-servicecidr.yml`**: Service CIDR mismatch detection and fix
+  - Detects kube-apiserver `--service-cluster-ip-range`
+  - Compares with kube-proxy ConfigMap `clusterCIDR`
+  - Backs up and patches ConfigMap if mismatched
+  - Restarts kube-proxy to reprogram iptables/ipvs
+- **`test-idempotency.yml`**: Validates deployment idempotency
+  - Runs each deployment step twice
+  - Ensures no changes on second run
+
+#### Documentation
+- **`docs/DEPLOYMENT_RUNBOOK.md`**: Complete deployment guide
+  - Step-by-step instructions for staged deployment
+  - Troubleshooting guide for common issues
+  - Emergency procedures for IPVS/ipset clearing
+  - Service CIDR mismatch resolution
+- **`docs/DEPLOYMENT_ISSUE_RESOLUTION_SUMMARY.md`**: Catalog of deployment issues
+  - Pod→ClusterIP DNS failures (ip_forward, br_netfilter, iptables, IPVS)
+  - IPVS state issues
+  - kube-proxy service CIDR mismatches
+  - iptables/nftables backend conflicts
+  - Network sysctl and module issues
+- **Updated `ansible/playbooks/README.md`**: Staged deployment workflow
+- **Updated `ansible/roles/network-remediation/README.md`**: Enhanced role documentation
+
+#### Key Features
+- ✅ **Idempotent**: All playbooks and tasks safe to run multiple times
+- ✅ **Automated remediation**: Common network issues fixed automatically
+- ✅ **Retry logic**: Validation → remediation → validation cycle with backoff
+- ✅ **Diagnostics**: Comprehensive diagnostics collection and archival on failure
+- ✅ **Service CIDR detection**: Automatic detection and correction of mismatches
+- ✅ **No secrets**: Uses environment variables and Ansible Vault
+- ✅ **Emergency procedures**: Documented last-resort IPVS/ipset clearing
+
+#### Integration
+- Existing `identity-deploy-and-handover.yml` already includes network remediation gate
+- Existing `configure-coredns-freeipa.yml` already includes IPVS remediation
+
 ### Changed - Storage Location (2025-12-12)
 
 - **Storage path migration**: Changed identity data storage from `/srv/identity_data` to `/srv/monitoring-data`

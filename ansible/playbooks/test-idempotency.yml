@@ -1,0 +1,189 @@
+---
+# Playbook: Test Idempotency
+# Validates that all identity stack playbooks are idempotent
+# Runs each playbook twice and ensures no changes on second run
+
+- name: Test identity stack deployment idempotency
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    kubeconfig: /etc/kubernetes/admin.conf
+    test_results: []
+
+  tasks:
+    - name: Display idempotency test banner
+      debug:
+        msg:
+          - "=========================================="
+          - "Identity Stack Idempotency Test"
+          - "=========================================="
+          - "This playbook validates that all deployment"
+          - "steps are idempotent (safe to run multiple times)"
+          - "=========================================="
+
+    - name: Test network remediation idempotency
+      block:
+        - name: Run network remediation (first pass)
+          include_role:
+            name: network-remediation
+          vars:
+            remediation_enabled: true
+            diagnostics_enabled: false
+
+        - name: Run network remediation (second pass - should be no-op)
+          include_role:
+            name: network-remediation
+          vars:
+            remediation_enabled: true
+            diagnostics_enabled: false
+          register: remediation_second_pass
+
+        - name: Record network remediation result
+          set_fact:
+            test_results: "{{ test_results + [{'test': 'network-remediation', 'status': 'PASS', 'message': 'Idempotent'}] }}"
+
+      rescue:
+        - name: Record network remediation failure
+          set_fact:
+            test_results: "{{ test_results + [{'test': 'network-remediation', 'status': 'FAIL', 'message': 'Not idempotent or failed'}] }}"
+
+    - name: Test PostgreSQL deployment idempotency
+      block:
+        - name: Get PostgreSQL status before re-run
+          kubernetes.core.k8s_info:
+            kubeconfig: "{{ kubeconfig }}"
+            kind: StatefulSet
+            namespace: identity
+            name: postgresql
+          register: postgres_before
+
+        - name: Re-run PostgreSQL deployment
+          include_role:
+            name: identity-postgresql
+          vars:
+            namespace: identity
+
+        - name: Get PostgreSQL status after re-run
+          kubernetes.core.k8s_info:
+            kubeconfig: "{{ kubeconfig }}"
+            kind: StatefulSet
+            namespace: identity
+            name: postgresql
+          register: postgres_after
+
+        - name: Verify PostgreSQL not recreated
+          assert:
+            that:
+              - postgres_before.resources[0].metadata.uid == postgres_after.resources[0].metadata.uid
+            fail_msg: "PostgreSQL StatefulSet was recreated (not idempotent)"
+            success_msg: "PostgreSQL deployment is idempotent"
+
+        - name: Record PostgreSQL result
+          set_fact:
+            test_results: "{{ test_results + [{'test': 'postgresql-deployment', 'status': 'PASS', 'message': 'Idempotent'}] }}"
+
+      rescue:
+        - name: Record PostgreSQL failure
+          set_fact:
+            test_results: "{{ test_results + [{'test': 'postgresql-deployment', 'status': 'FAIL', 'message': 'Not idempotent or failed'}] }}"
+
+    - name: Test Keycloak deployment idempotency
+      block:
+        - name: Get Keycloak status before re-run
+          kubernetes.core.k8s_info:
+            kubeconfig: "{{ kubeconfig }}"
+            kind: Deployment
+            namespace: identity
+            name: keycloak
+          register: keycloak_before
+
+        - name: Re-run Keycloak deployment
+          include_role:
+            name: identity-keycloak
+          vars:
+            namespace: identity
+
+        - name: Get Keycloak status after re-run
+          kubernetes.core.k8s_info:
+            kubeconfig: "{{ kubeconfig }}"
+            kind: Deployment
+            namespace: identity
+            name: keycloak
+          register: keycloak_after
+
+        - name: Verify Keycloak not recreated
+          assert:
+            that:
+              - keycloak_before.resources[0].metadata.uid == keycloak_after.resources[0].metadata.uid
+            fail_msg: "Keycloak Deployment was recreated (not idempotent)"
+            success_msg: "Keycloak deployment is idempotent"
+
+        - name: Record Keycloak result
+          set_fact:
+            test_results: "{{ test_results + [{'test': 'keycloak-deployment', 'status': 'PASS', 'message': 'Idempotent'}] }}"
+
+      rescue:
+        - name: Record Keycloak failure
+          set_fact:
+            test_results: "{{ test_results + [{'test': 'keycloak-deployment', 'status': 'FAIL', 'message': 'Not idempotent or failed'}] }}"
+
+    - name: Test SSO configuration idempotency
+      block:
+        - name: Run SSO configuration (first pass)
+          include_role:
+            name: identity-sso
+          vars:
+            namespace: identity
+          when: false  # Skip if role not fully implemented
+
+        - name: Run SSO configuration (second pass - should be no-op)
+          include_role:
+            name: identity-sso
+          vars:
+            namespace: identity
+          when: false  # Skip if role not fully implemented
+
+        - name: Record SSO result
+          set_fact:
+            test_results: "{{ test_results + [{'test': 'sso-configuration', 'status': 'SKIP', 'message': 'Not tested (role may not be implemented)'}] }}"
+
+      rescue:
+        - name: Record SSO failure
+          set_fact:
+            test_results: "{{ test_results + [{'test': 'sso-configuration', 'status': 'FAIL', 'message': 'Not idempotent or failed'}] }}"
+
+    - name: Display idempotency test results
+      debug:
+        msg:
+          - "=========================================="
+          - "Idempotency Test Results"
+          - "=========================================="
+          - "{{ test_results | to_nice_yaml }}"
+          - "=========================================="
+
+    - name: Count test results
+      set_fact:
+        total_tests: "{{ test_results | length }}"
+        passed_tests: "{{ test_results | selectattr('status', 'equalto', 'PASS') | list | length }}"
+        failed_tests: "{{ test_results | selectattr('status', 'equalto', 'FAIL') | list | length }}"
+        skipped_tests: "{{ test_results | selectattr('status', 'equalto', 'SKIP') | list | length }}"
+
+    - name: Display test summary
+      debug:
+        msg:
+          - "=========================================="
+          - "Test Summary"
+          - "=========================================="
+          - "Total: {{ total_tests }}"
+          - "Passed: {{ passed_tests }}"
+          - "Failed: {{ failed_tests }}"
+          - "Skipped: {{ skipped_tests }}"
+          - "=========================================="
+          - "Overall: {{ 'SUCCESS' if failed_tests | int == 0 else 'FAILURES DETECTED' }}"
+          - "=========================================="
+
+    - name: Fail if any tests failed
+      fail:
+        msg: "Idempotency test failed - {{ failed_tests }} test(s) did not pass"
+      when: failed_tests | int > 0

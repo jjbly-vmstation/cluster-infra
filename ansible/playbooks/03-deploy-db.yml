@@ -1,0 +1,58 @@
+---
+# Playbook 03: Deploy Database (PostgreSQL)
+# Deploys PostgreSQL for Keycloak using kubernetes.core collection
+
+- name: Deploy PostgreSQL for Keycloak
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    kubeconfig: /etc/kubernetes/admin.conf
+    namespace_identity: identity
+    postgres_password: "{{ lookup('env', 'POSTGRES_PASSWORD') | default('secret000', true) }}"
+    identity_data_dir: /srv/monitoring-data
+
+  tasks:
+    - name: Deploy PostgreSQL via identity-postgresql role
+      include_role:
+        name: identity-postgresql
+      vars:
+        kubeconfig: "{{ kubeconfig }}"
+        namespace: "{{ namespace_identity }}"
+        postgres_admin_password: "{{ postgres_password }}"
+
+    - name: Wait for PostgreSQL to be ready
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        kind: StatefulSet
+        namespace: "{{ namespace_identity }}"
+        name: postgresql
+      register: postgresql_status
+      until:
+        - postgresql_status.resources | length > 0
+        - postgresql_status.resources[0].status.readyReplicas | default(0) >= 1
+      retries: 30
+      delay: 10
+
+    - name: Get PostgreSQL pod name
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        kind: Pod
+        namespace: "{{ namespace_identity }}"
+        label_selectors:
+          - app=postgresql
+      register: postgresql_pods
+
+    - name: Display PostgreSQL deployment status
+      debug:
+        msg:
+          - "=========================================="
+          - "PostgreSQL Deployment: COMPLETE"
+          - "=========================================="
+          - "Namespace: {{ namespace_identity }}"
+          - "Pod: {{ postgresql_pods.resources[0].metadata.name if postgresql_pods.resources | length > 0 else 'N/A' }}"
+          - "Status: {{ postgresql_status.resources[0].status.readyReplicas | default(0) }}/{{ postgresql_status.resources[0].spec.replicas | default(1) }} ready"
+          - ""
+          - "Next: Deploy Keycloak"
+          - "Run: ansible-playbook ansible/playbooks/05-deploy-keycloak.yml"
+          - "=========================================="

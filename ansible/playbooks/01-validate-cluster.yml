@@ -1,0 +1,139 @@
+---
+# Playbook 01: Validate Cluster
+# Pre-deployment validation to ensure cluster is ready for identity stack deployment
+# This playbook validates:
+# - Cluster connectivity
+# - Core components (kube-system pods)
+# - DNS functionality
+# - Storage availability
+
+- name: Validate Kubernetes cluster readiness
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    kubeconfig: /etc/kubernetes/admin.conf
+
+  tasks:
+    - name: Check kubectl availability
+      command: kubectl version --client -o yaml
+      register: kubectl_version
+      changed_when: false
+      failed_when: kubectl_version.rc != 0
+
+    - name: Display kubectl version
+      debug:
+        msg: "kubectl client version: {{ (kubectl_version.stdout | from_yaml).clientVersion.gitVersion }}"
+
+    - name: Check cluster connectivity
+      command: kubectl --kubeconfig={{ kubeconfig }} cluster-info
+      register: cluster_info
+      changed_when: false
+      failed_when: cluster_info.rc != 0
+
+    - name: Display cluster info
+      debug:
+        var: cluster_info.stdout_lines
+
+    - name: Get cluster nodes
+      command: kubectl --kubeconfig={{ kubeconfig }} get nodes -o wide
+      register: cluster_nodes
+      changed_when: false
+
+    - name: Display cluster nodes
+      debug:
+        var: cluster_nodes.stdout_lines
+
+    - name: Check all nodes are Ready
+      shell: kubectl --kubeconfig={{ kubeconfig }} get nodes --no-headers | awk '{print $2}' | grep -v Ready || echo "all-ready"
+      register: nodes_not_ready
+      changed_when: false
+      failed_when: false
+
+    - name: Validate all nodes are Ready
+      assert:
+        that:
+          - nodes_not_ready.stdout == "all-ready" or nodes_not_ready.stdout == ""
+        fail_msg: "Some nodes are not Ready. Please fix node issues before deploying identity stack."
+        success_msg: "All nodes are Ready"
+
+    - name: Check kube-system pod status
+      command: kubectl --kubeconfig={{ kubeconfig }} -n kube-system get pods -o wide
+      register: kube_system_pods
+      changed_when: false
+
+    - name: Display kube-system pods
+      debug:
+        var: kube_system_pods.stdout_lines
+
+    - name: Check for failing pods in kube-system
+      shell: kubectl --kubeconfig={{ kubeconfig }} -n kube-system get pods --no-headers | grep -v Running | grep -v Completed || echo "all-ok"
+      register: failing_pods
+      changed_when: false
+      failed_when: false
+
+    - name: Warn about failing kube-system pods
+      debug:
+        msg: "WARNING: Some kube-system pods are not Running. This may affect identity stack deployment."
+      when: failing_pods.stdout != "all-ok" and failing_pods.stdout != ""
+
+    - name: Check CoreDNS deployment
+      command: kubectl --kubeconfig={{ kubeconfig }} -n kube-system get deployment coredns -o yaml
+      register: coredns_deployment
+      changed_when: false
+      failed_when: coredns_deployment.rc != 0
+
+    - name: Extract CoreDNS replica counts
+      set_fact:
+        coredns_desired: "{{ (coredns_deployment.stdout | from_yaml).spec.replicas }}"
+        coredns_ready: "{{ (coredns_deployment.stdout | from_yaml).status.readyReplicas | default(0) }}"
+
+    - name: Validate CoreDNS is ready
+      assert:
+        that:
+          - coredns_ready | int >= 1
+        fail_msg: "CoreDNS is not ready. At least 1 replica must be running."
+        success_msg: "CoreDNS is ready with {{ coredns_ready }}/{{ coredns_desired }} replicas"
+
+    - name: Check kube-proxy DaemonSet
+      command: kubectl --kubeconfig={{ kubeconfig }} -n kube-system get daemonset kube-proxy -o yaml
+      register: kubeproxy_ds
+      changed_when: false
+      failed_when: kubeproxy_ds.rc != 0
+
+    - name: Extract kube-proxy status
+      set_fact:
+        kubeproxy_desired: "{{ (kubeproxy_ds.stdout | from_yaml).status.desiredNumberScheduled }}"
+        kubeproxy_ready: "{{ (kubeproxy_ds.stdout | from_yaml).status.numberReady | default(0) }}"
+
+    - name: Validate kube-proxy is ready
+      assert:
+        that:
+          - kubeproxy_ready | int == kubeproxy_desired | int
+        fail_msg: "kube-proxy is not fully ready. {{ kubeproxy_ready }}/{{ kubeproxy_desired }} pods ready."
+        success_msg: "kube-proxy is ready with {{ kubeproxy_ready }}/{{ kubeproxy_desired }} pods"
+
+    - name: Check for default StorageClass
+      shell: kubectl --kubeconfig={{ kubeconfig }} get storageclass -o jsonpath='{.items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")].metadata.name}'
+      register: default_storageclass
+      changed_when: false
+      failed_when: false
+
+    - name: Display storage class status
+      debug:
+        msg: "Default StorageClass: {{ default_storageclass.stdout if default_storageclass.stdout != '' else 'NONE (manual PV provisioning required)' }}"
+
+    - name: Validation summary
+      debug:
+        msg:
+          - "=========================================="
+          - "Cluster Validation: PASSED"
+          - "=========================================="
+          - "✓ kubectl connectivity"
+          - "✓ All nodes Ready"
+          - "✓ CoreDNS running"
+          - "✓ kube-proxy running"
+          - "Storage: {{ 'Dynamic provisioning available' if default_storageclass.stdout != '' else 'Manual PV provisioning required' }}"
+          - ""
+          - "Cluster is ready for network validation (playbook 02)"
+          - "=========================================="
