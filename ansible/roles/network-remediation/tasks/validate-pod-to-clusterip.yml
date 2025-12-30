@@ -74,6 +74,7 @@
       --image={{ dns_validation_pod_image }} \
       --restart=Never \
       --labels=app=dns-validation \
+      --overrides='{"spec":{"nodeSelector":{"kubernetes.io/hostname":"masternode"},"tolerations":[{"key":"node-role.kubernetes.io/control-plane","operator":"Exists","effect":"NoSchedule"},{"key":"node-role.kubernetes.io/master","operator":"Exists","effect":"NoSchedule"}]}}' \
       --command -- sh -c '
         set -eu
         echo "=== DNS Validation Test ==="

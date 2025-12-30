@@ -36,3 +36,17 @@ secrets:
 extraEnvFrom: |
   - secretRef:
       name: '{{ include "keycloak.fullname" . }}-admin'
+
+# Schedule Keycloak pods on the control-plane (masternode) by default and
+# add tolerations so they can run on tainted control-plane nodes. You can
+# override these in Helm --set flags if needed.
+nodeSelector:
+  kubernetes.io/hostname: masternode
+
+tolerations:
+  - key: "node-role.kubernetes.io/control-plane"
+    operator: "Exists"
+    effect: "NoSchedule"
+  - key: "node-role.kubernetes.io/master"
+    operator: "Exists"
+    effect: "NoSchedule"
