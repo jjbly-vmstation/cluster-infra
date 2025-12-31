@@ -1,0 +1,6 @@
+---
+- name: Post-Kubespray tasks
+  hosts: kube_control_plane
+  become: yes
+  roles:
+    - role: freeipa-ca-cert

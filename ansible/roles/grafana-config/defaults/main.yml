@@ -1,0 +1,7 @@
+---
+# Default variables for grafana-config role
+namespace_monitoring: "monitoring"
+grafana_client_secret: "{{ lookup('k8s', 'v1', 'Secret', 'grafana-client-secret', namespace='monitoring')['data']['client-secret'] | b64decode }}"
+keycloak_url: "keycloak.{{ domain }}"
+keycloak_realm: "cluster-services"
+domain: "example.com"

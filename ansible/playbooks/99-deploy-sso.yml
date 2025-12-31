@@ -1,0 +1,76 @@
+---
+- name: Deploy and configure SSO components
+  hosts: localhost
+  gather_facts: false
+  become: yes
+  vars:
+    namespace_identity: identity
+  roles:
+    - role: identity-keycloak-clients
+    - role: identity-oauth2-proxy
+
+  post_tasks:
+    - name: Wait for oauth2-proxy deployment to be ready
+      kubernetes.core.k8s_info:
+        kind: Deployment
+        name: oauth2-proxy
+        namespace: "{{ namespace_identity }}"
+        wait: yes
+        wait_condition:
+          type: Available
+          status: "True"
+        wait_timeout: 300
+      register: oauth2_proxy_deployment
+      until: oauth2_proxy_deployment.resources | list | length > 0 and oauth2_proxy_deployment.resources[0].status.readyReplicas == oauth2_proxy_deployment.resources[0].spec.replicas
+      retries: 10
+      delay: 10
+
+    - name: Wait for grafana client secret to be ready
+      kubernetes.core.k8s_info:
+        kind: Secret
+        name: grafana-client-secret
+        namespace: "{{ namespace_monitoring }}"
+        wait: yes
+        wait_timeout: 60
+      register: grafana_secret
+      until: grafana_secret.resources | list | length > 0
+      retries: 5
+      delay: 5
+
+    - name: Wait for prometheus client secret to be ready
+      kubernetes.core.k8s_info:
+        kind: Secret
+        name: prometheus-client-secret
+        namespace: "{{ namespace_monitoring }}"
+        wait: yes
+        wait_timeout: 60
+      register: prometheus_secret
+      until: prometheus_secret.resources | list | length > 0
+      retries: 5
+      delay: 5
+
+    - name: Wait for loki client secret to be ready
+      kubernetes.core.k8s_info:
+        kind: Secret
+        name: loki-client-secret
+        namespace: "{{ namespace_monitoring }}"
+        wait: yes
+        wait_timeout: 60
+      register: loki_secret
+      until: loki_secret.resources | list | length > 0
+      retries: 5
+      delay: 5
+
+    - name: Configure Grafana
+      ansible.builtin.import_role:
+        name: grafana-config
+
+- name: Deploy FreeIPA CA to control plane nodes
+  hosts: kube_control_plane
+  become: yes
+  roles:
+    - role: freeipa-ca-cert
+
+- name: Run Kubespray to apply OIDC configuration
+  ansible.builtin.import_playbook: kubespray/cluster.yml
+

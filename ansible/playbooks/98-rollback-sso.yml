@@ -1,0 +1,157 @@
+---
+- name: Rollback SSO configuration
+  hosts: localhost
+  gather_facts: false
+  become: yes
+  vars:
+    namespace_identity: identity
+    namespace_monitoring: monitoring
+    domain: "example.com"
+  tasks:
+    - name: Delete Grafana ingress
+      kubernetes.core.k8s:
+        kind: Ingress
+        name: grafana
+        namespace: "{{ namespace_monitoring }}"
+        state: absent
+
+    - name: Delete Prometheus ingress
+      kubernetes.core.k8s:
+        kind: Ingress
+        name: prometheus
+        namespace: "{{ namespace_monitoring }}"
+        state: absent
+
+    - name: Delete Loki ingress
+      kubernetes.core.k8s:
+        kind: Ingress
+        name: loki
+        namespace: "{{ namespace_monitoring }}"
+        state: absent
+
+    - name: Delete oauth2-proxy deployment
+      kubernetes.core.k8s:
+        kind: Deployment
+        name: oauth2-proxy
+        namespace: "{{ namespace_identity }}"
+        state: absent
+
+    - name: Delete oauth2-proxy service
+      kubernetes.core.k8s:
+        kind: Service
+        name: oauth2-proxy
+        namespace: "{{ namespace_identity }}"
+        state: absent
+
+    - name: Delete oauth2-proxy ingress
+      kubernetes.core.k8s:
+        kind: Ingress
+        name: oauth2-proxy
+        namespace: "{{ namespace_identity }}"
+        state: absent
+
+    - name: Delete oauth2-proxy client secret
+      kubernetes.core.k8s:
+        kind: Secret
+        name: oauth2-proxy-client-secret
+        namespace: "{{ namespace_identity }}"
+        state: absent
+
+    - name: Delete Grafana client secret
+      kubernetes.core.k8s:
+        kind: Secret
+        name: grafana-client-secret
+        namespace: "{{ namespace_monitoring }}"
+        state: absent
+
+    - name: Delete Prometheus client secret
+      kubernetes.core.k8s:
+        kind: Secret
+        name: prometheus-client-secret
+        namespace: "{{ namespace_monitoring }}"
+        state: absent
+
+    - name: Delete Loki client secret
+      kubernetes.core.k8s:
+        kind: Secret
+        name: loki-client-secret
+        namespace: "{{ namespace_monitoring }}"
+        state: absent
+
+    - name: Delete Grafana client
+      community.general.keycloak_client:
+        auth_keycloak_url: "https://{{ keycloak_url }}/auth"
+        auth_realm: master
+        auth_client_id: admin-cli
+        auth_username: admin
+        auth_password: "{{ keycloak_admin_password_effective }}"
+        realm: "{{ keycloak_realm }}"
+        client_id: grafana
+        state: absent
+
+    - name: Delete Prometheus client
+      community.general.keycloak_client:
+        auth_keycloak_url: "https://{{ keycloak_url }}/auth"
+        auth_realm: master
+        auth_client_id: admin-cli
+        auth_username: admin
+        auth_password: "{{ keycloak_admin_password_effective }}"
+        realm: "{{ keycloak_realm }}"
+        client_id: prometheus
+        state: absent
+
+    - name: Delete Loki client
+      community.general.keycloak_client:
+        auth_keycloak_url: "https://{{ keycloak_url }}/auth"
+        auth_realm: master
+        auth_client_id: admin-cli
+        auth_username: admin
+        auth_password: "{{ keycloak_admin_password_effective }}"
+        realm: "{{ keycloak_realm }}"
+        client_id: loki
+        state: absent
+
+    - name: Delete oauth2-proxy client
+      community.general.keycloak_client:
+        auth_keycloak_url: "https://{{ keycloak_url }}/auth"
+        auth_realm: master
+        auth_client_id: admin-cli
+        auth_username: admin
+        auth_password: "{{ keycloak_admin_password_effective }}"
+        realm: "{{ keycloak_realm }}"
+        client_id: oauth2-proxy
+        state: absent
+
+    - name: Delete Kubernetes client
+      community.general.keycloak_client:
+        auth_keycloak_url: "https://{{ keycloak_url }}/auth"
+        auth_realm: master
+        auth_client_id: admin-cli
+        auth_username: admin
+        auth_password: "{{ keycloak_admin_password_effective }}"
+        realm: "{{ keycloak_realm }}"
+        client_id: kubernetes
+        state: absent
+
+- name: Remove OIDC configuration from Kubespray
+  hosts: localhost
+  gather_facts: false
+  become: no
+  tasks:
+    - name: Remove OIDC configuration file
+      ansible.builtin.file:
+        path: "{{ inventory_dir }}/../group_vars/k8s_cluster/oidc.yml"
+        state: absent
+
+- name: Run Kubespray to apply OIDC configuration
+  ansible.builtin.import_playbook: kubespray/cluster.yml
+
+- name: Leave FreeIPA domain
+  hosts: all
+  become: yes
+  tasks:
+    - name: Leave FreeIPA domain
+      ansible.builtin.command: echo "{{ freeipa_admin_password }}" | realm leave --user={{ freeipa_admin_user }} {{ freeipa_domain }}
+      when: "'configured' in realm_discover.stdout"
+      vars:
+        realm_discover: "{{ hostvars[inventory_hostname]['realm_discover'] }}"

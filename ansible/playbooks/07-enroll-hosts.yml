@@ -1,0 +1,6 @@
+---
+- name: Enroll hosts in FreeIPA
+  hosts: all
+  become: yes
+  roles:
+    - role: sssd-client

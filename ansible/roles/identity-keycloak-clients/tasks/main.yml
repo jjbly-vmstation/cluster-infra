@@ -1,0 +1,178 @@
+---
+# Tasks for identity-keycloak-clients role
+
+- name: Read Keycloak admin password from chart-managed secret
+  shell: >-
+    KUBECONFIG=/etc/kubernetes/admin.conf kubectl get secret keycloak-admin -n {{ namespace_identity }}
+    -o jsonpath='{.data.KEYCLOAK_PASSWORD}' | base64 -d
+  register: keycloak_admin_password_from_secret
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Set effective Keycloak admin password fact
+  set_fact:
+    keycloak_admin_password_effective: >-
+      {{ (keycloak_admin_password_from_secret.stdout | default('') | trim)
+         if (keycloak_admin_password_from_secret is defined and (keycloak_admin_password_from_secret.stdout | default('') | trim) != '')
+         else keycloak_admin_password }}
+
+- name: Get Keycloak admin token
+  uri:
+    url: "https://{{ keycloak_url }}/auth/realms/master/protocol/openid-connect/token"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      grant_type: password
+      client_id: admin-cli
+      username: admin
+      password: "{{ keycloak_admin_password_effective }}"
+    validate_certs: no
+  register: keycloak_admin_token
+
+- name: Create Grafana client
+  community.general.keycloak_client:
+    auth_keycloak_url: "https://{{ keycloak_url }}/auth"
+    auth_realm: master
+    auth_client_id: admin-cli
+    auth_username: admin
+    auth_password: "{{ keycloak_admin_password_effective }}"
+    realm: "{{ keycloak_realm }}"
+    client_id: grafana
+    secret: "{{ grafana_client_secret }}"
+    redirect_uris:
+      - "https://grafana.{{ domain }}/login/generic_oauth"
+    protocol: openid-connect
+    public_client: no
+    confidential: yes
+    state: present
+  vars:
+    grafana_client_secret: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+
+- name: Create Prometheus client
+  community.general.keycloak_client:
+    auth_keycloak_url: "https://{{ keycloak_url }}/auth"
+    auth_realm: master
+    auth_client_id: admin-cli
+    auth_username: admin
+    auth_password: "{{ keycloak_admin_password_effective }}"
+    realm: "{{ keycloak_realm }}"
+    client_id: prometheus
+    secret: "{{ prometheus_client_secret }}"
+    redirect_uris:
+      - "https://prometheus.{{ domain }}/login/generic_oauth"
+    protocol: openid-connect
+    public_client: no
+    confidential: yes
+    state: present
+  vars:
+    prometheus_client_secret: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+
+- name: Create Loki client
+  community.general.keycloak_client:
+    auth_keycloak_url: "https://{{ keycloak_url }}/auth"
+    auth_realm: master
+    auth_client_id: admin-cli
+    auth_username: admin
+    auth_password: "{{ keycloak_admin_password_effective }}"
+    realm: "{{ keycloak_realm }}"
+    client_id: loki
+    secret: "{{ loki_client_secret }}"
+    redirect_uris:
+      - "https://loki.{{ domain }}/login/generic_oauth"
+    protocol: openid-connect
+    public_client: no
+    confidential: yes
+    state: present
+  vars:
+    loki_client_secret: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+
+- name: Create Kubernetes client
+  community.general.keycloak_client:
+    auth_keycloak_url: "https://{{ keycloak_url }}/auth"
+    auth_realm: master
+    auth_client_id: admin-cli
+    auth_username: admin
+    auth_password: "{{ keycloak_admin_password_effective }}"
+    realm: "{{ keycloak_realm }}"
+    client_id: kubernetes
+    protocol: openid-connect
+    public_client: yes
+    confidential: no
+    state: present
+
+
+- name: Create oauth2-proxy client
+  community.general.keycloak_client:
+    auth_keycloak_url: "https://{{ keycloak_url }}/auth"
+    auth_realm: master
+    auth_client_id: admin-cli
+    auth_username: admin
+    auth_password: "{{ keycloak_admin_password_effective }}"
+    realm: "{{ keycloak_realm }}"
+    client_id: oauth2-proxy
+    secret: "{{ oauth2_proxy_client_secret }}"
+    redirect_uris:
+      - "https://auth.{{ domain }}/oauth2/callback"
+    protocol: openid-connect
+    public_client: no
+    confidential: yes
+    state: present
+  vars:
+    oauth2_proxy_client_secret: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+
+- name: Create oauth2-proxy client secret in Kubernetes
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: oauth2-proxy-client-secret
+        namespace: "{{ namespace_identity }}"
+      type: Opaque
+      stringData:
+        client-id: oauth2-proxy
+        client-secret: "{{ oauth2_proxy_client_secret }}"
+
+- name: Create Grafana client secret in Kubernetes
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: grafana-client-secret
+        namespace: "{{ namespace_monitoring }}"
+      type: Opaque
+      stringData:
+        client-id: grafana
+        client-secret: "{{ grafana_client_secret }}"
+
+- name: Create Prometheus client secret in Kubernetes
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: prometheus-client-secret
+        namespace: "{{ namespace_monitoring }}"
+      type: Opaque
+      stringData:
+        client-id: prometheus
+        client-secret: "{{ prometheus_client_secret }}"
+
+- name: Create Loki client secret in Kubernetes
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: loki-client-secret
+        namespace: "{{ namespace_monitoring }}"
+      type: Opaque
+      stringData:
+        client-id: loki
+        client-secret: "{{ loki_client_secret }}"

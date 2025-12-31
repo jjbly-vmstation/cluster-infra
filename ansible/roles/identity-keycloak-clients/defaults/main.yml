@@ -1,0 +1,8 @@
+---
+# Default variables for identity-keycloak-clients role
+namespace_identity: identity
+keycloak_url: "https://keycloak.{{ domain }}"
+keycloak_realm: "cluster-services"
+domain: "example.com"
+namespace_monitoring: "monitoring"
+keycloak_admin_password: ""

@@ -1,0 +1,55 @@
+---
+# Tasks for grafana-config role
+
+- name: Create Grafana config for OAuth
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: grafana-config
+        namespace: "{{ namespace_monitoring }}"
+      data:
+        "grafana.ini": |
+          [auth.anonymous]
+          enabled = false
+          [auth.generic_oauth]
+          enabled = true
+          name = Keycloak
+          allow_sign_up = true
+          client_id = grafana
+          client_secret = "{{ grafana_client_secret }}"
+          scopes = openid profile email
+          auth_url = https://{{ keycloak_url }}/auth/realms/{{ keycloak_realm }}/protocol/openid-connect/auth
+          token_url = https://{{ keycloak_url }}/auth/realms/{{ keycloak_realm }}/protocol/openid-connect/token
+          api_url = https://{{ keycloak_url }}/auth/realms/{{ keycloak_realm }}/protocol/openid-connect/userinfo
+          use_pkce = true
+          role_attribute_path = contains(roles, 'admin') && 'Admin' || 'Viewer'
+
+- name: Patch Grafana deployment to use the new config
+  kubernetes.core.k8s:
+    state: patched
+    kind: Deployment
+    name: grafana
+    namespace: "{{ namespace_monitoring }}"
+    patch:
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value:
+          name: grafana-config
+          configMap:
+            name: grafana-config
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value:
+          name: grafana-config
+          mountPath: /etc/grafana/grafana.ini
+          subPath: grafana.ini
+
+- name: Restart Grafana deployment
+  kubernetes.core.k8s:
+    kind: Deployment
+    name: grafana
+    namespace: "{{ namespace_monitoring }}"
+    state: restarted

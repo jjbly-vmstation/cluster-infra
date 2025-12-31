@@ -1,0 +1,206 @@
+- name: Generate oauth2-proxy cookie secret
+  shell: openssl rand -base64 32
+  register: oauth2_proxy_cookie_secret_gen
+  become: false
+
+- name: Set oauth2-proxy cookie secret fact
+  set_fact:
+    oauth2_proxy_cookie_secret: "{{ oauth2_proxy_cookie_secret_gen.stdout | trim }}"
+
+- name: Add cookie secret to oauth2-proxy client secret
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: oauth2-proxy-client-secret
+        namespace: "{{ namespace_identity }}"
+      type: Opaque
+      stringData:
+        cookie-secret: "{{ oauth2_proxy_cookie_secret }}"
+
+- name: Deploy oauth2-proxy
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: oauth2-proxy
+        namespace: "{{ namespace_identity }}"
+        labels:
+          app: oauth2-proxy
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: oauth2-proxy
+        template:
+          metadata:
+            labels:
+              app: oauth2-proxy
+          spec:
+            containers:
+              - name: oauth2-proxy
+                image: "quay.io/oauth2-proxy/oauth2-proxy:v7.2.0"
+                args:
+                  - "--provider=keycloak"
+                  - "--keycloak-login-url=https://{{ keycloak_url }}/auth"
+                  - "--keycloak-group=admins"
+                  - "--keycloak-realm={{ keycloak_realm }}"
+                  - "--client-id=oauth2-proxy"
+                  - "--client-secret-file=/etc/secrets/client-secret"
+                  - "--cookie-secret-file=/etc/secrets/cookie-secret"
+                  - "--email-domain=*"
+                  - "--http-address=0.0.0.0:4180"
+                  - "--upstream=static://200"
+                ports:
+                  - containerPort: 4180
+                    name: http
+                volumeMounts:
+                  - name: secrets
+                    mountPath: /etc/secrets
+                    readOnly: true
+            volumes:
+              - name: secrets
+                secret:
+                  secretName: oauth2-proxy-client-secret
+
+- name: Create oauth2-proxy service
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: oauth2-proxy
+        namespace: "{{ namespace_identity }}"
+      spec:
+        selector:
+          app: oauth2-proxy
+        ports:
+          - name: http
+            port: 4180
+            targetPort: 4180
+
+- name: Create oauth2-proxy ingress
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: oauth2-proxy
+        namespace: "{{ namespace_identity }}"
+        annotations:
+          cert-manager.io/cluster-issuer: freeipa-ca-issuer
+          nginx.ingress.kubernetes.io/auth-url: "https://auth.{{ domain }}/oauth2/auth"
+          nginx.ingress.kubernetes.io/auth-signin: "https://auth.{{ domain }}/oauth2/start?rd=$request_uri"
+      spec:
+        tls:
+          - hosts:
+              - "auth.{{ domain }}"
+            secretName: auth-tls
+        rules:
+          - host: "auth.{{ domain }}"
+            http:
+              paths:
+                - path: /oauth2
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: oauth2-proxy
+                      port:
+                        number: 4180
+
+- name: Create Grafana ingress
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: grafana
+        namespace: "{{ namespace_monitoring }}"
+        annotations:
+          cert-manager.io/cluster-issuer: freeipa-ca-issuer
+          nginx.ingress.kubernetes.io/auth-url: "https://auth.{{ domain }}/oauth2/auth"
+          nginx.ingress.kubernetes.io/auth-signin: "https://auth.{{ domain }}/oauth2/start?rd=$request_uri"
+      spec:
+        tls:
+          - hosts:
+              - "grafana.{{ domain }}"
+            secretName: grafana-tls
+        rules:
+          - host: "grafana.{{ domain }}"
+            http:
+              paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: grafana
+                      port:
+                        number: 3000
+
+- name: Create Prometheus ingress
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: prometheus
+        namespace: "{{ namespace_monitoring }}"
+        annotations:
+          cert-manager.io/cluster-issuer: freeipa-ca-issuer
+          nginx.ingress.kubernetes.io/auth-url: "https://auth.{{ domain }}/oauth2/auth"
+          nginx.ingress.kubernetes.io/auth-signin: "https://auth.{{ domain }}/oauth2/start?rd=$request_uri"
+      spec:
+        tls:
+          - hosts:
+              - "prometheus.{{ domain }}"
+            secretName: prometheus-tls
+        rules:
+          - host: "prometheus.{{ domain }}"
+            http:
+              paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: prometheus-k8s
+                      port:
+                        number: 9090
+
+- name: Create Loki ingress
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: loki
+        namespace: "{{ namespace_monitoring }}"
+        annotations:
+          cert-manager.io/cluster-issuer: freeipa-ca-issuer
+          nginx.ingress.kubernetes.io/auth-url: "https://auth.{{ domain }}/oauth2/auth"
+          nginx.ingress.kubernetes.io/auth-signin: "https://auth.{{ domain }}/oauth2/start?rd=$request_uri"
+      spec:
+        tls:
+          - hosts:
+              - "loki.{{ domain }}"
+            secretName: loki-tls
+        rules:
+          - host: "loki.{{ domain }}"
+            http:
+              paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: loki
+                      port:
+                        number: 3100
+

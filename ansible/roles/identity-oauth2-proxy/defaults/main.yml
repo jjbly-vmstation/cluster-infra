@@ -1,0 +1,6 @@
+---
+# Default variables for identity-oauth2-proxy role
+namespace_identity: identity
+domain: "example.com"
+keycloak_url: "https://keycloak.{{ domain }}"
+keycloak_realm: "cluster-services"

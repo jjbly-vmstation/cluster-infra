@@ -1,0 +1,6 @@
+---
+# Default variables for sssd-client role
+freeipa_domain: "ipa.{{ domain }}"
+freeipa_admin_user: "admin"
+freeipa_admin_password: ""
+domain: "example.com"

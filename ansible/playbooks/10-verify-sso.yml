@@ -1,0 +1,68 @@
+---
+- name: Verify SSO configuration
+  hosts: localhost
+  gather_facts: false
+  become: yes
+  vars:
+    namespace_identity: identity
+    namespace_monitoring: monitoring
+    domain: "example.com"
+  tasks:
+    - name: Check oauth2-proxy deployment
+      kubernetes.core.k8s_info:
+        kind: Deployment
+        name: oauth2-proxy
+        namespace: "{{ namespace_identity }}"
+      register: oauth2_proxy_deployment
+      until: oauth2_proxy_deployment.resources | list | length > 0 and oauth2_proxy_deployment.resources[0].status.readyReplicas == oauth2_proxy_deployment.resources[0].spec.replicas
+      retries: 10
+      delay: 10
+      failed_when: not (oauth2_proxy_deployment.resources | list | length > 0 and oauth2_proxy_deployment.resources[0].status.readyReplicas == oauth2_proxy_deployment.resources[0].spec.replicas)
+
+    - name: Check Grafana ingress
+      kubernetes.core.k8s_info:
+        kind: Ingress
+        name: grafana
+        namespace: "{{ namespace_monitoring }}"
+      register: grafana_ingress
+      failed_when: not (grafana_ingress.resources | list | length > 0 and 'nginx.ingress.kubernetes.io/auth-url' in grafana_ingress.resources[0].metadata.annotations and 'cert-manager.io/cluster-issuer' in grafana_ingress.resources[0].metadata.annotations)
+
+    - name: Check Prometheus ingress
+      kubernetes.core.k8s_info:
+        kind: Ingress
+        name: prometheus
+        namespace: "{{ namespace_monitoring }}"
+      register: prometheus_ingress
+      failed_when: not (prometheus_ingress.resources | list | length > 0 and 'nginx.ingress.kubernetes.io/auth-url' in prometheus_ingress.resources[0].metadata.annotations and 'cert-manager.io/cluster-issuer' in prometheus_ingress.resources[0].metadata.annotations)
+
+    - name: Check Loki ingress
+      kubernetes.core.k8s_info:
+        kind: Ingress
+        name: loki
+        namespace: "{{ namespace_monitoring }}"
+      register: loki_ingress
+      failed_when: not (loki_ingress.resources | list | length > 0 and 'nginx.ingress.kubernetes.io/auth-url' in loki_ingress.resources[0].metadata.annotations and 'cert-manager.io/cluster-issuer' in loki_ingress.resources[0].metadata.annotations)
+
+    - name: Check Grafana URL for redirect
+      ansible.builtin.uri:
+        url: "https://grafana.{{ domain }}"
+        follow_redirects: "no"
+        validate_certs: no
+      register: grafana_url
+      failed_when: grafana_url.status != 302 or 'auth.{{ domain }}' not in grafana_url.headers.Location
+
+    - name: Check Prometheus URL for redirect
+      ansible.builtin.uri:
+        url: "https://prometheus.{{ domain }}"
+        follow_redirects: "no"
+        validate_certs: no
+      register: prometheus_url
+      failed_when: prometheus_url.status != 302 or 'auth.{{ domain }}' not in prometheus_url.headers.Location
+
+    - name: Check Loki URL for redirect
+      ansible.builtin.uri:
+        url: "https://loki.{{ domain }}"
+        follow_redirects: "no"
+        validate_certs: no
+      register: loki_url
+      failed_when: loki_url.status != 302 or 'auth.{{ domain }}' not in loki_url.headers.Location

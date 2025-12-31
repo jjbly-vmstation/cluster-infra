@@ -1,0 +1,19 @@
+---
+# Tasks for freeipa-ca-cert role
+
+- name: Get FreeIPA CA certificate from secret
+  kubernetes.core.k8s_info:
+    kind: Secret
+    name: freeipa-ca
+    namespace: "cert-manager"
+  register: freeipa_ca_secret
+  delegate_to: localhost
+
+- name: Write FreeIPA CA certificate to file
+  ansible.builtin.copy:
+    content: "{{ freeipa_ca_secret.resources[0].data['tls.crt'] | b64decode }}"
+    dest: /etc/kubernetes/pki/freeipa-ca.crt
+    owner: root
+    group: root
+    mode: '0644'
+  when: freeipa_ca_secret.resources | list | length > 0

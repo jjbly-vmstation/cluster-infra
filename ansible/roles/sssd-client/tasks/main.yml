@@ -1,0 +1,26 @@
+---
+# Tasks for sssd-client role
+
+- name: Install SSSD and Kerberos packages
+  ansible.builtin.dnf:
+    name:
+      - sssd
+      - krb5-workstation
+      - realmd
+      - oddjob-mkhomedir
+    state: present
+
+- name: Discover FreeIPA domain
+  ansible.builtin.command: realm discover {{ freeipa_domain }}
+  register: realm_discover
+  changed_when: false
+
+- name: Join FreeIPA domain
+  ansible.builtin.command: echo "{{ freeipa_admin_password }}" | realm join --user={{ freeipa_admin_user }} {{ freeipa_domain }}
+  when: "'not configured' in realm_discover.stdout"
+
+- name: Start and enable SSSD service
+  ansible.builtin.service:
+    name: sssd
+    state: started
+    enabled: yes
