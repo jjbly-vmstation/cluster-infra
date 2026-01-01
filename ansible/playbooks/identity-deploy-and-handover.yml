@@ -223,7 +223,7 @@
             namespace: identity
           spec:
             selector:
-              app: keycloak
+              app.kubernetes.io/name: keycloak
             ports:
               - name: http
                 port: 8080
@@ -269,6 +269,21 @@
       register: oauth2_apply
       failed_when: oauth2_apply.rc != 0
       tags: [sso, oauth2-proxy]
+
+    - name: Enforce scheduling of identity workloads on masternode (patch pods)
+      ansible.builtin.shell: |
+        kubectl -n identity patch deployment oauth2-proxy --type=merge -p '{"spec":{"template":{"spec":{"nodeSelector":{"node-role.kubernetes.io/control-plane":""},"tolerations":[{"key":"node-role.kubernetes.io/control-plane","operator":"Exists","effect":"NoSchedule"},{"key":"node-role.kubernetes.io/master","operator":"Exists","effect":"NoSchedule"}]}}}}' || true
+        kubectl -n identity rollout restart deployment/oauth2-proxy || true
+        kubectl -n identity patch statefulset keycloak --type=merge -p '{"spec":{"template":{"spec":{"nodeSelector":{"node-role.kubernetes.io/control-plane":""},"tolerations":[{"key":"node-role.kubernetes.io/control-plane","operator":"Exists","effect":"NoSchedule"},{"key":"node-role.kubernetes.io/master","operator":"Exists","effect":"NoSchedule"}]}}}}' || true
+        kubectl -n identity rollout restart statefulset/keycloak || true
+        kubectl -n identity patch statefulset keycloak-postgresql --type=merge -p '{"spec":{"template":{"spec":{"nodeSelector":{"node-role.kubernetes.io/control-plane":""},"tolerations":[{"key":"node-role.kubernetes.io/control-plane","operator":"Exists","effect":"NoSchedule"},{"key":"node-role.kubernetes.io/master","operator":"Exists","effect":"NoSchedule"}]}}}}' || true
+        kubectl -n identity rollout restart statefulset/keycloak-postgresql || true
+        kubectl -n identity patch statefulset freeipa --type=merge -p '{"spec":{"template":{"spec":{"nodeSelector":{"node-role.kubernetes.io/control-plane":""},"tolerations":[{"key":"node-role.kubernetes.io/control-plane","operator":"Exists","effect":"NoSchedule"},{"key":"node-role.kubernetes.io/master","operator":"Exists","effect":"NoSchedule"}]}}}}' || true
+        kubectl -n identity rollout restart statefulset/freeipa || true
+      register: enforce_scheduling
+      changed_when: false
+      failed_when: false
+      tags: [sso, scheduling]
 
     - name: Wait for oauth2-proxy Deployment to be ready
       community.kubernetes.k8s_info:
