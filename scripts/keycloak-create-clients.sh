@@ -45,12 +45,29 @@ kc_exec(){
 KC_ADMIN_USER="${KEYCLOAK_ADMIN_USER:-admin}"
 KC_ADMIN_PASS="${KEYCLOAK_ADMIN_PASSWORD:-secret}"
 
-echo "Logging into Keycloak pod $POD"
-if ! kc_exec "/opt/keycloak/bin/kcadm.sh config credentials --server http://localhost:8080/auth --realm master --user ${KC_ADMIN_USER} --password ${KC_ADMIN_PASS}" 2>/dev/null; then
-  if ! kc_exec "/opt/jboss/keycloak/bin/kcadm.sh config credentials --server http://localhost:8080/auth --realm master --user ${KC_ADMIN_USER} --password ${KC_ADMIN_PASS}"; then
-    echo "Failed to run kcadm.sh inside Keycloak pod; ensure admin credentials and kcadm path" >&2
-    exit 3
+# Find kcadm.sh inside the Keycloak pod (try common locations, which, then find)
+echo "Detecting kcadm.sh path inside Keycloak pod $POD"
+KCADM_PATH=$(kubectl -n "$KEYCLOAK_NS" exec "$POD" -- sh -lc '
+  for p in /opt/keycloak/bin/kcadm.sh /opt/jboss/keycloak/bin/kcadm.sh /opt/keycloak/bin/kcadm /usr/local/bin/kcadm.sh; do
+    [ -x "$p" ] && echo "$p" && exit 0
+  done
+  if command -v kcadm.sh >/dev/null 2>&1; then
+    command -v kcadm.sh && exit 0
   fi
+  find / -name kcadm.sh -type f 2>/dev/null | head -n1 || true
+'  2>/dev/null || true)
+
+if [ -z "$KCADM_PATH" ]; then
+  echo "Failed to locate kcadm.sh inside Keycloak pod $POD" >&2
+  exit 3
+fi
+
+echo "Using kcadm at: $KCADM_PATH"
+
+echo "Logging into Keycloak pod $POD"
+if ! kc_exec "$KCADM_PATH config credentials --server http://localhost:8080/auth --realm master --user ${KC_ADMIN_USER} --password ${KC_ADMIN_PASS}" 2>/dev/null; then
+  echo "Failed to run $KCADM_PATH inside Keycloak pod; ensure admin credentials are correct" >&2
+  exit 3
 fi
 
 echo "$CLIENTS_JSON" | jq -c '.[]' -r | while read -r client; do
