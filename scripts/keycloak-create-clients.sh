@@ -76,18 +76,17 @@ echo "$CLIENTS_JSON" | jq -c '.[]' -r | while read -r client; do
 
   echo "Creating/updating client: $name"
   # remove existing client if present to simplify idempotency
-  EXIST=$(kc_exec "/opt/keycloak/bin/kcadm.sh get clients -r ${REALM} -q clientId=${name} -o json" || true)
+  EXIST=$(kc_exec "$KCADM_PATH get clients -r ${REALM} -q clientId=${name} -o json" || true)
   if [ -n "$EXIST" ] && [ "$EXIST" != "[]" ]; then
     ID=$(echo "$EXIST" | jq -r '.[0].id')
-    kc_exec "/opt/keycloak/bin/kcadm.sh delete clients/$ID -r ${REALM} || true"
+    kc_exec "$KCADM_PATH delete clients/$ID -r ${REALM} || true"
   fi
-
-  kc_exec "/opt/keycloak/bin/kcadm.sh create clients -r ${REALM} -s clientId=${name} -s 'directAccessGrantsEnabled=true' -s 'publicClient=false' -s 'serviceAccountsEnabled=true' -s 'standardFlowEnabled=true'"
-  NEW_ID=$(kc_exec "/opt/keycloak/bin/kcadm.sh get clients -r ${REALM} -q clientId=${name} -o json" | jq -r '.[0].id')
-  kc_exec "/opt/keycloak/bin/kcadm.sh update clients/${NEW_ID} -r ${REALM} -s redirectUris=${redirects}"
+  kc_exec "$KCADM_PATH create clients -r ${REALM} -s clientId=${name} -s 'directAccessGrantsEnabled=true' -s 'publicClient=false' -s 'serviceAccountsEnabled=true' -s 'standardFlowEnabled=true'"
+  NEW_ID=$(kc_exec "$KCADM_PATH get clients -r ${REALM} -q clientId=${name} -o json" | jq -r '.[0].id')
+  kc_exec "$KCADM_PATH update clients/${NEW_ID} -r ${REALM} -s redirectUris=${redirects}"
 
   # obtain secret
-  SECRET_JSON=$(kc_exec "/opt/keycloak/bin/kcadm.sh get clients/${NEW_ID}/client-secret -r ${REALM}")
+  SECRET_JSON=$(kc_exec "$KCADM_PATH get clients/${NEW_ID}/client-secret -r ${REALM}")
   SECRET=$(echo "$SECRET_JSON" | jq -r '.value')
 
   echo "Storing secret for $name as k8s Secret keycloak-${name}-client-secret"
