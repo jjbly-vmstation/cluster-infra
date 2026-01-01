@@ -185,40 +185,37 @@
       tags: [sso, prereq]
 
     - name: Ensure kube-dns Service exists in kube-system
-      ansible.builtin.shell: >-
-        if ! kubectl -n kube-system get svc kube-dns >/dev/null 2>&1; then
-          cat <<'EOF' | kubectl apply -f -
-            apiVersion: v1
-            kind: Service
-            metadata:
-              name: kube-dns
-              namespace: kube-system
-              labels:
-                k8s-app: kube-dns
-            spec:
-              ports:
-                - name: dns
-                  port: 53
-                  protocol: UDP
-                  targetPort: 53
-                - name: dns-tcp
-                  port: 53
-                  protocol: TCP
-                  targetPort: 53
-              selector:
-                k8s-app: kube-dns
-            EOF
-        fi
-      args:
-        executable: /bin/bash
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: kube-dns
+            namespace: kube-system
+            labels:
+              k8s-app: kube-dns
+          spec:
+            clusterIP: 10.233.0.10
+            ports:
+              - name: dns
+                port: 53
+                protocol: UDP
+                targetPort: 53
+              - name: dns-tcp
+                port: 53
+                protocol: TCP
+                targetPort: 53
+            selector:
+              k8s-app: kube-dns
       register: kube_dns_svc
-      changed_when: kube_dns_svc.rc == 0
+      changed_when: kube_dns_svc.changed | default(false)
       tags: [dns, coredns]
 
     - name: Ensure Keycloak Service exists in identity namespace
-      ansible.builtin.shell: >-
-        if ! kubectl -n identity get svc keycloak >/dev/null 2>&1; then
-          cat <<'EOF' | kubectl -n identity apply -f -
+      kubernetes.core.k8s:
+        state: present
+        definition:
           apiVersion: v1
           kind: Service
           metadata:
@@ -232,12 +229,8 @@
                 port: 8080
                 targetPort: 8080
             type: ClusterIP
-          EOF
-        fi
-      args:
-        executable: /bin/bash
       register: keycloak_svc
-      changed_when: keycloak_svc.rc == 0
+      changed_when: keycloak_svc.changed | default(false)
       tags: [keycloak, sso]
 
     - name: Create Keycloak clients and store client secrets in k8s
