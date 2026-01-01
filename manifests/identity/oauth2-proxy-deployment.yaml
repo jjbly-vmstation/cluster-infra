@@ -18,8 +18,9 @@ spec:
           image: quay.io/oauth2-proxy/oauth2-proxy:v7.2.1
           args:
             - --provider=keycloak
-            - --oidc-issuer-url=https://keycloak.vmstation.local/
+            - --oidc-issuer-url=https://keycloak.vmstation.local/auth/realms/master
             - --client-id=grafana
+            - --client-secret-file=/etc/oauth2-proxy/client-secret
             - --cookie-secret-file=/etc/oauth2-proxy/cookie-secret
             - --cookie-secure=true
             - --email-domain=*
