@@ -198,7 +198,7 @@
       tags: [sso, keycloak]
 
     - name: Ensure oauth2-proxy secret exists (cookie secret)
-      ansible.builtin.shell: >-
+      ansible.builtin.shell: |
         # Build oauth2-proxy secret including cookie and Grafana client secret
         CLIENT_SECRET=$(kubectl -n identity get secret keycloak-grafana-client-secret -o jsonpath='{.data.client_secret}' 2>/dev/null | base64 --decode || true)
         if [ -z "$CLIENT_SECRET" ]; then
