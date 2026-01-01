@@ -37,31 +37,31 @@
     executable: /bin/bash
 
 - name: Ensure service accounts exist in FreeIPA
-  ansible.builtin.loop: "{{ service_accounts }}"
-  ansible.builtin.loop_control:
-    loop_var: acct
   ansible.builtin.shell: >-
     POD={{ freeipa_pod.stdout }};
     PASS='{{ freeipa_admin_password.stdout }}';
-    NAME={{ acct.name }};
+    NAME='{{ acct.name }}';
     FIRST='{{ acct.first }}';
     LAST='{{ acct.last }}';
     kubectl -n identity exec "$POD" -- bash -lc "echo \"$PASS\" | kinit admin >/dev/null 2>&1 && (ipa user-show $NAME >/dev/null 2>&1 || ipa user-add $NAME --first=\"$FIRST\" --last=\"$LAST\")"
   args:
     executable: /bin/bash
+  loop: "{{ service_accounts }}"
+  loop_control:
+    loop_var: acct
 
 - name: Set passwords for accounts when provided
   when: set_passwords | default(true)
-  ansible.builtin.loop: "{{ service_accounts }}"
-  ansible.builtin.loop_control:
-    loop_var: acct
   ansible.builtin.shell: >-
     POD={{ freeipa_pod.stdout }};
     PASS='{{ freeipa_admin_password.stdout }}';
-    NAME={{ acct.name }};
+    NAME='{{ acct.name }}';
     PWD='{{ acct.password | default("") }}';
     if [[ -n "$PWD" ]]; then
       kubectl -n identity exec "$POD" -- bash -lc "echo \"$PASS\" | kinit admin >/dev/null 2>&1 && echo -e \"$PWD\\n$PWD\" | ipa passwd $NAME"
     fi
   args:
     executable: /bin/bash
+  loop: "{{ service_accounts }}"
+  loop_control:
+    loop_var: acct
