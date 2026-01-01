@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oauth2-proxy
+  namespace: identity
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oauth2-proxy
+  template:
+    metadata:
+      labels:
+        app: oauth2-proxy
+    spec:
+      containers:
+        - name: oauth2-proxy
+          image: quay.io/oauth2-proxy/oauth2-proxy:v7.2.1
+          args:
+            - --provider=keycloak
+            - --oidc-issuer-url=https://keycloak.vmstation.local/
+            - --client-id=grafana
+            - --cookie-secret-file=/etc/oauth2-proxy/cookie-secret
+            - --cookie-secure=true
+            - --email-domain=*
+            - --upstream=http://grafana.identity.svc.cluster.local:3000/
+          ports:
+            - containerPort: 4180
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/oauth2-proxy
+              readOnly: true
+      # Schedule oauth2-proxy on the control-plane (masternode)
+      nodeSelector:
+        kubernetes.io/hostname: masternode
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      - key: node-role.kubernetes.io/master
+        operator: Exists
+        effect: NoSchedule
+
+      volumes:
+        - name: secrets
+          secret:
+            secretName: oauth2-proxy-secrets

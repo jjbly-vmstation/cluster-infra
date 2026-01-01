@@ -1,0 +1,27 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: oauth2-proxy
+  namespace: identity
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: freeipa-ca
+    nginx.ingress.kubernetes.io/auth-response-headers: "x-auth-request-user, x-auth-request-email"
+    nginx.ingress.kubernetes.io/auth-url: "https://$host/oauth2/start"
+    nginx.ingress.kubernetes.io/auth-signin: "https://$host/oauth2/start?rd=$request_uri"
+spec:
+  rules:
+    - host: grafana.vmstation.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: oauth2-proxy
+                port:
+                  number: 4180
+  tls:
+    - hosts:
+        - grafana.vmstation.local
+      secretName: grafana-tls

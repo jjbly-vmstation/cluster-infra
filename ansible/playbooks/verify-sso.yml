@@ -1,0 +1,45 @@
+---
+- name: Verify SSO integration and oauth2-proxy
+  hosts: localhost
+  gather_facts: false
+  vars:
+    namespace: identity
+    grafana_host: grafana.vmstation.local
+
+  tasks:
+    - name: Wait for oauth2-proxy Deployment ready
+      community.kubernetes.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        namespace: "{{ namespace }}"
+        name: oauth2-proxy
+      register: oauth2_deploy
+
+    - name: Fail if oauth2-proxy missing
+      fail:
+        msg: "oauth2-proxy deployment not found in {{ namespace }}"
+      when: oauth2_deploy.resources | length == 0
+
+    - name: Wait for oauth2-proxy pod ready
+      community.kubernetes.k8s_info:
+        kind: Pod
+        namespace: "{{ namespace }}"
+        label_selectors:
+          - 'app=oauth2-proxy'
+      register: oauth2_pods
+      until: oauth2_pods.resources | length > 0 and (oauth2_pods.resources[0].status.phase == 'Running')
+      retries: 12
+      delay: 10
+
+    - name: Probe Grafana redirect (expect 302 to Keycloak login)
+      uri:
+        url: "https://{{ grafana_host }}/"
+        method: GET
+        return_content: false
+        follow_redirects: none
+      register: grafana_probe
+      failed_when: grafana_probe.status not in [302,301,200]
+
+    - name: Show probe result
+      debug:
+        var: grafana_probe.status

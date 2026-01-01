@@ -1,0 +1,46 @@
+---
+- name: Automate Keycloak clients and Kubernetes secrets for SSO
+  hosts: localhost
+  gather_facts: false
+  vars:
+    namespace: identity
+    realm: master
+    keycloak_admin_user: "{{ lookup('env','KEYCLOAK_ADMIN') | default('admin') }}"
+    keycloak_admin_password: "{{ lookup('env','KEYCLOAK_ADMIN_PASSWORD') | default('secret') }}"
+    clients:
+      - name: grafana
+        redirectUris:
+          - https://grafana.vmstation.local/
+        confidential: true
+      - name: prometheus
+        redirectUris:
+          - https://prometheus.vmstation.local/
+        confidential: true
+      - name: loki
+        redirectUris:
+          - https://loki.vmstation.local/
+        confidential: true
+
+  tasks:
+    - name: Ensure Keycloak pod is ready
+      community.kubernetes.k8s_info:
+        kind: Pod
+        namespace: "{{ namespace }}"
+        label_selectors:
+          - 'app.kubernetes.io/name=keycloak'
+      register: kc_pods
+
+    - name: Fail if Keycloak pod not found
+      fail:
+        msg: "No Keycloak pod found in namespace {{ namespace }}"
+      when: kc_pods.resources | length == 0
+
+    - name: Create Keycloak clients via script
+      command: >-
+        bash {{ playbook_dir }}/../scripts/keycloak-create-clients.sh
+        --realm {{ realm }}
+        --namespace {{ namespace }}
+        --clients '{{ clients | to_json }}'
+      environment:
+        KEYCLOAK_ADMIN_USER: "{{ keycloak_admin_user }}"
+        KEYCLOAK_ADMIN_PASSWORD: "{{ keycloak_admin_password }}"

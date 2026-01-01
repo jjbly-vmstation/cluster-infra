@@ -1,0 +1,51 @@
+---
+- name: Enable kube-apiserver OIDC flags and rollout control plane
+  hosts: masternode
+  become: true
+  vars:
+    oidc_issuer_url: "https://keycloak.vmstation.local/realms/master"
+    oidc_client_id: "kubernetes"
+    oidc_username_claim: "preferred_username"
+    backup_path: /tmp/kube-apiserver-manifest-backup
+
+  tasks:
+    - name: Backup kube-apiserver static pod manifest
+      copy:
+        src: /etc/kubernetes/manifests/kube-apiserver.yaml
+        dest: "{{ backup_path }}/kube-apiserver.yaml"
+        remote_src: yes
+
+    - name: Ensure OIDC flags are present in kube-apiserver manifest
+      replace:
+        path: /etc/kubernetes/manifests/kube-apiserver.yaml
+        regexp: '(^\s*- --oidc-issuer-url=).*$|(^\s*- --oidc-client-id=).*$|(^\s*- --oidc-username-claim=).*$'
+        replace: ''
+      ignore_errors: true
+
+    - name: Add OIDC flags to kube-apiserver manifest
+      blockinfile:
+        path: /etc/kubernetes/manifests/kube-apiserver.yaml
+        marker: "# OIDC FLAGS - managed by ansible"
+        block: |
+          - --oidc-issuer-url={{ oidc_issuer_url }}
+          - --oidc-client-id={{ oidc_client_id }}
+          - --oidc-username-claim={{ oidc_username_claim }}
+
+    - name: Wait for kubelet to restart kube-apiserver static pod
+      wait_for:
+        path: /var/run/secrets/kubernetes.io/serviceaccount/token
+        timeout: 60
+      delegate_to: localhost
+
+    - name: Pause to allow control-plane to become ready
+      pause:
+        minutes: 1
+
+    - name: Check kube-apiserver readiness
+      shell: kubectl get pods -n kube-system -l component=kube-apiserver -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}'
+      register: apiserver_ready
+      failed_when: apiserver_ready.stdout.find('True') == -1
+
+    - name: Update admin kubeconfig to hint at OIDC (manual login required for tokens)
+      debug:
+        msg: "Apiserver OIDC flags added; update kubeconfigs to use an exec plugin (e.g. kubectl oidc-login) for user tokens. See docs/ for exact commands."

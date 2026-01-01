@@ -173,6 +173,59 @@
         - freeipa_reachable | bool
       tags: [freeipa, freeipa-network]
 
+    # ------------------------------------------------------------------
+    # Ensure local prerequisites for SSO automation (jq) and deploy
+    # oauth2-proxy + Keycloak clients so identity-full-deploy.sh is sufficient
+    # ------------------------------------------------------------------
+    - name: Check for 'jq' installed on controller
+      ansible.builtin.command: which jq
+      register: jq_path
+      changed_when: false
+      failed_when: jq_path.rc != 0
+      tags: [sso, prereq]
+
+    - name: Create Keycloak clients and store client secrets in k8s
+      ansible.builtin.command: >-
+        bash {{ repo_root }}/scripts/keycloak-create-clients.sh
+        --realm master
+        --namespace identity
+        --clients '[{"name":"grafana","redirectUris":["https://grafana.vmstation.local/"]},{"name":"prometheus","redirectUris":["https://prometheus.vmstation.local/"]},{"name":"loki","redirectUris":["https://loki.vmstation.local/"]}]'
+      environment:
+        KEYCLOAK_ADMIN_USER: admin
+        KEYCLOAK_ADMIN_PASSWORD: "{{ keycloak_admin_password }}"
+      register: kc_clients
+      failed_when: kc_clients.rc != 0
+      tags: [sso, keycloak]
+
+    - name: Ensure oauth2-proxy secret exists (cookie secret)
+      ansible.builtin.shell: >-
+        kubectl -n identity create secret generic oauth2-proxy-secrets --from-literal=cookie-secret=$(openssl rand -base64 32) --dry-run=client -o yaml | kubectl apply -f -
+      args:
+        executable: /bin/bash
+      register: oauth2_secret
+      changed_when: oauth2_secret.rc == 0
+      tags: [sso, oauth2-proxy]
+
+    - name: Apply oauth2-proxy Deployment and Ingress manifests
+      ansible.builtin.shell: >-
+        kubectl apply -f {{ repo_root }}/manifests/identity/oauth2-proxy-deployment.yaml &&
+        kubectl apply -f {{ repo_root }}/manifests/identity/oauth2-proxy-ingress.yaml
+      register: oauth2_apply
+      failed_when: oauth2_apply.rc != 0
+      tags: [sso, oauth2-proxy]
+
+    - name: Wait for oauth2-proxy Deployment to be ready
+      community.kubernetes.k8s_info:
+        kind: Deployment
+        namespace: identity
+        name: oauth2-proxy
+      register: oauth2_deploy
+      retries: 12
+      delay: 10
+      until: oauth2_deploy.resources | length > 0 and oauth2_deploy.resources[0].status.availableReplicas is defined and oauth2_deploy.resources[0].status.availableReplicas | int > 0
+      tags: [sso, oauth2-proxy]
+
+
     # Phase 6d: Configure Keycloak SSO (realm import + LDAP federation + client secrets)
     - name: Configure Keycloak SSO (automated)
       include_role:
@@ -185,6 +238,52 @@
       include_role:
         name: identity-certmanager
       tags: [certmanager, ca]
+
+    - name: Wait for cert-manager pods to be ready
+      community.kubernetes.k8s_info:
+        kind: Pod
+        namespace: cert-manager
+        label_selectors:
+          - 'app.kubernetes.io/name=cert-manager'
+      register: cm_pods
+      retries: 12
+      delay: 10
+      until: cm_pods.resources | length > 0 and (cm_pods.resources | map(attribute='status.phase') | list).0 == 'Running'
+      tags: [certmanager]
+
+    - name: Export FreeIPA CA certificate from FreeIPA pod
+      ansible.builtin.shell: >-
+        POD=$(kubectl -n identity get pods -l app=freeipa -o jsonpath='{.items[0].metadata.name}') &&
+        kubectl -n identity exec "$POD" -- cat /etc/ipa/ca.crt > /tmp/freeipa-ca.crt
+      args:
+        executable: /bin/bash
+      register: export_ca
+      failed_when: export_ca.rc != 0
+      tags: [certmanager, freeipa]
+
+    - name: Create cert-manager CA secret from exported FreeIPA CA
+      ansible.builtin.shell: >-
+        kubectl -n cert-manager create secret generic freeipa-ca --from-file=ca.crt=/tmp/freeipa-ca.crt --dry-run=client -o yaml | kubectl apply -f -
+      args:
+        executable: /bin/bash
+      register: create_ca_secret
+      failed_when: create_ca_secret.rc != 0
+      tags: [certmanager]
+
+    - name: Render ClusterIssuer template to temp file
+      template:
+        src: ../templates/clusterissuer-freeipa.yml.j2
+        dest: /tmp/clusterissuer-freeipa.yml
+      vars:
+        clusterissuer_name: freeipa-ca
+        secret_name: freeipa-ca
+      tags: [certmanager]
+
+    - name: Apply rendered ClusterIssuer manifest
+      ansible.builtin.command: kubectl apply -f /tmp/clusterissuer-freeipa.yml
+      register: apply_clusterissuer
+      failed_when: apply_clusterissuer.rc != 0
+      tags: [certmanager]
     
     # Phase 8: Create administrator account
     - name: Create cluster administrator account

@@ -1,0 +1,19 @@
+---
+- name: Ensure cert-manager ClusterIssuer using FreeIPA CA exists
+  hosts: localhost
+  gather_facts: false
+  vars:
+    clusterissuer_name: freeipa-ca
+    secret_name: freeipa-ca-secret
+
+  tasks:
+    - name: Render ClusterIssuer template to temp file
+      template:
+        src: ../templates/clusterissuer-freeipa.yml.j2
+        dest: /tmp/clusterissuer-freeipa.yml
+      vars:
+        clusterissuer_name: "{{ clusterissuer_name }}"
+        secret_name: "{{ secret_name }}"
+
+    - name: Apply ClusterIssuer manifest
+      command: kubectl apply -f /tmp/clusterissuer-freeipa.yml
