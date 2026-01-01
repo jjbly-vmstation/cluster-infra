@@ -1,0 +1,67 @@
+---
+# This role runs on the Ansible controller and uses kubectl exec into the
+# FreeIPA pod to run `ipa` commands as the FreeIPA admin user. It expects
+# the FreeIPA admin credentials to be stored in the Kubernetes secret
+# `freeipa-admin-creds` in the `identity` namespace (created elsewhere).
+
+- name: Read FreeIPA admin password from k8s secret
+  ansible.builtin.command: >-
+    kubectl -n identity get secret freeipa-admin-creds -o jsonpath='{.data.password}' 2>/dev/null | base64 --decode || true
+  register: freeipa_admin_password
+  changed_when: false
+
+- name: Fail if FreeIPA admin password not found
+  ansible.builtin.fail:
+    msg: "FreeIPA admin password not found in secret freeipa-admin-creds"
+  when: freeipa_admin_password.stdout == ''
+
+- name: Get FreeIPA pod name
+  ansible.builtin.command: >-
+    kubectl -n identity get pods -l app=freeipa -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true
+  register: freeipa_pod
+  changed_when: false
+
+- name: Fail if FreeIPA pod not found
+  ansible.builtin.fail:
+    msg: "FreeIPA pod not found in namespace 'identity'"
+  when: freeipa_pod.stdout == ''
+
+- name: Ensure groups exist in FreeIPA
+  ansible.builtin.shell: >-
+    POD={{ freeipa_pod.stdout }};
+    PASS='{{ freeipa_admin_password.stdout }}';
+    for G in {{ service_groups | join(' ') }}; do
+      kubectl -n identity exec "$POD" -- bash -lc "echo \"$PASS\" | kinit admin >/dev/null 2>&1 && (ipa group-show $G >/dev/null 2>&1 || ipa group-add $G)"
+    done
+  args:
+    executable: /bin/bash
+
+- name: Ensure service accounts exist in FreeIPA
+  ansible.builtin.loop: "{{ service_accounts }}"
+  ansible.builtin.loop_control:
+    loop_var: acct
+  ansible.builtin.shell: >-
+    POD={{ freeipa_pod.stdout }};
+    PASS='{{ freeipa_admin_password.stdout }}';
+    NAME={{ acct.name }};
+    FIRST='{{ acct.first }}';
+    LAST='{{ acct.last }}';
+    kubectl -n identity exec "$POD" -- bash -lc "echo \"$PASS\" | kinit admin >/dev/null 2>&1 && (ipa user-show $NAME >/dev/null 2>&1 || ipa user-add $NAME --first=\"$FIRST\" --last=\"$LAST\")"
+  args:
+    executable: /bin/bash
+
+- name: Set passwords for accounts when provided
+  when: set_passwords | default(true)
+  ansible.builtin.loop: "{{ service_accounts }}"
+  ansible.builtin.loop_control:
+    loop_var: acct
+  ansible.builtin.shell: >-
+    POD={{ freeipa_pod.stdout }};
+    PASS='{{ freeipa_admin_password.stdout }}';
+    NAME={{ acct.name }};
+    PWD='{{ acct.password | default("") }}';
+    if [[ -n "$PWD" ]]; then
+      kubectl -n identity exec "$POD" -- bash -lc "echo \"$PASS\" | kinit admin >/dev/null 2>&1 && echo -e \"$PWD\\n$PWD\" | ipa passwd $NAME"
+    fi
+  args:
+    executable: /bin/bash

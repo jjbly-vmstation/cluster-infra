@@ -239,6 +239,12 @@
         name: identity-sso
       when: keycloak_configure_sso | default(true) | bool
       tags: [sso, keycloak]
+
+    - name: Create FreeIPA service users and groups
+      include_role:
+        name: identity-service-accounts
+      when: keycloak_configure_sso | default(true) | bool
+      tags: [sso, identity, users]
     
     # Phase 7: Setup cert-manager and ClusterIssuer
     - name: Setup cert-manager and CA issuer

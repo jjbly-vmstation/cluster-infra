@@ -1,0 +1,22 @@
+---
+# Default service accounts and groups to create in FreeIPA
+service_accounts:
+  - name: grafana
+    first: Grafana
+    last: Service
+    password: ""
+  - name: prometheus
+    first: Prometheus
+    last: Service
+    password: ""
+  - name: loki
+    first: Loki
+    last: Service
+    password: ""
+
+service_groups:
+  - monitoring
+  - svc-accounts
+
+# Whether to attempt to set passwords for created users when `password` is provided
+set_passwords: true
