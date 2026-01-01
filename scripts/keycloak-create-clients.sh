@@ -76,21 +76,38 @@ echo "$CLIENTS_JSON" | jq -c '.[]' -r | while read -r client; do
 
   echo "Creating/updating client: $name"
   # remove existing client if present to simplify idempotency
-  EXIST=$(kc_exec "$KCADM_PATH get clients -r ${REALM} -q clientId=${name} -o json" || true)
+  # Query existing client (suppress stderr that may contain non-JSON warnings)
+  EXIST=$(kc_exec "$KCADM_PATH get clients -r ${REALM} -q clientId=${name} -o json" 2>/dev/null || true)
   if [ -n "$EXIST" ] && [ "$EXIST" != "[]" ]; then
-    ID=$(echo "$EXIST" | jq -r '.[0].id')
-    kc_exec "$KCADM_PATH delete clients/$ID -r ${REALM} || true"
+    ID=$(echo "$EXIST" | jq -r '.[0].id' 2>/dev/null || true)
+    if [ -n "$ID" ]; then
+      kc_exec "$KCADM_PATH delete clients/$ID -r ${REALM} || true" || true
+    fi
   fi
-  kc_exec "$KCADM_PATH create clients -r ${REALM} -s clientId=${name} -s 'directAccessGrantsEnabled=true' -s 'publicClient=false' -s 'serviceAccountsEnabled=true' -s 'standardFlowEnabled=true'"
-  NEW_ID=$(kc_exec "$KCADM_PATH get clients -r ${REALM} -q clientId=${name} -o json" | jq -r '.[0].id')
-  kc_exec "$KCADM_PATH update clients/${NEW_ID} -r ${REALM} -s redirectUris=${redirects}"
 
-  # obtain secret
-  SECRET_JSON=$(kc_exec "$KCADM_PATH get clients/${NEW_ID}/client-secret -r ${REALM}")
-  SECRET=$(echo "$SECRET_JSON" | jq -r '.value')
+  # Create client (don't fail the whole script on a non-zero exit here so we can attempt to recover)
+  kc_exec "$KCADM_PATH create clients -r ${REALM} -s clientId=${name} -s 'directAccessGrantsEnabled=true' -s 'publicClient=false' -s 'serviceAccountsEnabled=true' -s 'standardFlowEnabled=true'" || true
 
-  echo "Storing secret for $name as k8s Secret keycloak-${name}-client-secret"
-  kubectl -n "$KEYCLOAK_NS" create secret generic "keycloak-${name}-client-secret" --from-literal=client_secret="$SECRET" --dry-run=client -o yaml | kubectl apply -f -
+  # Read back the new client id; tolerate non-JSON noise on stderr
+  NEW_ID=$(kc_exec "$KCADM_PATH get clients -r ${REALM} -q clientId=${name} -o json" 2>/dev/null | jq -r '.[0].id' 2>/dev/null || true)
+  if [ -z "$NEW_ID" ]; then
+    echo "Failed to determine new client id for $name; skipping redirectUris and secret extraction" >&2
+    continue
+  fi
+
+  # Update redirectUris - ensure the JSON array is passed as a single argument by quoting
+  kc_exec "$KCADM_PATH update clients/${NEW_ID} -r ${REALM} -s 'redirectUris=${redirects}'" 2>/dev/null || true
+
+  # obtain secret (suppress noisy stderr)
+  SECRET_JSON=$(kc_exec "$KCADM_PATH get clients/${NEW_ID}/client-secret -r ${REALM}" 2>/dev/null || true)
+  SECRET=$(echo "$SECRET_JSON" | jq -r '.value' 2>/dev/null || true)
+
+  if [ -z "$SECRET" ] || [ "$SECRET" = "null" ]; then
+    echo "Warning: could not extract client secret for $name; skipping secret creation" >&2
+  else
+    echo "Storing secret for $name as k8s Secret keycloak-${name}-client-secret"
+    kubectl -n "$KEYCLOAK_NS" create secret generic "keycloak-${name}-client-secret" --from-literal=client_secret="$SECRET" --dry-run=client -o yaml | kubectl apply -f -
+  fi
 done
 
 echo "Keycloak client creation complete"
