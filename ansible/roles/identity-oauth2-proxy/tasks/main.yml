@@ -43,18 +43,22 @@
           spec:
             containers:
               - name: oauth2-proxy
-                image: "quay.io/oauth2-proxy/oauth2-proxy:v7.2.0"
+                image: "quay.io/oauth2-proxy/oauth2-proxy:v7.2.1"
+                command:
+                  - /bin/sh
+                  - -c
                 args:
-                  - "--provider=keycloak"
-                  - "--keycloak-login-url=https://{{ keycloak_url }}/auth"
-                  - "--keycloak-group=admins"
-                  - "--keycloak-realm={{ keycloak_realm }}"
-                  - "--client-id=oauth2-proxy"
-                  - "--client-secret-file=/etc/secrets/client-secret"
-                  - "--cookie-secret-file=/etc/secrets/cookie-secret"
-                  - "--email-domain=*"
-                  - "--http-address=0.0.0.0:4180"
-                  - "--upstream=static://200"
+                  - >
+                    exec oauth2-proxy \
+                      --provider=keycloak \
+                      --oidc-issuer-url=https://{{ keycloak_url }}/auth/realms/{{ keycloak_realm }} \
+                      --client-id=oauth2-proxy \
+                      --client-secret-file=/etc/secrets/client-secret \
+                      --cookie-secret "$(cat /etc/secrets/cookie-secret)" \
+                      --cookie-secure=true \
+                      --email-domain=* \
+                      --http-address=0.0.0.0:4180 \
+                      --upstream=static://200
                 ports:
                   - containerPort: 4180
                     name: http
