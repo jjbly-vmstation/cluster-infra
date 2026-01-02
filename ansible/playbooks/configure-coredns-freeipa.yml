@@ -36,6 +36,9 @@
     freeipa_hostname: ipa.vmstation.local
     freeipa_domain: vmstation.local
     freeipa_default_ip: 192.168.4.63  # Masternode IP, fallback if service IP not available
+    # Keycloak external hostname mapping (will be added to CoreDNS hosts{} as a fallback)
+    keycloak_hostname: keycloak.vmstation.local
+    keycloak_ip: "{{ freeipa_default_ip }}"
     
     # CoreDNS configuration
     coredns_namespace: kube-system
@@ -420,6 +423,7 @@
                   hosts {
                     {{ freeipa_ip }} {{ freeipa_hostname }} ipa
                     {{ freeipa_ip }} {{ freeipa_domain }}
+                    {{ keycloak_ip }} {{ keycloak_hostname }}
                     fallthrough
                   }
                 }
