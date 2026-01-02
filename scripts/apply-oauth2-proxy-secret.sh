@@ -3,7 +3,8 @@ set -euo pipefail
 
 NS=identity
 # Extract Grafana client secret stored by keycloak-create-clients.sh
-CLIENT_SECRET=$(kubectl -n "$NS" get secret keycloak-grafana-client-secret -o jsonpath='{.data.client_secret}' 2>/dev/null | base64 --decode || true)
+CLIENT_SECRET=$(kubectl -n "$NS" get secret keycloak-grafana-client-secret -o jsonpath='{.data.client_secret}' 2>/dev/null |
+  { base64 -d 2>/dev/null || base64 --decode 2>/dev/null; } || true)
 if [ -z "$CLIENT_SECRET" ]; then
   echo "ERROR: client secret not found in k8s secret keycloak-grafana-client-secret in namespace $NS"
   echo "Ensure the Keycloak clients were created (scripts/keycloak-create-clients.sh) or run the identity playbook to create them." >&2

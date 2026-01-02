@@ -5,31 +5,46 @@
 # `freeipa-admin-creds` in the `identity` namespace (created elsewhere).
 
 - name: Read FreeIPA admin password from k8s secret
-  ansible.builtin.command: >-
-    kubectl -n identity get secret freeipa-admin-creds -o jsonpath='{.data.password}' 2>/dev/null | base64 --decode || true
-  register: freeipa_admin_password
-  changed_when: false
+  kubernetes.core.k8s_info:
+    kind: Secret
+    namespace: identity
+    name: freeipa-admin-creds
+  register: freeipa_admin_secret
+  failed_when: false
+
+- name: Set FreeIPA admin password fact
+  ansible.builtin.set_fact:
+    freeipa_admin_password: "{{ (freeipa_admin_secret.resources[0].data.password | default('')) | b64decode | string }}"
+  when: freeipa_admin_secret.resources is defined and freeipa_admin_secret.resources | length > 0
 
 - name: Fail if FreeIPA admin password not found
   ansible.builtin.fail:
     msg: "FreeIPA admin password not found in secret freeipa-admin-creds"
-  when: freeipa_admin_password.stdout == ''
+  when: freeipa_admin_password | default('') == ''
 
 - name: Get FreeIPA pod name
-  ansible.builtin.command: >-
-    kubectl -n identity get pods -l app=freeipa -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true
-  register: freeipa_pod
-  changed_when: false
+  kubernetes.core.k8s_info:
+    kind: Pod
+    namespace: identity
+    label_selectors:
+      - app=freeipa
+  register: freeipa_pods
+  failed_when: false
+
+- name: Set FreeIPA pod fact
+  ansible.builtin.set_fact:
+    freeipa_pod: "{{ (freeipa_pods.resources[0].metadata.name | default('')) }}"
+  when: freeipa_pods.resources is defined and freeipa_pods.resources | length > 0
 
 - name: Fail if FreeIPA pod not found
   ansible.builtin.fail:
     msg: "FreeIPA pod not found in namespace 'identity'"
-  when: freeipa_pod.stdout == ''
+  when: freeipa_pod | default('') == ''
 
 - name: Ensure groups exist in FreeIPA
   ansible.builtin.shell: >-
-    POD={{ freeipa_pod.stdout }};
-    PASS='{{ freeipa_admin_password.stdout }}';
+    POD={{ freeipa_pod }};
+    PASS='{{ freeipa_admin_password }}';
     for G in {{ service_groups | join(' ') }}; do
       kubectl -n identity exec "$POD" -- bash -lc "echo \"$PASS\" | kinit admin >/dev/null 2>&1 && (ipa group-show $G >/dev/null 2>&1 || ipa group-add $G)"
     done
@@ -38,8 +53,8 @@
 
 - name: Ensure service accounts exist in FreeIPA
   ansible.builtin.shell: >-
-    POD={{ freeipa_pod.stdout }};
-    PASS='{{ freeipa_admin_password.stdout }}';
+    POD={{ freeipa_pod }};
+    PASS='{{ freeipa_admin_password }}';
     NAME='{{ acct.name }}';
     FIRST='{{ acct.first }}';
     LAST='{{ acct.last }}';
@@ -53,8 +68,8 @@
 - name: Set passwords for accounts when provided
   when: set_passwords | default(true)
   ansible.builtin.shell: >-
-    POD={{ freeipa_pod.stdout }};
-    PASS='{{ freeipa_admin_password.stdout }}';
+    POD={{ freeipa_pod }};
+    PASS='{{ freeipa_admin_password }}';
     NAME='{{ acct.name }}';
     PWD='{{ acct.password | default("") }}';
     if [[ -n "$PWD" ]]; then
