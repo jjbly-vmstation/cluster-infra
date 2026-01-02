@@ -26,10 +26,16 @@ spec:
                 --oidc-issuer-url=https://keycloak.vmstation.local/auth/realms/master \
                 --client-id=grafana \
                 --client-secret-file=/etc/oauth2-proxy/client-secret \
-                --cookie-secret "$(cat /etc/oauth2-proxy/cookie-secret)" \
+                --cookie-secret "$OAUTH2_PROXY_COOKIE_SECRET" \
                 --cookie-secure=true \
                 --email-domain=* \
                 --upstream=http://grafana.identity.svc.cluster.local:3000/
+          env:
+            - name: OAUTH2_PROXY_COOKIE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: oauth2-proxy-secrets
+                  key: cookie-secret
           ports:
             - containerPort: 4180
           volumeMounts:
