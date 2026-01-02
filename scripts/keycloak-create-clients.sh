@@ -73,11 +73,19 @@ try_login(){
   local sleep_s=5
   while [ $attempt -le $max_attempts ]; do
     echo "Attempt $attempt/$max_attempts: kcadm login..."
-    if kc_exec "$KCADM_PATH config credentials --server http://localhost:8080 --realm master --user ${KC_ADMIN_USER} --client admin --password ${KC_ADMIN_PASS}" 2>/dev/null; then
+    # Try without specifying a client (server will accept username/password for admin)
+    if kc_exec "$KCADM_PATH config credentials --server http://localhost:8080 --realm master --user ${KC_ADMIN_USER} --password ${KC_ADMIN_PASS}" 2>/dev/null; then
       return 0
     fi
-    # try legacy /auth path (some images still require it)
-    if kc_exec "$KCADM_PATH config credentials --server http://localhost:8080/auth --realm master --user ${KC_ADMIN_USER} --client admin --password ${KC_ADMIN_PASS}" 2>/dev/null; then
+    # Try using the common admin CLI client name
+    if kc_exec "$KCADM_PATH config credentials --server http://localhost:8080 --realm master --user ${KC_ADMIN_USER} --client admin-cli --password ${KC_ADMIN_PASS}" 2>/dev/null; then
+      return 0
+    fi
+    # try legacy /auth path variants
+    if kc_exec "$KCADM_PATH config credentials --server http://localhost:8080/auth --realm master --user ${KC_ADMIN_USER} --password ${KC_ADMIN_PASS}" 2>/dev/null; then
+      return 0
+    fi
+    if kc_exec "$KCADM_PATH config credentials --server http://localhost:8080/auth --realm master --user ${KC_ADMIN_USER} --client admin-cli --password ${KC_ADMIN_PASS}" 2>/dev/null; then
       return 0
     fi
     echo "Login attempt $attempt failed, sleeping ${sleep_s}s..."
