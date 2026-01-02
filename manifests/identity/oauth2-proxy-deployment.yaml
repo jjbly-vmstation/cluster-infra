@@ -20,12 +20,19 @@ spec:
             - /bin/sh
             - -c
           args:
-            - >
+            - |-
+              # If the client-secret file is not present, don't pass the
+              # --client-secret-file flag so the container can still start.
+              if [ -f /etc/oauth2-proxy/client-secret ]; then
+                CLIENT_SECRET_ARG="--client-secret-file=/etc/oauth2-proxy/client-secret"
+              else
+                CLIENT_SECRET_ARG=""
+              fi
+
               exec oauth2-proxy \
                 --provider=keycloak \
                 --oidc-issuer-url=https://keycloak.vmstation.local/auth/realms/master \
-                --client-id=grafana \
-                --client-secret-file=/etc/oauth2-proxy/client-secret \
+                --client-id=grafana $CLIENT_SECRET_ARG \
                 --cookie-secret "$OAUTH2_PROXY_COOKIE_SECRET" \
                 --cookie-secure=true \
                 --email-domain=* \
