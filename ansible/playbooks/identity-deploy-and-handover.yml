@@ -24,6 +24,14 @@
     namespace_cert_manager: cert-manager
     namespace_platform: platform
     identity_data_dir: /srv/monitoring-data
+    # Control whether Keycloak monitoring clients (grafana/prometheus/loki)
+    # are created during identity deploy. Set to true when you are ready
+    # to provision monitoring components that depend on these clients.
+    keycloak_create_monitoring_clients: false
+    # Control whether oauth2-proxy is deployed/waited-for during identity
+    # deployment. When false the playbook will not block other phases on
+    # oauth2-proxy readiness (useful to bring up core infra first).
+    identity_deploy_oauth2_proxy: false
     # Credentials
     # Environment variables exported by the orchestrator should take precedence.
     # FreeIPA requires >= 8 chars.
@@ -233,6 +241,16 @@
       changed_when: keycloak_svc.changed | default(false)
       tags: [keycloak, sso]
 
+    # oauth2-proxy/client creation moved to run after realm import and SSO configuration
+
+
+    # Phase 6d: Configure Keycloak SSO (realm import + LDAP federation + client secrets)
+    - name: Configure Keycloak SSO (automated)
+      include_role:
+        name: identity-sso
+      when: keycloak_configure_sso | default(true) | bool
+      tags: [sso, keycloak]
+
     - name: Create Keycloak clients and store client secrets in k8s
       ansible.builtin.command: >-
         bash {{ repo_root }}/scripts/keycloak-create-clients.sh
@@ -245,6 +263,7 @@
       register: kc_clients
       failed_when: kc_clients.rc != 0
       tags: [sso, keycloak]
+      when: keycloak_create_monitoring_clients | default(false) | bool
 
     - name: Ensure oauth2-proxy secret exists (cookie secret)
       ansible.builtin.shell: |
@@ -261,6 +280,7 @@
       register: oauth2_secret
       changed_when: oauth2_secret.rc == 0
       tags: [sso, oauth2-proxy]
+      when: identity_deploy_oauth2_proxy | default(false) | bool
 
     - name: Apply oauth2-proxy Deployment and Ingress manifests
       ansible.builtin.shell: >-
@@ -269,6 +289,7 @@
       register: oauth2_apply
       failed_when: oauth2_apply.rc != 0
       tags: [sso, oauth2-proxy]
+      when: identity_deploy_oauth2_proxy | default(false) | bool
 
     - name: Enforce scheduling of identity workloads on masternode (patch pods)
       ansible.builtin.shell: |
@@ -284,6 +305,7 @@
       changed_when: false
       failed_when: false
       tags: [sso, scheduling]
+      when: identity_deploy_oauth2_proxy | default(false) | bool
 
     - name: Wait for oauth2-proxy Deployment to be ready
       community.kubernetes.k8s_info:
@@ -295,14 +317,7 @@
       delay: 10
       until: oauth2_deploy.resources | length > 0 and oauth2_deploy.resources[0].status.availableReplicas is defined and oauth2_deploy.resources[0].status.availableReplicas | int > 0
       tags: [sso, oauth2-proxy]
-
-
-    # Phase 6d: Configure Keycloak SSO (realm import + LDAP federation + client secrets)
-    - name: Configure Keycloak SSO (automated)
-      include_role:
-        name: identity-sso
-      when: keycloak_configure_sso | default(true) | bool
-      tags: [sso, keycloak]
+      when: identity_deploy_oauth2_proxy | default(false) | bool
 
     - name: Create FreeIPA service users and groups
       include_role:
