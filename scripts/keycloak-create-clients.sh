@@ -65,8 +65,32 @@ fi
 echo "Using kcadm at: $KCADM_PATH"
 
 echo "Logging into Keycloak pod $POD"
-if ! kc_exec "$KCADM_PATH config credentials --server http://localhost:8080/auth --realm master --user ${KC_ADMIN_USER} --password ${KC_ADMIN_PASS}" 2>/dev/null; then
-  echo "Failed to run $KCADM_PATH inside Keycloak pod; ensure admin credentials are correct" >&2
+
+# Robust login: try several times with backoff and try both server forms (/ and /auth)
+try_login(){
+  local attempt=1
+  local max_attempts=12
+  local sleep_s=5
+  while [ $attempt -le $max_attempts ]; do
+    echo "Attempt $attempt/$max_attempts: kcadm login..."
+    if kc_exec "$KCADM_PATH config credentials --server http://localhost:8080 --realm master --user ${KC_ADMIN_USER} --client admin --password ${KC_ADMIN_PASS}" 2>/dev/null; then
+      return 0
+    fi
+    # try legacy /auth path (some images still require it)
+    if kc_exec "$KCADM_PATH config credentials --server http://localhost:8080/auth --realm master --user ${KC_ADMIN_USER} --client admin --password ${KC_ADMIN_PASS}" 2>/dev/null; then
+      return 0
+    fi
+    echo "Login attempt $attempt failed, sleeping ${sleep_s}s..."
+    sleep $sleep_s
+    attempt=$((attempt+1))
+  done
+  return 1
+}
+
+if ! try_login; then
+  echo "Failed to authenticate to Keycloak admin after retries; ensure admin credentials exist and Keycloak admin API is reachable" >&2
+  echo "Showing last 200 lines of Keycloak pod logs for debugging:" >&2
+  kubectl -n "$KEYCLOAK_NS" logs "$POD" --tail=200 >&2 || true
   exit 3
 fi
 

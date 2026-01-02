@@ -82,6 +82,22 @@
   failed_when: keycloak_pod_wait.rc != 0
   become: true
 
+- name: Wait for Keycloak admin API to respond
+  shell: >-
+    KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n {{ namespace_identity }} exec keycloak-0 -- sh -lc '
+    for i in $(seq 1 60); do
+      if curl -sSf http://localhost:8080/realms/master >/dev/null 2>&1 || curl -sSf http://localhost:8080/auth/realms/master >/dev/null 2>&1; then
+        exit 0
+      fi
+      sleep 5
+    done
+    exit 1'
+  register: keycloak_admin_ready
+  failed_when: keycloak_admin_ready.rc != 0
+  become: true
+  retries: 1
+  delay: 1
+
 - name: Read Keycloak admin password from chart-managed secret
   shell: >-
     KUBECONFIG=/etc/kubernetes/admin.conf kubectl get secret keycloak-admin -n {{ namespace_identity }}

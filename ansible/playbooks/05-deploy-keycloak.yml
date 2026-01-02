@@ -57,8 +57,9 @@
         keycloak_nodeport: "{{ keycloak_service.resources[0].spec.ports | selectattr('name', 'equalto', 'http') | map(attribute='nodePort') | first | default('30180') }}"
       when: keycloak_service.resources | length > 0
 
-    - name: Get cluster node IP for access
-      shell: kubectl --kubeconfig={{ kubeconfig }} get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}'
+    - name: Get control-plane node InternalIP for access
+      shell: >-
+        kubectl --kubeconfig={{ kubeconfig }} get nodes -l node-role.kubernetes.io/control-plane -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}'
       register: node_ip
       changed_when: false
 
