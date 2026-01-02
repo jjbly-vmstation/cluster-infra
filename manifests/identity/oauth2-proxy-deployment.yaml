@@ -29,9 +29,9 @@ spec:
                 CLIENT_SECRET_ARG=""
               fi
 
-              exec oauth2-proxy \
-                --provider=keycloak \
-                --oidc-issuer-url=https://keycloak.vmstation.local/auth/realms/master \
+              exec oauth2-proxy \\
+                --provider=keycloak \\
+                --oidc-issuer-url=http://keycloak-http.identity.svc.cluster.local:80/auth/realms/master \\
                 --client-id=grafana $CLIENT_SECRET_ARG \
                 --cookie-secret "$OAUTH2_PROXY_COOKIE_SECRET" \
                 --cookie-secure=true \
