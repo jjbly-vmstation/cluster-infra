@@ -25,13 +25,13 @@
     namespace_platform: platform
     identity_data_dir: /srv/monitoring-data
     # Control whether Keycloak monitoring clients (grafana/prometheus/loki)
-    # are created during identity deploy. Set to true when you are ready
-    # to provision monitoring components that depend on these clients.
-    keycloak_create_monitoring_clients: false
+    # are created during identity deploy. Enabled by default to fully
+    # automate OIDC client provisioning for monitoring components.
+    keycloak_create_monitoring_clients: true
     # Control whether oauth2-proxy is deployed/waited-for during identity
-    # deployment. When false the playbook will not block other phases on
-    # oauth2-proxy readiness (useful to bring up core infra first).
-    identity_deploy_oauth2_proxy: false
+    # deployment. Enabled by default so oauth2-proxy and its secret are
+    # provisioned as part of the identity workflow.
+    identity_deploy_oauth2_proxy: true
     # Credentials
     # Environment variables exported by the orchestrator should take precedence.
     # FreeIPA requires >= 8 chars.

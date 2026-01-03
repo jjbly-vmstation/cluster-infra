@@ -105,6 +105,24 @@ fi
 echo "$CLIENTS_JSON" | jq -c '.[]' -r | while read -r client; do
   name=$(echo "$client" | jq -r '.name')
   redirects=$(echo "$client" | jq -c '.redirectUris')
+  # Optional fields: baseUrl, webOrigins, adminUrl
+  baseUrl=$(echo "$client" | jq -r '.baseUrl // empty')
+  webOrigins=$(echo "$client" | jq -c '.webOrigins // empty')
+  adminUrl=$(echo "$client" | jq -r '.adminUrl // empty')
+
+  # If baseUrl not provided, use first redirect URI (if any)
+  if [ -z "$baseUrl" ] && [ "$redirects" != "null" ] && [ -n "$redirects" ]; then
+    baseUrl=$(echo "$redirects" | jq -r '.[0] // empty' 2>/dev/null || true)
+  fi
+
+  # If webOrigins not provided, derive from redirectUris by stripping trailing slash
+  if [ "$webOrigins" = "null" ] || [ -z "$webOrigins" ]; then
+    if [ "$redirects" != "null" ] && [ -n "$redirects" ]; then
+      webOrigins=$(echo "$redirects" | jq -c 'map(sub("/$"; ""))' 2>/dev/null || echo "[]")
+    else
+      webOrigins="[]"
+    fi
+  fi
 
   echo "Creating/updating client: $name"
   # remove existing client if present to simplify idempotency
@@ -127,8 +145,20 @@ echo "$CLIENTS_JSON" | jq -c '.[]' -r | while read -r client; do
     continue
   fi
 
-  # Update redirectUris - ensure the JSON array is passed as a single argument by quoting
-  kc_exec "$KCADM_PATH update clients/${NEW_ID} -r ${REALM} -s 'redirectUris=${redirects}'" 2>/dev/null || true
+  # Build update options for redirectUris, baseUrl, webOrigins, adminUrl
+  update_opts="-s 'redirectUris=${redirects}'"
+  if [ -n "$baseUrl" ] && [ "$baseUrl" != "null" ]; then
+    update_opts="$update_opts -s 'baseUrl=${baseUrl}'"
+  fi
+  if [ -n "$webOrigins" ] && [ "$webOrigins" != "null" ]; then
+    update_opts="$update_opts -s 'webOrigins=${webOrigins}'"
+  fi
+  if [ -n "$adminUrl" ] && [ "$adminUrl" != "null" ]; then
+    update_opts="$update_opts -s 'adminUrl=${adminUrl}'"
+  fi
+
+  # Update client with constructed options (tolerate noisy stderr)
+  kc_exec "$KCADM_PATH update clients/${NEW_ID} -r ${REALM} $update_opts" 2>/dev/null || true
 
   # obtain secret (suppress noisy stderr)
   SECRET_JSON=$(kc_exec "$KCADM_PATH get clients/${NEW_ID}/client-secret -r ${REALM}" 2>/dev/null || true)
