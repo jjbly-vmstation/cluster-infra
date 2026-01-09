@@ -126,19 +126,35 @@ echo "$CLIENTS_JSON" | jq -c '.[]' -r | while read -r client; do
 
   echo "Creating/updating client: $name"
   # Query existing client (suppress stderr that may contain non-JSON warnings)
-  EXIST=$(kc_exec "$KCADM_PATH get clients -r ${REALM} -q clientId=${name} -o json" 2>/dev/null || true)
-  if [ -n "$EXIST" ] && [ "$EXIST" != "[]" ]; then
+
+  # Query for client, filter for valid JSON only
+  EXIST_RAW=$(kc_exec "$KCADM_PATH get clients -r ${REALM} -q clientId=${name} -o json" 2>&1 || true)
+  EXIST=$(echo "$EXIST_RAW" | grep -o '{.*}' | head -n1 | jq -s '.' 2>/dev/null || echo "[]")
+  if [ "$EXIST" != "[]" ]; then
     ID=$(echo "$EXIST" | jq -r '.[0].id' 2>/dev/null || true)
-    if [ -n "$ID" ]; then
+    if [ -z "$ID" ] || [ "$ID" = "null" ]; then
+      echo "Client $name exists but could not extract ID. Attempting to delete and recreate." >&2
+      # Try to delete broken client and recreate
+      kc_exec "$KCADM_PATH delete clients -r ${REALM} -q clientId=${name}" || true
+      kc_exec "$KCADM_PATH create clients -r ${REALM} -s clientId=${name} -s 'directAccessGrantsEnabled=true' -s 'publicClient=false' -s 'serviceAccountsEnabled=true' -s 'standardFlowEnabled=true'" || true
+      EXIST_RAW=$(kc_exec "$KCADM_PATH get clients -r ${REALM} -q clientId=${name} -o json" 2>&1 || true)
+      EXIST=$(echo "$EXIST_RAW" | grep -o '{.*}' | head -n1 | jq -s '.' 2>/dev/null || echo "[]")
+      ID=$(echo "$EXIST" | jq -r '.[0].id' 2>/dev/null || true)
+      if [ -z "$ID" ] || [ "$ID" = "null" ]; then
+        echo "Failed to recover client id for $name after recreation; skipping." >&2
+        continue
+      fi
+    else
       echo "Client $name already exists (id: $ID), will update and extract secret."
     fi
   else
     # Create client if not present
     kc_exec "$KCADM_PATH create clients -r ${REALM} -s clientId=${name} -s 'directAccessGrantsEnabled=true' -s 'publicClient=false' -s 'serviceAccountsEnabled=true' -s 'standardFlowEnabled=true'" || true
     # Re-query for new client id
-    EXIST=$(kc_exec "$KCADM_PATH get clients -r ${REALM} -q clientId=${name} -o json" 2>/dev/null || true)
+    EXIST_RAW=$(kc_exec "$KCADM_PATH get clients -r ${REALM} -q clientId=${name} -o json" 2>&1 || true)
+    EXIST=$(echo "$EXIST_RAW" | grep -o '{.*}' | head -n1 | jq -s '.' 2>/dev/null || echo "[]")
     ID=$(echo "$EXIST" | jq -r '.[0].id' 2>/dev/null || true)
-    if [ -z "$ID" ]; then
+    if [ -z "$ID" ] || [ "$ID" = "null" ]; then
       echo "Failed to create or find client id for $name; skipping." >&2
       continue
     fi
