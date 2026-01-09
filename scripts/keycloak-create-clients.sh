@@ -127,18 +127,32 @@ echo "$CLIENTS_JSON" | jq -c '.[]' -r | while read -r client; do
   echo "Creating/updating client: $name"
   # Query existing client (suppress stderr that may contain non-JSON warnings)
 
-  # Query for client, filter for valid JSON only
+  # Helper function to extract valid JSON from potentially noisy kcadm output
+  extract_json() {
+    # Filter out non-JSON lines (warnings, stack traces) and extract valid JSON
+    # Look for lines starting with [ or { and ending with ] or }
+    local raw_output="$1"
+    echo "$raw_output" | sed -n '/^\s*[\[{]/,/^\s*[\]}]/p' | jq -s '.' 2>/dev/null || echo "[]"
+  }
+
+  # Query for client - capture both stdout and stderr, then filter for JSON
   EXIST_RAW=$(kc_exec "$KCADM_PATH get clients -r ${REALM} -q clientId=${name} -o json" 2>&1 || true)
-  EXIST=$(echo "$EXIST_RAW" | grep -o '{.*}' | head -n1 | jq -s '.' 2>/dev/null || echo "[]")
-  if [ "$EXIST" != "[]" ]; then
+  EXIST=$(extract_json "$EXIST_RAW")
+  
+  # Check if client exists and extract ID
+  if [ "$EXIST" != "[]" ] && [ "$(echo "$EXIST" | jq 'length')" -gt 0 ]; then
     ID=$(echo "$EXIST" | jq -r '.[0].id' 2>/dev/null || true)
     if [ -z "$ID" ] || [ "$ID" = "null" ]; then
-      echo "Client $name exists but could not extract ID. Attempting to delete and recreate." >&2
+      echo "Client $name query returned data but could not extract ID. Raw output:" >&2
+      echo "$EXIST_RAW" >&2
+      echo "Attempting to delete and recreate..." >&2
       # Try to delete broken client and recreate
-      kc_exec "$KCADM_PATH delete clients -r ${REALM} -q clientId=${name}" || true
-      kc_exec "$KCADM_PATH create clients -r ${REALM} -s clientId=${name} -s 'directAccessGrantsEnabled=true' -s 'publicClient=false' -s 'serviceAccountsEnabled=true' -s 'standardFlowEnabled=true'" || true
+      kc_exec "$KCADM_PATH delete clients -r ${REALM} -q clientId=${name}" 2>&1 || true
+      CREATE_OUTPUT=$(kc_exec "$KCADM_PATH create clients -r ${REALM} -s clientId=${name} -s 'directAccessGrantsEnabled=true' -s 'publicClient=false' -s 'serviceAccountsEnabled=true' -s 'standardFlowEnabled=true'" 2>&1 || true)
+      echo "Create output: $CREATE_OUTPUT"
+      # Re-query for new client id
       EXIST_RAW=$(kc_exec "$KCADM_PATH get clients -r ${REALM} -q clientId=${name} -o json" 2>&1 || true)
-      EXIST=$(echo "$EXIST_RAW" | grep -o '{.*}' | head -n1 | jq -s '.' 2>/dev/null || echo "[]")
+      EXIST=$(extract_json "$EXIST_RAW")
       ID=$(echo "$EXIST" | jq -r '.[0].id' 2>/dev/null || true)
       if [ -z "$ID" ] || [ "$ID" = "null" ]; then
         echo "Failed to recover client id for $name after recreation; skipping." >&2
@@ -149,15 +163,28 @@ echo "$CLIENTS_JSON" | jq -c '.[]' -r | while read -r client; do
     fi
   else
     # Create client if not present
-    kc_exec "$KCADM_PATH create clients -r ${REALM} -s clientId=${name} -s 'directAccessGrantsEnabled=true' -s 'publicClient=false' -s 'serviceAccountsEnabled=true' -s 'standardFlowEnabled=true'" || true
-    # Re-query for new client id
+    echo "Client $name does not exist, creating..."
+    CREATE_OUTPUT=$(kc_exec "$KCADM_PATH create clients -r ${REALM} -s clientId=${name} -s 'directAccessGrantsEnabled=true' -s 'publicClient=false' -s 'serviceAccountsEnabled=true' -s 'standardFlowEnabled=true'" 2>&1 || true)
+    
+    # Check if create succeeded by looking for error messages
+    if echo "$CREATE_OUTPUT" | grep -qi "error\|failed\|exception"; then
+      # If creation failed, it might be because the client already exists (race condition)
+      # Try to query again
+      echo "Create command returned errors, attempting to query existing client..."
+      echo "Create output: $CREATE_OUTPUT"
+    fi
+    
+    # Re-query for client id (whether create succeeded or client already existed)
     EXIST_RAW=$(kc_exec "$KCADM_PATH get clients -r ${REALM} -q clientId=${name} -o json" 2>&1 || true)
-    EXIST=$(echo "$EXIST_RAW" | grep -o '{.*}' | head -n1 | jq -s '.' 2>/dev/null || echo "[]")
+    EXIST=$(extract_json "$EXIST_RAW")
     ID=$(echo "$EXIST" | jq -r '.[0].id' 2>/dev/null || true)
     if [ -z "$ID" ] || [ "$ID" = "null" ]; then
-      echo "Failed to create or find client id for $name; skipping." >&2
+      echo "Failed to create or find client id for $name" >&2
+      echo "Query output: $EXIST_RAW" >&2
+      echo "Skipping client $name" >&2
       continue
     fi
+    echo "Successfully obtained client id: $ID"
   fi
 
   # Build update options for redirectUris, baseUrl, webOrigins, adminUrl
@@ -173,18 +200,42 @@ echo "$CLIENTS_JSON" | jq -c '.[]' -r | while read -r client; do
   fi
 
   # Update client with constructed options (tolerate noisy stderr)
-  kc_exec "$KCADM_PATH update clients/${ID} -r ${REALM} $update_opts" 2>/dev/null || true
+  echo "Updating client $name (id: $ID) with redirectUris and other settings..."
+  UPDATE_OUTPUT=$(kc_exec "$KCADM_PATH update clients/${ID} -r ${REALM} $update_opts" 2>&1 || true)
+  if echo "$UPDATE_OUTPUT" | grep -qi "error\|failed"; then
+    echo "Warning: update command returned errors: $UPDATE_OUTPUT" >&2
+  fi
 
-  # obtain secret (suppress noisy stderr, tolerate non-JSON output)
-  SECRET_JSON=$(kc_exec "$KCADM_PATH get clients/${ID}/client-secret -r ${REALM}" 2>/dev/null || true)
-  SECRET=$(echo "$SECRET_JSON" | jq -r '.value' 2>/dev/null || true)
+  # obtain secret (capture both stdout and stderr, then filter for JSON)
+  echo "Extracting client secret for $name..."
+  SECRET_RAW=$(kc_exec "$KCADM_PATH get clients/${ID}/client-secret -r ${REALM}" 2>&1 || true)
+  SECRET_JSON=$(extract_json "$SECRET_RAW")
+  SECRET=$(echo "$SECRET_JSON" | jq -r '.[0].value // .value // empty' 2>/dev/null || true)
 
   if [ -z "$SECRET" ] || [ "$SECRET" = "null" ]; then
-    echo "Warning: could not extract client secret for $name; skipping secret creation" >&2
-  else
-    echo "Storing secret for $name as k8s Secret keycloak-${name}-client-secret"
-    kubectl -n "$KEYCLOAK_NS" create secret generic "keycloak-${name}-client-secret" --from-literal=client_secret="$SECRET" --dry-run=client -o yaml | kubectl apply -f -
+    echo "Warning: could not extract client secret for $name from initial query" >&2
+    echo "Secret query raw output:" >&2
+    echo "$SECRET_RAW" >&2
+    echo "Attempting to generate new secret..." >&2
+    # Try to generate a new secret
+    GEN_OUTPUT=$(kc_exec "$KCADM_PATH create clients/${ID}/client-secret -r ${REALM}" 2>&1 || true)
+    echo "Generate secret output: $GEN_OUTPUT"
+    # Query again
+    SECRET_RAW=$(kc_exec "$KCADM_PATH get clients/${ID}/client-secret -r ${REALM}" 2>&1 || true)
+    SECRET_JSON=$(extract_json "$SECRET_RAW")
+    SECRET=$(echo "$SECRET_JSON" | jq -r '.[0].value // .value // empty' 2>/dev/null || true)
+    if [ -z "$SECRET" ] || [ "$SECRET" = "null" ]; then
+      echo "Error: still could not extract client secret for $name after regeneration; skipping secret creation" >&2
+      continue
+    fi
   fi
+
+  echo "Successfully extracted secret for $name (${#SECRET} characters)"
+  echo "Storing secret for $name as k8s Secret keycloak-${name}-client-secret"
+  kubectl -n "$KEYCLOAK_NS" create secret generic "keycloak-${name}-client-secret" \
+    --from-literal=client_id="$name" \
+    --from-literal=client_secret="$SECRET" \
+    --dry-run=client -o yaml | kubectl apply -f -
 done
 
 echo "Keycloak client creation complete"
