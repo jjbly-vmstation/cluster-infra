@@ -14,17 +14,17 @@ if [ -z "$CLIENT_SECRET" ]; then
   exit 1
 fi
 
-# Generate a 16, 24, or 32 byte random AES key and base64-encode it
+# Generate a 32-byte random AES key (do NOT base64-encode - oauth2-proxy reads it as raw bytes)
 COOKIE_SECRET=$(python3 - <<'PY'
-import os,base64
-print(base64.b64encode(os.urandom(16)).decode())
+import os
+print(os.urandom(32).hex())
 PY
 )
 
-# Validate cookie secret length (must be 24, 32, or 44 chars for 16/24/32 bytes)
+# Validate cookie secret length (64 hex chars = 32 bytes)
 LEN=${#COOKIE_SECRET}
-if [[ "$LEN" != "24" && "$LEN" != "32" && "$LEN" != "44" ]]; then
-  echo "ERROR: Generated cookie secret is invalid length ($LEN chars). Must be 24, 32, or 44 chars (16, 24, or 32 bytes base64)." >&2
+if [[ "$LEN" != "64" ]]; then
+  echo "ERROR: Generated cookie secret is invalid length ($LEN chars). Must be 64 hex chars (32 bytes)." >&2
   exit 2
 fi
 
