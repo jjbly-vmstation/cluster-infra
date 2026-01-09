@@ -46,7 +46,12 @@
     POD={{ freeipa_pod }};
     PASS='{{ freeipa_admin_password }}';
     for G in {{ service_groups | join(' ') }}; do
-      kubectl -n identity exec "$POD" -- bash -lc "echo \"$PASS\" | kinit admin >/dev/null 2>&1 && (ipa group-show $G >/dev/null 2>&1 || ipa group-add $G)"
+      kubectl -n identity exec "$POD" -c freeipa-server -- bash -lc "echo \"$PASS\" | kinit admin >/dev/null 2>&1 && ipa group-show $G >/dev/null 2>&1 && exit 0 || ipa group-add $G"
+      rc=$?
+      if [ $rc -ne 0 ]; then
+        echo "Failed to create or verify group $G" >&2
+        exit $rc
+      fi
     done
   args:
     executable: /bin/bash
@@ -58,7 +63,12 @@
     NAME='{{ acct.name }}';
     FIRST='{{ acct.first }}';
     LAST='{{ acct.last }}';
-    kubectl -n identity exec "$POD" -- bash -lc "echo \"$PASS\" | kinit admin >/dev/null 2>&1 && (ipa user-show $NAME >/dev/null 2>&1 || ipa user-add $NAME --first=\"$FIRST\" --last=\"$LAST\")"
+    kubectl -n identity exec "$POD" -c freeipa-server -- bash -lc "echo \"$PASS\" | kinit admin >/dev/null 2>&1 && ipa user-show $NAME >/dev/null 2>&1 && exit 0 || ipa user-add $NAME --first=\"$FIRST\" --last=\"$LAST\""
+    rc=$?
+    if [ $rc -ne 0 ]; then
+      echo "Failed to create or verify user $NAME" >&2
+      exit $rc
+    fi
   args:
     executable: /bin/bash
   loop: "{{ service_accounts }}"
@@ -73,7 +83,12 @@
     NAME='{{ acct.name }}';
     PWD='{{ acct.password | default("") }}';
     if [[ -n "$PWD" ]]; then
-      kubectl -n identity exec "$POD" -- bash -lc "echo \"$PASS\" | kinit admin >/dev/null 2>&1 && echo -e \"$PWD\\n$PWD\" | ipa passwd $NAME"
+      kubectl -n identity exec "$POD" -c freeipa-server -- bash -lc "echo \"$PASS\" | kinit admin >/dev/null 2>&1 && echo -e \"$PWD\\n$PWD\" | ipa passwd $NAME"
+      rc=$?
+      if [ $rc -ne 0 ]; then
+        echo "Failed to set password for user $NAME" >&2
+        exit $rc
+      fi
     fi
   args:
     executable: /bin/bash
