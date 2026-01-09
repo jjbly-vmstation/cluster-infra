@@ -41,6 +41,47 @@
     msg: "FreeIPA pod not found in namespace 'identity'"
   when: freeipa_pod | default('') == ''
 
+- name: Check if FreeIPA pod is ready
+  kubernetes.core.k8s_info:
+    kind: Pod
+    namespace: identity
+    name: "{{ freeipa_pod }}"
+  register: freeipa_pod_status
+  failed_when: false
+
+- name: Fail if FreeIPA pod is not in Running phase
+  ansible.builtin.fail:
+    msg: "FreeIPA pod '{{ freeipa_pod }}' is not running. Current phase: {{ freeipa_pod_status.resources[0].status.phase | default('Unknown') }}"
+  when: >
+    freeipa_pod_status.resources is not defined or
+    freeipa_pod_status.resources | length == 0 or
+    freeipa_pod_status.resources[0].status.phase | default('') != 'Running'
+
+- name: Wait for FreeIPA pod to be ready
+  kubernetes.core.k8s_info:
+    kind: Pod
+    namespace: identity
+    name: "{{ freeipa_pod }}"
+  register: freeipa_pod_ready
+  until: >
+    freeipa_pod_ready.resources is defined and
+    freeipa_pod_ready.resources | length > 0 and
+    freeipa_pod_ready.resources[0].status.phase == 'Running' and
+    freeipa_pod_ready.resources[0].status.containerStatuses is defined and
+    freeipa_pod_ready.resources[0].status.containerStatuses | selectattr('name', 'equalto', 'freeipa-server') | map(attribute='ready') | first | default(false)
+  retries: 30
+  delay: 10
+  failed_when: false
+
+- name: Fail if FreeIPA pod did not become ready
+  ansible.builtin.fail:
+    msg: "FreeIPA pod '{{ freeipa_pod }}' did not become ready within 5 minutes"
+  when: >
+    freeipa_pod_ready.resources is not defined or
+    freeipa_pod_ready.resources | length == 0 or
+    freeipa_pod_ready.resources[0].status.phase != 'Running' or
+    not (freeipa_pod_ready.resources[0].status.containerStatuses | selectattr('name', 'equalto', 'freeipa-server') | map(attribute='ready') | first | default(false))
+
 - name: Ensure groups exist in FreeIPA
   ansible.builtin.shell: >-
     POD={{ freeipa_pod }};
