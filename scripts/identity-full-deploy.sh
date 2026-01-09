@@ -428,8 +428,27 @@ cleanup() {
 trap cleanup EXIT
 
 
-# Pre-deploy check for oauth2-proxy-secrets
-precheck_oauth2_proxy_secret() {
+
+# Pre-deploy check for Keycloak client secret and oauth2-proxy-secrets
+precheck_identity_secrets() {
+    log_info "Checking Keycloak client secret for Grafana in namespace identity..."
+    local client_secret_json
+    client_secret_json=$(kubectl -n identity get secret keycloak-grafana-client-secret -o json 2>/dev/null || true)
+    if [[ -z "$client_secret_json" ]]; then
+        log_warn "Keycloak client secret not found. Attempting to create it using scripts/keycloak-create-clients.sh."
+        if [[ -x "$SCRIPT_DIR/keycloak-create-clients.sh" ]]; then
+            "$SCRIPT_DIR/keycloak-create-clients.sh" --realm master --namespace identity --clients '[{"name":"grafana","redirectUris":["https://grafana.vmstation.local/"]}]'
+        else
+            log_fatal "keycloak-create-clients.sh not found or not executable. Please run it manually to create the Keycloak client."
+        fi
+        # Re-check after attempt
+        client_secret_json=$(kubectl -n identity get secret keycloak-grafana-client-secret -o json 2>/dev/null || true)
+        if [[ -z "$client_secret_json" ]]; then
+            log_fatal "Failed to create Keycloak client secret. Aborting deployment."
+        fi
+    fi
+    log_success "Keycloak client secret for Grafana is present."
+
     log_info "Checking oauth2-proxy-secrets in namespace identity..."
     local secret_json
     secret_json=$(kubectl -n identity get secret oauth2-proxy-secrets -o json 2>/dev/null || true)
@@ -468,35 +487,36 @@ precheck_oauth2_proxy_secret() {
 }
 
 # Main execution
+
 main() {
     print_banner
-    
+
     # Setup logging
     setup_logging
-    
+
     # Display configuration
     display_configuration
-    
+
     # Preflight checks
     preflight_checks
 
-    # Pre-deploy secret check
-    precheck_oauth2_proxy_secret
+    # Pre-deploy secret and client check
+    precheck_identity_secrets
 
     echo ""
     log_info "Starting identity stack deployment workflow..."
     echo ""
-    
+
     # Phase 1: Optional Reset
     if ! run_reset; then
         log_fatal "Reset phase failed - aborting"
     fi
-    
+
     # Phase 2: Deploy Identity Stack
     if ! run_deployment; then
         log_fatal "Deployment phase failed - aborting"
     fi
-    
+
     # Wait a bit for pods to stabilize after deployment
     # Only wait if we're not in dry-run and we actually deployed something
     # (either no reset, or reset with redeploy)
@@ -510,34 +530,34 @@ main() {
             should_wait=1
         fi
     fi
-    
+
     if [[ $should_wait -eq 1 ]]; then
         log_info "Waiting 30 seconds for pods to stabilize..."
         sleep 30
     fi
-    
+
     # Phase 3: Bootstrap Admin Accounts
     run_admin_bootstrap
-    
+
     # Phase 4: Setup CA Certificates
     run_ca_setup
-    
+
     # Phase 5: Enroll Cluster Nodes
     run_node_enrollment
-    
+
     # Phase 6: Final Verification
     run_verification
-    
+
     # Generate Summary
     echo ""
     generate_summary
-    
+
     echo ""
     log_success "============================================================"
     log_success "Identity Stack Deployment Complete!"
     log_success "============================================================"
     echo ""
-    
+
     if [[ "$DRY_RUN" == "1" ]]; then
         log_warn "This was a DRY-RUN - no actual changes were made"
         log_info "Remove DRY_RUN=1 to execute for real"
@@ -545,7 +565,7 @@ main() {
         log_info "All phases completed successfully!"
         log_info "Review the summary and logs for details"
     fi
-    
+
     echo ""
     log_info "Log file: $LOG_FILE"
     echo ""
