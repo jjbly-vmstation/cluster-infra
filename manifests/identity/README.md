@@ -1,4 +1,8 @@
+
 # Identity Stack Manifests
+
+**IMPORTANT:**
+Do NOT create the `oauth2-proxy-secrets` secret by hand. Always use the `scripts/apply-oauth2-proxy-secret.sh` script to generate and apply this secret. This ensures the cookie secret is the correct length and the client secret is valid. Manual creation can break authentication and cause pod failures.
 
 This directory contains Kubernetes manifests for the identity stack components, including storage configuration for Keycloak.
 

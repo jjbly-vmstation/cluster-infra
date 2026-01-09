@@ -427,6 +427,46 @@ cleanup() {
 
 trap cleanup EXIT
 
+
+# Pre-deploy check for oauth2-proxy-secrets
+precheck_oauth2_proxy_secret() {
+    log_info "Checking oauth2-proxy-secrets in namespace identity..."
+    local secret_json
+    secret_json=$(kubectl -n identity get secret oauth2-proxy-secrets -o json 2>/dev/null || true)
+    if [[ -z "$secret_json" ]]; then
+        log_warn "oauth2-proxy-secrets not found. Running scripts/apply-oauth2-proxy-secret.sh to create it."
+        "$SCRIPT_DIR/apply-oauth2-proxy-secret.sh"
+        return
+    fi
+    # Validate cookie-secret length
+    local cookie_secret_b64
+    cookie_secret_b64=$(echo "$secret_json" | grep '"cookie-secret"' | awk -F '"' '{print $4}')
+    if [[ -z "$cookie_secret_b64" ]]; then
+        log_warn "cookie-secret missing in oauth2-proxy-secrets. Recreating secret."
+        "$SCRIPT_DIR/apply-oauth2-proxy-secret.sh"
+        return
+    fi
+    local cookie_secret
+    cookie_secret=$(echo "$cookie_secret_b64" | { base64 -d 2>/dev/null || base64 --decode 2>/dev/null; } 2>/dev/null || true)
+    local len=${#cookie_secret}
+    if [[ "$len" != "16" && "$len" != "24" && "$len" != "32" ]]; then
+        log_warn "cookie-secret in oauth2-proxy-secrets is invalid length ($len bytes). Recreating secret."
+        "$SCRIPT_DIR/apply-oauth2-proxy-secret.sh"
+        return
+    fi
+    # Validate client-secret is present
+    local client_secret_b64
+    client_secret_b64=$(echo "$secret_json" | grep '"client-secret"' | awk -F '"' '{print $4}')
+    local client_secret
+    client_secret=$(echo "$client_secret_b64" | { base64 -d 2>/dev/null || base64 --decode 2>/dev/null; } 2>/dev/null || true)
+    if [[ -z "$client_secret" ]]; then
+        log_warn "client-secret in oauth2-proxy-secrets is empty. Recreating secret."
+        "$SCRIPT_DIR/apply-oauth2-proxy-secret.sh"
+        return
+    fi
+    log_success "oauth2-proxy-secrets is present and valid."
+}
+
 # Main execution
 main() {
     print_banner
@@ -439,7 +479,10 @@ main() {
     
     # Preflight checks
     preflight_checks
-    
+
+    # Pre-deploy secret check
+    precheck_oauth2_proxy_secret
+
     echo ""
     log_info "Starting identity stack deployment workflow..."
     echo ""
