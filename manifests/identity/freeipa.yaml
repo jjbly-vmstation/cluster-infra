@@ -238,6 +238,13 @@ spec:
           # operate correctly on many host kernels. This grants the container
           # privileged mode; keep this limited to infra/control-plane nodes.
           privileged: true
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
         volumeMounts:
         - name: freeipa-data
           mountPath: /data
@@ -253,28 +260,54 @@ spec:
           mountPath: /run
         # Probes use systemctl to check ipa service inside the container. FreeIPA
         # initialization can be lengthy; widen timeouts during debugging.
+        # CRITICAL: Readiness probe determines when pod is "Ready" for service traffic
+        # and when Ansible wait tasks succeed. It should be lenient during install
+        # but accurate once running.
         readinessProbe:
           exec:
             command:
-            - /usr/bin/systemctl
-            - status
-            - ipa
-          initialDelaySeconds: 120
-          timeoutSeconds: 15
-          periodSeconds: 15
-          failureThreshold: 60
+            - /bin/bash
+            - -c
+            - |
+              # Check if ipa.service is active (running)
+              systemctl is-active ipa.service >/dev/null 2>&1 || exit 1
+              # If active, ensure it's not in failed state
+              systemctl status ipa.service --no-pager | grep -q "Active: active" || exit 1
+              exit 0
+          initialDelaySeconds: 180
+          timeoutSeconds: 20
+          periodSeconds: 20
+          failureThreshold: 90
+        # CRITICAL: Liveness probe determines when to kill and restart the container.
+        # It should be VERY lenient to avoid killing pods during long operations.
+        # A failed liveness probe will cause Kubernetes to restart the container,
+        # potentially leading to a "Failed" pod state if it repeatedly fails.
         livenessProbe:
           exec:
             command:
-            - /usr/bin/systemctl
-            - status
-            - ipa
+            - /bin/bash
+            - -c
+            - |
+              # Very permissive check - only fail if systemd itself is broken
+              # or the ipa service is in a truly unrecoverable state
+              systemctl status ipa.service --no-pager >/dev/null 2>&1 || {
+                # If systemctl fails, check if it's because service doesn't exist yet (install in progress)
+                if systemctl list-units --type=service --all | grep -q "ipa.service"; then
+                  # Service exists but status check failed - this is a problem
+                  exit 1
+                else
+                  # Service doesn't exist yet - install still in progress, don't kill pod
+                  exit 0
+                fi
+              }
+              exit 0
           # First-time FreeIPA install can be lengthy; don't kill the pod while
           # ipa-server-install is still configuring services.
+          # Extended initial delay to allow full install to complete (30 minutes)
           initialDelaySeconds: 1800
-          timeoutSeconds: 15
-          periodSeconds: 30
-          failureThreshold: 60
+          timeoutSeconds: 20
+          periodSeconds: 60
+          failureThreshold: 10
       volumes:
       - name: freeipa-data
         persistentVolumeClaim:

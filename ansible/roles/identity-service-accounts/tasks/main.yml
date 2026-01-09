@@ -49,15 +49,72 @@
   register: freeipa_pod_status
   failed_when: false
 
-- name: Fail if FreeIPA pod is not in Running phase
-  ansible.builtin.fail:
-    msg: "FreeIPA pod '{{ freeipa_pod }}' is not running. Current phase: {{ freeipa_pod_status.resources[0].status.phase | default('Unknown') }}"
+- name: Display FreeIPA pod current state
+  ansible.builtin.debug:
+    msg: |
+      FreeIPA pod '{{ freeipa_pod }}' status:
+      - Phase: {{ freeipa_pod_status.resources[0].status.phase | default('Unknown') }}
+      - Container Ready: {{ (freeipa_pod_status.resources[0].status.containerStatuses | selectattr('name', 'equalto', 'freeipa-server') | map(attribute='ready') | first | default(false)) }}
+      - Restart Count: {{ (freeipa_pod_status.resources[0].status.containerStatuses | selectattr('name', 'equalto', 'freeipa-server') | map(attribute='restartCount') | first | default(0)) }}
+  when: freeipa_pod_status.resources is defined and freeipa_pod_status.resources | length > 0
+
+- name: Handle non-Running FreeIPA pod
   when: >
     freeipa_pod_status.resources is not defined or
     freeipa_pod_status.resources | length == 0 or
     freeipa_pod_status.resources[0].status.phase | default('') != 'Running'
+  block:
+    - name: Show FreeIPA pod failure information
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          FreeIPA Pod Failure Detected
+          ============================================================
+          Pod: {{ freeipa_pod }}
+          Phase: {{ freeipa_pod_status.resources[0].status.phase | default('Unknown') }}
+          
+          This indicates the FreeIPA pod has crashed or failed to start.
+          Common causes:
+          1. OOMKilled - Pod ran out of memory (check resource limits)
+          2. CrashLoopBackOff - Container repeatedly crashing
+          3. Liveness probe killed a healthy pod (check probe config)
+          4. FreeIPA install failed (check logs)
+          
+          To diagnose, run: sudo /opt/vmstation-org/cluster-infra/scripts/diagnose-freeipa-failure.sh
+          ============================================================
+    
+    - name: Attempt to restart FreeIPA pod (rollout restart)
+      ansible.builtin.shell: >-
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf -n identity
+        rollout restart statefulset/freeipa
+      register: freeipa_restart
+      failed_when: false
+      changed_when: true
+      become: true
+    
+    - name: Wait for FreeIPA pod to restart and become ready
+      ansible.builtin.shell: >-
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf -n identity
+        wait --for=condition=ready pod/{{ freeipa_pod }} --timeout=600s
+      register: freeipa_restart_wait
+      failed_when: false
+      changed_when: false
+      become: true
+    
+    - name: Fail if FreeIPA pod restart did not succeed
+      ansible.builtin.fail:
+        msg: |
+          FreeIPA pod '{{ freeipa_pod }}' restart failed or pod did not become ready.
+          Current phase: {{ freeipa_pod_status.resources[0].status.phase | default('Unknown') }}
+          
+          Manual intervention required:
+          1. Run diagnostics: sudo /opt/vmstation-org/cluster-infra/scripts/diagnose-freeipa-failure.sh
+          2. Check pod logs: kubectl -n identity logs {{ freeipa_pod }} -c freeipa-server --tail=200
+          3. Check events: kubectl -n identity describe pod {{ freeipa_pod }}
+          4. Review FreeIPA manifest: /opt/vmstation-org/cluster-infra/manifests/identity/freeipa.yaml
+      when: freeipa_restart_wait.rc != 0
 
-- name: Wait for FreeIPA pod to be ready
+- name: Wait for FreeIPA pod to be ready (extended timeout)
   kubernetes.core.k8s_info:
     kind: Pod
     namespace: identity
@@ -69,13 +126,15 @@
     freeipa_pod_ready.resources[0].status.phase == 'Running' and
     freeipa_pod_ready.resources[0].status.containerStatuses is defined and
     freeipa_pod_ready.resources[0].status.containerStatuses | selectattr('name', 'equalto', 'freeipa-server') | map(attribute='ready') | first | default(false)
-  retries: 30
+  retries: 60
   delay: 10
   failed_when: false
 
 - name: Fail if FreeIPA pod did not become ready
   ansible.builtin.fail:
-    msg: "FreeIPA pod '{{ freeipa_pod }}' did not become ready within 5 minutes"
+    msg: |
+      FreeIPA pod '{{ freeipa_pod }}' did not become ready within 10 minutes.
+      Run diagnostics: sudo /opt/vmstation-org/cluster-infra/scripts/diagnose-freeipa-failure.sh
   when: >
     freeipa_pod_ready.resources is not defined or
     freeipa_pod_ready.resources | length == 0 or
