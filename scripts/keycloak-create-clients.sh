@@ -132,7 +132,8 @@ echo "$CLIENTS_JSON" | jq -c '.[]' -r | while read -r client; do
     # Filter out non-JSON lines (warnings, stack traces) and extract valid JSON
     # Look for lines starting with [ or { and ending with ] or }
     local raw_output="$1"
-    echo "$raw_output" | sed -n '/^\s*[\[{]/,/^\s*[\]}]/p' | jq -s '.' 2>/dev/null || echo "[]"
+    # Use jq '.' instead of 'jq -s' to avoid double-wrapping arrays
+    echo "$raw_output" | sed -n '/^\s*[\[{]/,/^\s*[\]}]/p' | jq '.' 2>/dev/null || echo "[]"
   }
 
   # Query for client - capture both stdout and stderr, then filter for JSON
