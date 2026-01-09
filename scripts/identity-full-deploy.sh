@@ -8,11 +8,21 @@
 #
 # Usage:
 #   sudo ./scripts/identity-full-deploy.sh                                    # Deploy only (no reset)
-#   sudo FORCE_RESET=1 ./scripts/identity-full-deploy.sh                      # Interactive reset + deploy
-#   sudo FORCE_RESET=1 RESET_CONFIRM=yes ./scripts/identity-full-deploy.sh    # Automated reset + deploy
+#   sudo -E FORCE_RESET=1 ./scripts/identity-full-deploy.sh                   # Interactive reset + deploy (using -E to preserve env)
+#   sudo -E FORCE_RESET=1 RESET_CONFIRM=yes ./scripts/identity-full-deploy.sh # Automated reset + deploy (using -E)
+#   sudo ./scripts/identity-full-deploy.sh --force-reset --reset-confirm      # Automated reset + deploy (using arguments)
 #   sudo DRY_RUN=1 ./scripts/identity-full-deploy.sh                          # Dry-run mode
 #
-# Environment Variables:
+# Command Line Arguments (alternative to environment variables):
+#   --force-reset            - Perform reset before deploy
+#   --reset-confirm          - Auto-confirm reset (no prompt)
+#   --reset-remove-old       - Remove old backups during reset
+#   --skip-redeploy          - Skip deployment after reset
+#   --skip-node-enrollment   - Skip node enrollment phase
+#   --skip-verification      - Skip final verification phase
+#   --dry-run                - Dry-run mode (no actual changes)
+#
+# Environment Variables (NOTE: Use sudo -E to preserve, or use command-line arguments):
 #   DRY_RUN                  - Set to "1" for dry-run mode (default: 0)
 #   FORCE_RESET              - Set to "1" to perform reset before deploy (default: 0)
 #   RESET_CONFIRM            - Set to "yes" to auto-confirm reset (default: prompt)
@@ -27,6 +37,46 @@
 #
 
 set -euo pipefail
+
+# Parse command-line arguments BEFORE setting defaults
+# This allows CLI args to override environment variables
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --force-reset)
+            CLI_FORCE_RESET=1
+            shift
+            ;;
+        --reset-confirm)
+            CLI_RESET_CONFIRM=yes
+            shift
+            ;;
+        --reset-remove-old)
+            CLI_RESET_REMOVE_OLD=1
+            shift
+            ;;
+        --skip-redeploy)
+            CLI_REDEPLOY_AFTER_RESET=0
+            shift
+            ;;
+        --skip-node-enrollment)
+            CLI_SKIP_NODE_ENROLLMENT=1
+            shift
+            ;;
+        --skip-verification)
+            CLI_SKIP_VERIFICATION=1
+            shift
+            ;;
+        --dry-run)
+            CLI_DRY_RUN=1
+            shift
+            ;;
+        *)
+            echo "Unknown argument: $1" >&2
+            echo "Run with no arguments for default behavior, or see script header for valid options" >&2
+            exit 1
+            ;;
+    esac
+done
 
 # Source common functions if available
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -46,14 +96,14 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# Configuration with defaults
-DRY_RUN="${DRY_RUN:-0}"
-FORCE_RESET="${FORCE_RESET:-0}"
-RESET_CONFIRM="${RESET_CONFIRM:-}"
-RESET_REMOVE_OLD="${RESET_REMOVE_OLD:-0}"
-REDEPLOY_AFTER_RESET="${REDEPLOY_AFTER_RESET:-1}"
-SKIP_NODE_ENROLLMENT="${SKIP_NODE_ENROLLMENT:-0}"
-SKIP_VERIFICATION="${SKIP_VERIFICATION:-0}"
+# Configuration with defaults - CLI args take precedence over environment variables
+DRY_RUN="${CLI_DRY_RUN:-${DRY_RUN:-0}}"
+FORCE_RESET="${CLI_FORCE_RESET:-${FORCE_RESET:-0}}"
+RESET_CONFIRM="${CLI_RESET_CONFIRM:-${RESET_CONFIRM:-}}"
+RESET_REMOVE_OLD="${CLI_RESET_REMOVE_OLD:-${RESET_REMOVE_OLD:-0}}"
+REDEPLOY_AFTER_RESET="${CLI_REDEPLOY_AFTER_RESET:-${REDEPLOY_AFTER_RESET:-1}}"
+SKIP_NODE_ENROLLMENT="${CLI_SKIP_NODE_ENROLLMENT:-${SKIP_NODE_ENROLLMENT:-0}}"
+SKIP_VERIFICATION="${CLI_SKIP_VERIFICATION:-${SKIP_VERIFICATION:-0}}"
 FREEIPA_ADMIN_PASSWORD="${FREEIPA_ADMIN_PASSWORD:-}"
 KEYCLOAK_ADMIN_PASSWORD="${KEYCLOAK_ADMIN_PASSWORD:-}"
 
@@ -213,6 +263,14 @@ display_configuration() {
     log_info "  Skip Node Enrollment: $SKIP_NODE_ENROLLMENT"
     log_info "  Skip Verification: $SKIP_VERIFICATION"
     echo ""
+    
+    # Helpful hint if FORCE_RESET is 0 but user likely intended reset
+    if [[ "$FORCE_RESET" == "0" ]] && [[ -n "${SUDO_USER:-}" ]]; then
+        log_warn "NOTE: If you intended to perform a reset, use one of:"
+        log_warn "  sudo -E FORCE_RESET=1 RESET_CONFIRM=yes ./scripts/identity-full-deploy.sh"
+        log_warn "  sudo ./scripts/identity-full-deploy.sh --force-reset --reset-confirm"
+        echo ""
+    fi
     
     if [[ "$DRY_RUN" == "1" ]]; then
         log_warn "DRY-RUN MODE ENABLED - No actual changes will be made"

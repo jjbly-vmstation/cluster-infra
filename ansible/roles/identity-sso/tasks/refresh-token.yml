@@ -15,9 +15,32 @@
     status_code: 200
     timeout: 60
   register: keycloak_token
-  retries: 5
-  delay: 2
-  until: keycloak_token.json is defined and (keycloak_token.json.access_token | default('') | trim) != ''
+  retries: 10
+  delay: 10
+  until: >
+    keycloak_token is not failed and
+    keycloak_token.json is defined and
+    (keycloak_token.json.access_token | default('') | trim) != ''
+  failed_when: false
+
+- name: Fail if Keycloak token request failed after all retries
+  fail:
+    msg: |
+      Failed to obtain Keycloak admin access token after {{ keycloak_token.attempts }} attempts.
+      Last error: {{ keycloak_token.msg | default('Unknown error') }}
+      URL: {{ keycloak_admin_base_url }}/realms/{{ keycloak_admin_realm }}/protocol/openid-connect/token
+      
+      This typically means:
+      1. Keycloak is not fully started (wait longer after pod restart)
+      2. Keycloak admin credentials are incorrect
+      3. Network connectivity issues to Keycloak NodePort
+      
+      Check Keycloak pod status: kubectl -n identity get pods -l app.kubernetes.io/name=keycloak
+      Check Keycloak logs: kubectl -n identity logs -l app.kubernetes.io/name=keycloak --tail=100
+  when: >
+    keycloak_token is failed or
+    keycloak_token.json is not defined or
+    (keycloak_token.json.access_token | default('') | trim) == ''
 
 - name: Set Keycloak bearer token
   set_fact:
