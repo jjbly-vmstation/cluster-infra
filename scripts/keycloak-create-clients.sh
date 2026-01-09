@@ -125,24 +125,23 @@ echo "$CLIENTS_JSON" | jq -c '.[]' -r | while read -r client; do
   fi
 
   echo "Creating/updating client: $name"
-  # remove existing client if present to simplify idempotency
   # Query existing client (suppress stderr that may contain non-JSON warnings)
   EXIST=$(kc_exec "$KCADM_PATH get clients -r ${REALM} -q clientId=${name} -o json" 2>/dev/null || true)
   if [ -n "$EXIST" ] && [ "$EXIST" != "[]" ]; then
     ID=$(echo "$EXIST" | jq -r '.[0].id' 2>/dev/null || true)
     if [ -n "$ID" ]; then
-      kc_exec "$KCADM_PATH delete clients/$ID -r ${REALM} || true" || true
+      echo "Client $name already exists (id: $ID), will update and extract secret."
     fi
-  fi
-
-  # Create client (don't fail the whole script on a non-zero exit here so we can attempt to recover)
-  kc_exec "$KCADM_PATH create clients -r ${REALM} -s clientId=${name} -s 'directAccessGrantsEnabled=true' -s 'publicClient=false' -s 'serviceAccountsEnabled=true' -s 'standardFlowEnabled=true'" || true
-
-  # Read back the new client id; tolerate non-JSON noise on stderr
-  NEW_ID=$(kc_exec "$KCADM_PATH get clients -r ${REALM} -q clientId=${name} -o json" 2>/dev/null | jq -r '.[0].id' 2>/dev/null || true)
-  if [ -z "$NEW_ID" ]; then
-    echo "Failed to determine new client id for $name; skipping redirectUris and secret extraction" >&2
-    continue
+  else
+    # Create client if not present
+    kc_exec "$KCADM_PATH create clients -r ${REALM} -s clientId=${name} -s 'directAccessGrantsEnabled=true' -s 'publicClient=false' -s 'serviceAccountsEnabled=true' -s 'standardFlowEnabled=true'" || true
+    # Re-query for new client id
+    EXIST=$(kc_exec "$KCADM_PATH get clients -r ${REALM} -q clientId=${name} -o json" 2>/dev/null || true)
+    ID=$(echo "$EXIST" | jq -r '.[0].id' 2>/dev/null || true)
+    if [ -z "$ID" ]; then
+      echo "Failed to create or find client id for $name; skipping." >&2
+      continue
+    fi
   fi
 
   # Build update options for redirectUris, baseUrl, webOrigins, adminUrl
@@ -158,10 +157,10 @@ echo "$CLIENTS_JSON" | jq -c '.[]' -r | while read -r client; do
   fi
 
   # Update client with constructed options (tolerate noisy stderr)
-  kc_exec "$KCADM_PATH update clients/${NEW_ID} -r ${REALM} $update_opts" 2>/dev/null || true
+  kc_exec "$KCADM_PATH update clients/${ID} -r ${REALM} $update_opts" 2>/dev/null || true
 
-  # obtain secret (suppress noisy stderr)
-  SECRET_JSON=$(kc_exec "$KCADM_PATH get clients/${NEW_ID}/client-secret -r ${REALM}" 2>/dev/null || true)
+  # obtain secret (suppress noisy stderr, tolerate non-JSON output)
+  SECRET_JSON=$(kc_exec "$KCADM_PATH get clients/${ID}/client-secret -r ${REALM}" 2>/dev/null || true)
   SECRET=$(echo "$SECRET_JSON" | jq -r '.value' 2>/dev/null || true)
 
   if [ -z "$SECRET" ] || [ "$SECRET" = "null" ]; then
