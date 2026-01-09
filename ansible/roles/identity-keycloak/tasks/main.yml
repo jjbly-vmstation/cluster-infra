@@ -55,16 +55,17 @@
   register: keycloak_helm_install
   become: true
 
-- name: Patch Keycloak StatefulSet to schedule on control-plane node
+- name: Patch Keycloak StatefulSet to schedule on worker node (resource-intensive workload)
   shell: >-
     KUBECONFIG=/etc/kubernetes/admin.conf kubectl patch statefulset keycloak -n {{ namespace_identity }} --type='json' -p='[
-      {"op": "add", "path": "/spec/template/spec/nodeSelector", "value": {"node-role.kubernetes.io/control-plane": ""}},
-      {"op": "add", "path": "/spec/template/spec/tolerations", "value": [{"key": "node-role.kubernetes.io/control-plane", "operator": "Exists", "effect": "NoSchedule"}]}
+      {"op": "add", "path": "/spec/template/spec/nodeSelector", "value": {"node-role.kubernetes.io/worker": ""}}
     ]'
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
   become: true
   when: keycloak_values_stat.stat.exists
+  failed_when: false
+  changed_when: true
 
 - name: Restart Keycloak StatefulSet to apply nodeSelector changes
   shell: >-

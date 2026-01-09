@@ -22,6 +22,11 @@ spec:
   nodeAffinity:
     required:
       nodeSelectorTerms:
+      # Allow scheduling on worker nodes (homelab) - where storage will be created
+      - matchExpressions:
+        - key: node-role.kubernetes.io/worker
+          operator: Exists
+      # Fallback: allow control-plane if worker not available
       - matchExpressions:
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
@@ -134,13 +139,25 @@ spec:
       labels:
         app: freeipa
     spec:
-      # Schedule on control-plane node (masternode) only - always on
+      # SCHEDULING STRATEGY:
+      # FreeIPA requires 2-4Gi memory and is resource-intensive.
+      # Default: Schedule on worker nodes (homelab) with sufficient resources.
+      # Override: Set FREEIPA_NODE_SELECTOR env to schedule on control-plane if it has enough memory.
+      #
+      # To force control-plane scheduling (NOT RECOMMENDED unless node has 6+ Gi free):
+      #   nodeSelector:
+      #     node-role.kubernetes.io/control-plane: ""
+      #   tolerations:
+      #   - key: node-role.kubernetes.io/control-plane
+      #     operator: Exists
+      #     effect: NoSchedule
+      #
+      # Current: Schedule on any node with sufficient resources (prefers workers)
       nodeSelector:
-        node-role.kubernetes.io/control-plane: ""
-      tolerations:
-      - key: node-role.kubernetes.io/control-plane
-        operator: Exists
-        effect: NoSchedule
+        # Prefer nodes with higher memory capacity
+        # Remove this line to allow scheduling on control-plane if needed
+        node-role.kubernetes.io/worker: ""
+      # No toleration needed for worker nodes
       # Pre-seed hostname so FreeIPA's installer doesn't trip over Kubernetes'
       # /etc/hostname bind-mount (hostnamectl uses atomic replace which fails with EBUSY).
       initContainers:
