@@ -22,11 +22,6 @@ spec:
   nodeAffinity:
     required:
       nodeSelectorTerms:
-      # Allow scheduling on worker nodes (homelab) - where storage will be created
-      - matchExpressions:
-        - key: node-role.kubernetes.io/worker
-          operator: Exists
-      # Fallback: allow control-plane if worker not available
       - matchExpressions:
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
@@ -139,25 +134,14 @@ spec:
       labels:
         app: freeipa
     spec:
-      # SCHEDULING STRATEGY:
-      # FreeIPA requires 2-4Gi memory and is resource-intensive.
-      # Default: Schedule on worker nodes (homelab) with sufficient resources.
-      # Override: Set FREEIPA_NODE_SELECTOR env to schedule on control-plane if it has enough memory.
-      #
-      # To force control-plane scheduling (NOT RECOMMENDED unless node has 6+ Gi free):
-      #   nodeSelector:
-      #     node-role.kubernetes.io/control-plane: ""
-      #   tolerations:
-      #   - key: node-role.kubernetes.io/control-plane
-      #     operator: Exists
-      #     effect: NoSchedule
-      #
-      # Current: Schedule on any node with sufficient resources (prefers workers)
+      # Schedule on control-plane node (masternode) for 24/7 availability
+      # Masternode has ~7.8Gi total, ~4.4Gi available - sufficient for identity stack
       nodeSelector:
-        # Prefer nodes with higher memory capacity
-        # Remove this line to allow scheduling on control-plane if needed
-        node-role.kubernetes.io/worker: ""
-      # No toleration needed for worker nodes
+        node-role.kubernetes.io/control-plane: ""
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
       # Pre-seed hostname so FreeIPA's installer doesn't trip over Kubernetes'
       # /etc/hostname bind-mount (hostnamectl uses atomic replace which fails with EBUSY).
       initContainers:
@@ -257,10 +241,10 @@ spec:
           privileged: true
         resources:
           requests:
-            memory: "2Gi"
+            memory: "1536Mi"  # 1.5Gi - 50% reduction from original 3Gi
             cpu: "500m"
           limits:
-            memory: "4Gi"
+            memory: "3Gi"     # 75% of original 4Gi - more conservative
             cpu: "2000m"
         volumeMounts:
         - name: freeipa-data
