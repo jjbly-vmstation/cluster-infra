@@ -136,7 +136,8 @@ echo "$CLIENTS_JSON" | jq -c '.[]' -r | while read -r client; do
   }
 
   # Query for client - capture both stdout and stderr, then filter for JSON
-  EXIST_RAW=$(kc_exec "$KCADM_PATH get clients -r ${REALM} -q clientId=${name} -o json" 2>&1 || true)
+  # Note: kcadm outputs JSON by default, -o json flag causes errors in some versions
+  EXIST_RAW=$(kc_exec "$KCADM_PATH get clients -r ${REALM} -q clientId=${name}" 2>&1 || true)
   EXIST=$(extract_json "$EXIST_RAW")
   
   # Check if client exists and extract ID
@@ -151,7 +152,7 @@ echo "$CLIENTS_JSON" | jq -c '.[]' -r | while read -r client; do
       CREATE_OUTPUT=$(kc_exec "$KCADM_PATH create clients -r ${REALM} -s clientId=${name} -s 'directAccessGrantsEnabled=true' -s 'publicClient=false' -s 'serviceAccountsEnabled=true' -s 'standardFlowEnabled=true'" 2>&1 || true)
       echo "Create output: $CREATE_OUTPUT"
       # Re-query for new client id
-      EXIST_RAW=$(kc_exec "$KCADM_PATH get clients -r ${REALM} -q clientId=${name} -o json" 2>&1 || true)
+      EXIST_RAW=$(kc_exec "$KCADM_PATH get clients -r ${REALM} -q clientId=${name}" 2>&1 || true)
       EXIST=$(extract_json "$EXIST_RAW")
       ID=$(echo "$EXIST" | jq -r '.[0].id' 2>/dev/null || true)
       if [ -z "$ID" ] || [ "$ID" = "null" ]; then
@@ -175,7 +176,7 @@ echo "$CLIENTS_JSON" | jq -c '.[]' -r | while read -r client; do
     fi
     
     # Re-query for client id (whether create succeeded or client already existed)
-    EXIST_RAW=$(kc_exec "$KCADM_PATH get clients -r ${REALM} -q clientId=${name} -o json" 2>&1 || true)
+    EXIST_RAW=$(kc_exec "$KCADM_PATH get clients -r ${REALM} -q clientId=${name}" 2>&1 || true)
     EXIST=$(extract_json "$EXIST_RAW")
     ID=$(echo "$EXIST" | jq -r '.[0].id' 2>/dev/null || true)
     if [ -z "$ID" ] || [ "$ID" = "null" ]; then
