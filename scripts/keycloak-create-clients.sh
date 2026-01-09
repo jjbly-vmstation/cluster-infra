@@ -212,7 +212,15 @@ echo "$CLIENTS_JSON" | jq -c '.[]' -r | while read -r client; do
   echo "Extracting client secret for $name..."
   SECRET_RAW=$(kc_exec "$KCADM_PATH get clients/${ID}/client-secret -r ${REALM}" 2>&1 || true)
   SECRET_JSON=$(extract_json "$SECRET_RAW")
-  SECRET=$(echo "$SECRET_JSON" | jq -r '.[0].value // .value // empty' 2>/dev/null || true)
+  
+  # Try multiple jq expressions to extract the secret value
+  # First try array access, then object access
+  SECRET=$(echo "$SECRET_JSON" | jq -r 'if type == "array" then .[0].value else .value end' 2>/dev/null || echo "")
+  
+  # Fallback: try just .value directly
+  if [ -z "$SECRET" ] || [ "$SECRET" = "null" ]; then
+    SECRET=$(echo "$SECRET_JSON" | jq -r '.value' 2>/dev/null || echo "")
+  fi
 
   if [ -z "$SECRET" ] || [ "$SECRET" = "null" ]; then
     echo "Warning: could not extract client secret for $name from initial query" >&2
@@ -225,7 +233,12 @@ echo "$CLIENTS_JSON" | jq -c '.[]' -r | while read -r client; do
     # Query again
     SECRET_RAW=$(kc_exec "$KCADM_PATH get clients/${ID}/client-secret -r ${REALM}" 2>&1 || true)
     SECRET_JSON=$(extract_json "$SECRET_RAW")
-    SECRET=$(echo "$SECRET_JSON" | jq -r '.[0].value // .value // empty' 2>/dev/null || true)
+    
+    # Try multiple jq expressions to extract the secret value
+    SECRET=$(echo "$SECRET_JSON" | jq -r 'if type == "array" then .[0].value else .value end' 2>/dev/null || echo "")
+    if [ -z "$SECRET" ] || [ "$SECRET" = "null" ]; then
+      SECRET=$(echo "$SECRET_JSON" | jq -r '.value' 2>/dev/null || echo "")
+    fi
     if [ -z "$SECRET" ] || [ "$SECRET" = "null" ]; then
       echo "Error: still could not extract client secret for $name after regeneration; skipping secret creation" >&2
       continue
