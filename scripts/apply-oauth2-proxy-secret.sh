@@ -14,14 +14,15 @@ if [ -z "$CLIENT_SECRET" ]; then
   exit 1
 fi
 
-# Generate 32 random bytes as hex (64 hex chars = 32 bytes when oauth2-proxy decodes)
-# oauth2-proxy expects exactly 32 bytes for AES cipher, hex encoding provides this
-COOKIE_SECRET=$(openssl rand -hex 32)
+# Generate exactly 32 characters (32 bytes) for oauth2-proxy cookie secret
+# oauth2-proxy treats the string as raw bytes, so 32 chars = 32 bytes
+# openssl rand -base64 24 produces exactly 32 characters (24 bytes * 4/3 = 32 chars)
+COOKIE_SECRET=$(openssl rand -base64 24)
 
-# Validate cookie secret length (should be 64 hex chars = 32 bytes)
+# Validate cookie secret length (should be exactly 32 characters = 32 bytes)
 LEN=${#COOKIE_SECRET}
-if [[ "$LEN" != "64" ]]; then
-  echo "ERROR: Generated cookie secret is invalid length ($LEN chars). Must be 64 hex chars (32 bytes)." >&2
+if [[ "$LEN" != "32" ]]; then
+  echo "ERROR: Generated cookie secret is invalid length ($LEN chars). Must be exactly 32 characters (32 bytes)." >&2
   exit 2
 fi
 

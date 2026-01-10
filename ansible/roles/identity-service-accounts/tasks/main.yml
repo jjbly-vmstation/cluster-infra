@@ -41,6 +41,31 @@
     msg: "FreeIPA pod not found in namespace 'identity'"
   when: freeipa_pod | default('') == ''
 
+- name: Check if FreeIPA PVC is bound
+  kubernetes.core.k8s_info:
+    kind: PersistentVolumeClaim
+    namespace: identity
+    name: freeipa-data
+  register: freeipa_pvc_status
+  failed_when: false
+
+- name: Wait for FreeIPA PVC to bind (if Pending)
+  kubernetes.core.k8s_info:
+    kind: PersistentVolumeClaim
+    namespace: identity
+    name: freeipa-data
+  register: freeipa_pvc_wait
+  until: >
+    freeipa_pvc_wait.resources is defined and
+    freeipa_pvc_wait.resources | length > 0 and
+    freeipa_pvc_wait.resources[0].status.phase | default('') == 'Bound'
+  retries: 30
+  delay: 5
+  when: >
+    freeipa_pvc_status.resources is defined and
+    freeipa_pvc_status.resources | length > 0 and
+    freeipa_pvc_status.resources[0].status.phase | default('') == 'Pending'
+
 - name: Check if FreeIPA pod is ready
   kubernetes.core.k8s_info:
     kind: Pod
@@ -58,61 +83,16 @@
       - Restart Count: {{ (freeipa_pod_status.resources[0].status.containerStatuses | selectattr('name', 'equalto', 'freeipa-server') | map(attribute='restartCount') | first | default(0)) }}
   when: freeipa_pod_status.resources is defined and freeipa_pod_status.resources | length > 0
 
-- name: Handle non-Running FreeIPA pod
+- name: Fail if FreeIPA pod is in Failed state (actual crash)
+  ansible.builtin.fail:
+    msg: |
+      FreeIPA pod '{{ freeipa_pod }}' is in Failed state.
+      Check logs: kubectl -n identity logs {{ freeipa_pod }} -c freeipa-server --tail=200
+      Check events: kubectl -n identity describe pod {{ freeipa_pod }}
   when: >
-    freeipa_pod_status.resources is not defined or
-    freeipa_pod_status.resources | length == 0 or
-    freeipa_pod_status.resources[0].status.phase | default('') != 'Running'
-  block:
-    - name: Show FreeIPA pod failure information
-      ansible.builtin.debug:
-        msg: |
-          ============================================================
-          FreeIPA Pod Failure Detected
-          ============================================================
-          Pod: {{ freeipa_pod }}
-          Phase: {{ freeipa_pod_status.resources[0].status.phase | default('Unknown') }}
-          
-          This indicates the FreeIPA pod has crashed or failed to start.
-          Common causes:
-          1. OOMKilled - Pod ran out of memory (check resource limits)
-          2. CrashLoopBackOff - Container repeatedly crashing
-          3. Liveness probe killed a healthy pod (check probe config)
-          4. FreeIPA install failed (check logs)
-          
-          To diagnose, run: sudo /opt/vmstation-org/cluster-infra/scripts/diagnose-freeipa-failure.sh
-          ============================================================
-    
-    - name: Attempt to restart FreeIPA pod (rollout restart)
-      ansible.builtin.shell: >-
-        kubectl --kubeconfig=/etc/kubernetes/admin.conf -n identity
-        rollout restart statefulset/freeipa
-      register: freeipa_restart
-      failed_when: false
-      changed_when: true
-      become: true
-    
-    - name: Wait for FreeIPA pod to restart and become ready
-      ansible.builtin.shell: >-
-        kubectl --kubeconfig=/etc/kubernetes/admin.conf -n identity
-        wait --for=condition=ready pod/{{ freeipa_pod }} --timeout=600s
-      register: freeipa_restart_wait
-      failed_when: false
-      changed_when: false
-      become: true
-    
-    - name: Fail if FreeIPA pod restart did not succeed
-      ansible.builtin.fail:
-        msg: |
-          FreeIPA pod '{{ freeipa_pod }}' restart failed or pod did not become ready.
-          Current phase: {{ freeipa_pod_status.resources[0].status.phase | default('Unknown') }}
-          
-          Manual intervention required:
-          1. Run diagnostics: sudo /opt/vmstation-org/cluster-infra/scripts/diagnose-freeipa-failure.sh
-          2. Check pod logs: kubectl -n identity logs {{ freeipa_pod }} -c freeipa-server --tail=200
-          3. Check events: kubectl -n identity describe pod {{ freeipa_pod }}
-          4. Review FreeIPA manifest: /opt/vmstation-org/cluster-infra/manifests/identity/freeipa.yaml
-      when: freeipa_restart_wait.rc != 0
+    freeipa_pod_status.resources is defined and
+    freeipa_pod_status.resources | length > 0 and
+    freeipa_pod_status.resources[0].status.phase | default('') == 'Failed'
 
 - name: Wait for FreeIPA pod to be ready (extended timeout)
   kubernetes.core.k8s_info:
