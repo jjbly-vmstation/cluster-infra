@@ -268,13 +268,15 @@
     - name: Ensure oauth2-proxy secret exists (cookie secret)
       ansible.builtin.shell: |
         # Build oauth2-proxy secret including cookie and Grafana client secret
+        # CRITICAL: oauth2-proxy expects exactly 32 raw bytes for cookie-secret
+        # openssl rand -hex 32 produces 64 hex chars which oauth2-proxy will decode to 32 bytes
         CLIENT_SECRET=$(kubectl -n identity get secret keycloak-grafana-client-secret -o jsonpath='{.data.client_secret}' 2>/dev/null |
         { base64 -d 2>/dev/null || base64 --decode 2>/dev/null; } || true)
         if [ -z "$CLIENT_SECRET" ]; then
           echo "Grafana client secret not found; creating oauth2-proxy secret with only cookie-secret"
-          kubectl -n identity create secret generic oauth2-proxy-secrets --from-literal=cookie-secret=$(openssl rand -base64 32) --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n identity create secret generic oauth2-proxy-secrets --from-literal=cookie-secret=$(openssl rand -hex 32) --dry-run=client -o yaml | kubectl apply -f -
         else
-          kubectl -n identity create secret generic oauth2-proxy-secrets --from-literal=cookie-secret=$(openssl rand -base64 32) --from-literal=client-secret="$CLIENT_SECRET" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n identity create secret generic oauth2-proxy-secrets --from-literal=cookie-secret=$(openssl rand -hex 32) --from-literal=client-secret="$CLIENT_SECRET" --dry-run=client -o yaml | kubectl apply -f -
         fi
       args:
         executable: /bin/bash

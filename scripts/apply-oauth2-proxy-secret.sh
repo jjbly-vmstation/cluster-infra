@@ -14,14 +14,14 @@ if [ -z "$CLIENT_SECRET" ]; then
   exit 1
 fi
 
-# Generate 32 random bytes as base64 (will be 44 characters)
-# Kubernetes Secret will store this base64 string, oauth2-proxy will decode to get 32 bytes
-COOKIE_SECRET=$(dd if=/dev/urandom bs=32 count=1 2>/dev/null | base64 -w0)
+# Generate 32 random bytes as hex (64 hex chars = 32 bytes when oauth2-proxy decodes)
+# oauth2-proxy expects exactly 32 bytes for AES cipher, hex encoding provides this
+COOKIE_SECRET=$(openssl rand -hex 32)
 
-# Validate cookie secret length (should be 44 chars = base64 of 32 bytes)
+# Validate cookie secret length (should be 64 hex chars = 32 bytes)
 LEN=${#COOKIE_SECRET}
-if [[ "$LEN" != "44" ]]; then
-  echo "ERROR: Generated cookie secret is invalid length ($LEN chars). Must be 44 base64 chars (32 bytes)." >&2
+if [[ "$LEN" != "64" ]]; then
+  echo "ERROR: Generated cookie secret is invalid length ($LEN chars). Must be 64 hex chars (32 bytes)." >&2
   exit 2
 fi
 
