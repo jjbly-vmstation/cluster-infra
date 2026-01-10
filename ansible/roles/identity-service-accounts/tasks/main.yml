@@ -94,7 +94,40 @@
     freeipa_pod_status.resources | length > 0 and
     freeipa_pod_status.resources[0].status.phase | default('') == 'Failed'
 
-- name: Wait for FreeIPA pod to be ready (extended timeout)
+- name: Get FreeIPA pod events if Pending
+  ansible.builtin.shell: kubectl -n identity describe pod {{ freeipa_pod }} | tail -20
+  register: freeipa_pending_events
+  failed_when: false
+  changed_when: false
+  when: >
+    freeipa_pod_status.resources is defined and
+    freeipa_pod_status.resources | length > 0 and
+    freeipa_pod_status.resources[0].status.phase | default('') == 'Pending'
+
+- name: Fail fast if FreeIPA pod is stuck in Pending state
+  ansible.builtin.fail:
+    msg: |
+      FreeIPA pod '{{ freeipa_pod }}' is stuck in Pending state.
+      
+      This means the pod cannot be scheduled. Common causes:
+      1. Node affinity mismatch - no node matches the selector
+      2. Insufficient resources on target node
+      3. PVC binding issue (should have been caught earlier)
+      4. Image pull issues
+      
+      Recent pod events:
+      {{ freeipa_pending_events.stdout | default('Unable to retrieve events') }}
+      
+      Manual checks:
+      kubectl -n identity describe pod {{ freeipa_pod }}
+      kubectl -n identity get pvc freeipa-data
+      kubectl get nodes --show-labels
+  when: >
+    freeipa_pod_status.resources is defined and
+    freeipa_pod_status.resources | length > 0 and
+    freeipa_pod_status.resources[0].status.phase | default('') == 'Pending'
+
+- name: Wait for FreeIPA pod to be ready (only if not Pending or Failed)
   kubernetes.core.k8s_info:
     kind: Pod
     namespace: identity
@@ -109,11 +142,16 @@
   retries: 60
   delay: 10
   failed_when: false
+  when: >
+    freeipa_pod_status.resources is defined and
+    freeipa_pod_status.resources | length > 0 and
+    freeipa_pod_status.resources[0].status.phase | default('') not in ['Pending', 'Failed']
 
 - name: Fail if FreeIPA pod did not become ready
   ansible.builtin.fail:
     msg: |
       FreeIPA pod '{{ freeipa_pod }}' did not become ready within 10 minutes.
+      Final phase: {{ freeipa_pod_ready.resources[0].status.phase | default('Unknown') }}
       Run diagnostics: sudo /opt/vmstation-org/cluster-infra/scripts/diagnose-freeipa-failure.sh
   when: >
     freeipa_pod_ready.resources is not defined or
@@ -137,12 +175,12 @@
     executable: /bin/bash
 
 - name: Ensure service accounts exist in FreeIPA
-  ansible.builtin.shell: >-
-    POD={{ freeipa_pod }};
-    PASS='{{ freeipa_admin_password }}';
-    NAME='{{ acct.name }}';
-    FIRST='{{ acct.first }}';
-    LAST='{{ acct.last }}';
+  ansible.builtin.shell: |
+    POD={{ freeipa_pod }}
+    PASS='{{ freeipa_admin_password }}'
+    NAME='{{ acct.name }}'
+    FIRST='{{ acct.first }}'
+    LAST='{{ acct.last }}'
     kubectl -n identity exec "$POD" -c freeipa-server -- bash -lc "echo \"$PASS\" | kinit admin >/dev/null 2>&1 && ipa user-show $NAME >/dev/null 2>&1 && exit 0 || ipa user-add $NAME --first=\"$FIRST\" --last=\"$LAST\""
     rc=$?
     if [ $rc -ne 0 ]; then
