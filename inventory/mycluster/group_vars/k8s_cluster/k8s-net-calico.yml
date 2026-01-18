@@ -1,0 +1,5 @@
+# Disable IP-in-IP and VXLAN encapsulation for better performance on the same L2 network.
+# This is a common fix for network issues related to MTU.
+calico_ipip_mode: 'Never'
+calico_vxlan_mode: 'Never'
+calico_veth_mtu: 1500
