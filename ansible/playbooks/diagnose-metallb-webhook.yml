@@ -30,9 +30,15 @@
       ansible.builtin.debug:
         var: metallb_webhook_service.stdout_lines
 
-    - name: Get MetalLB controller pod name
+    - name: Wait for MetalLB controller deployment to rollout
       ansible.builtin.command: >
-        kubectl --kubeconfig={{ kubeconfig }} get pods -n {{ metallb_namespace }} -l app=metallb,component=controller -o jsonpath='{.items[0].metadata.name}'
+        kubectl --kubeconfig={{ kubeconfig }} rollout status deployment/controller -n {{ metallb_namespace }} --timeout=300s
+      register: controller_rollout_status
+      changed_when: false
+      
+    - name: Get MetalLB controller pod name (latest running)
+      ansible.builtin.command: >
+        kubectl --kubeconfig={{ kubeconfig }} get pods -n {{ metallb_namespace }} -l app=metallb,component=controller --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}'
       register: metallb_controller_pod_name
       changed_when: false
 
