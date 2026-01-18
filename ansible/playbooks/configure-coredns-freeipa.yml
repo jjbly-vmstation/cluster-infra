@@ -488,6 +488,59 @@
       tags: [coredns, configure]
 
     # =========================================================================
+    # Phase 3.5: Expose CoreDNS via MetalLB
+    # =========================================================================
+    - name: Phase 3.5 - Expose CoreDNS via MetalLB
+      block:
+        - name: Create MetalLB configuration for CoreDNS
+          ansible.builtin.copy:
+            dest: "/tmp/coredns-metallb-config.yaml"
+            content: |
+              ---
+              apiVersion: metallb.io/v1beta1
+              kind: IPAddressPool
+              metadata:
+                name: coredns-external-pool
+                namespace: metallb-system
+              spec:
+                addresses:
+                - 192.168.4.53/32
+              ---
+              apiVersion: metallb.io/v1beta1
+              kind: L2Advertisement
+              metadata:
+                name: coredns-l2-advertisement
+                namespace: metallb-system
+              spec:
+                ipAddressPools:
+                - coredns-external-pool
+
+        - name: Apply MetalLB configuration
+          ansible.builtin.command: >
+            kubectl --kubeconfig={{ kubeconfig }} apply -f /tmp/coredns-metallb-config.yaml
+          register: metallb_config_apply
+          changed_when: "'created' in metallb_config_apply.stdout or 'configured' in metallb_config_apply.stdout"
+
+        - name: Patch kube-dns service for LoadBalancer
+          ansible.builtin.command: >
+            kubectl --kubeconfig={{ kubeconfig }} -n {{ coredns_namespace }} patch service kube-dns -p '{"spec":{"type":"LoadBalancer","loadBalancerIP":"192.168.4.53"}}'
+          register: patch_service
+          changed_when: "'patched' in patch_service.stdout"
+
+        - name: Display MetalLB configuration status
+          ansible.builtin.debug:
+            msg:
+              - "============================================"
+              - "CoreDNS MetalLB Exposure"
+              - "============================================"
+              - "MetalLB config applied: {{ 'yes' if metallb_config_apply.changed else 'no' }}"
+              - "kube-dns service patched: {{ 'yes' if patch_service.changed else 'no' }}"
+              - "CoreDNS is now exposed at 192.168.4.53"
+              - "============================================"
+
+      tags: [metallb, coredns]
+
+    # =========================================================================
     # Phase 4: Validate DNS Resolution from Cluster
     # =========================================================================
     - name: Phase 4 - Validate DNS Resolution from Cluster
