@@ -1,4 +1,3 @@
----
 # Playbook: configure-coredns-freeipa.yml
 # Purpose: Configure CoreDNS with FreeIPA DNS Records for Identity Stack Integration
 # This playbook should be run after the identity stack deployment (Steps 1-3)
@@ -25,7 +24,8 @@
     repo_root: "{{ playbook_dir | dirname | dirname }}"
     
     # Inventory file for nested playbook execution
-    ansible_inventory: "{{ inventory_file | default('inventory.ini') }}"
+    # Use ansible_inventory_sources[0] to reliably get the main inventory file path.
+    ansible_inventory: "{{ ansible_inventory_sources[0] }}"
     
     # Kubernetes configuration
     kubeconfig: /etc/kubernetes/admin.conf
@@ -138,7 +138,7 @@
           args:
             chdir: "{{ repo_root }}"
           register: fix_ipvs_run
-          failed_when: fix_ipvs_run.rc != 0
+          failed_when: "fix_ipvs_run.rc not in [0, 4]" # Allow unreachable hosts (rc=4) as this is non-critical in iptables mode
           run_once: true
           delegate_to: localhost
           
