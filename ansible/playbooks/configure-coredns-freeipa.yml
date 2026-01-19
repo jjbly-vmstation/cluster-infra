@@ -494,14 +494,14 @@
       block:
         - name: Patch MetalLB Controller to run on Control Plane
           ansible.builtin.command: >
-            kubectl --kubeconfig={{ kubeconfig }} -n metallb-system patch deployment controller --type=merge -p '{"spec":{"template":{"spec":{"nodeSelector":{"node-role.kubernetes.io/control-plane":""},"tolerations":[{"key":"node-role.kubernetes.io/control-plane","operator":"Exists","effect":"NoSchedule"}]}}}}'
+            kubectl --kubeconfig={{ kubeconfig }} -n metallb-system patch deployment controller --type=merge -p '{"spec":{"template":{"spec":{"nodeSelector":{"node-role.kubernetes.io/control-plane":""},"tolerations":[{"key":"node-role.kubernetes.io/control-plane","operator":"Exists","effect":"NoSchedule"},{"key":"node-role.kubernetes.io/master","operator":"Exists","effect":"NoSchedule"}]}}}}'
           register: patch_metallb_controller
           changed_when: "'patched' in patch_metallb_controller.stdout"
           failed_when: false
 
         - name: Wait for MetalLB Controller rollout
           ansible.builtin.command: >
-            kubectl --kubeconfig={{ kubeconfig }} -n metallb-system rollout status deployment/controller --timeout=60s
+            kubectl --kubeconfig={{ kubeconfig }} -n metallb-system rollout status deployment/controller --timeout=120s
           changed_when: false
           failed_when: false
 
@@ -529,10 +529,23 @@
                 - coredns-external-pool
 
         - name: Apply MetalLB configuration
-          ansible.builtin.command: >
-            kubectl --kubeconfig={{ kubeconfig }} apply -f /tmp/coredns-metallb-config.yaml
-          register: metallb_config_apply
-          changed_when: "'created' in metallb_config_apply.stdout or 'configured' in metallb_config_apply.stdout"
+          block:
+            - name: Apply MetalLB configuration (attempt 1)
+              ansible.builtin.command: >
+                kubectl --kubeconfig={{ kubeconfig }} apply -f /tmp/coredns-metallb-config.yaml
+              register: metallb_config_apply
+              changed_when: "'created' in metallb_config_apply.stdout or 'configured' in metallb_config_apply.stdout"
+          rescue:
+            - name: Delete MetalLB ValidatingWebhookConfiguration (workaround for webhook timeout)
+              ansible.builtin.command: >
+                kubectl --kubeconfig={{ kubeconfig }} delete validatingwebhookconfiguration metallb-webhook-configuration --ignore-not-found
+              changed_when: true
+
+            - name: Apply MetalLB configuration (attempt 2)
+              ansible.builtin.command: >
+                kubectl --kubeconfig={{ kubeconfig }} apply -f /tmp/coredns-metallb-config.yaml
+              register: metallb_config_apply
+              changed_when: "'created' in metallb_config_apply.stdout or 'configured' in metallb_config_apply.stdout"
 
         - name: Patch kube-dns service for LoadBalancer
           ansible.builtin.command: >
