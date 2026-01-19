@@ -641,8 +641,6 @@
               - "  Records directory: {{ dns_records_dir }}"
               - ""
               - "Verification:"
-              - "  DNS resolution test: PASSED"
-              - "  {{ freeipa_hostname }} resolves to {{ freeipa_ip }}"
               - "  DNS resolution test: {{ 'PASSED' if (dns_test_result is defined and dns_test_result.rc | default(1) == 0) else 'Skipped' }}"
               - "  {{ freeipa_hostname }} resolves to {{ freeipa_ip | default('Not gathered') }}"
               - ""
