@@ -492,6 +492,19 @@
     # =========================================================================
     - name: Phase 3.5 - Expose CoreDNS via MetalLB
       block:
+        - name: Patch MetalLB Controller to run on Control Plane
+          ansible.builtin.command: >
+            kubectl --kubeconfig={{ kubeconfig }} -n metallb-system patch deployment controller --type=merge -p '{"spec":{"template":{"spec":{"nodeSelector":{"node-role.kubernetes.io/control-plane":""},"tolerations":[{"key":"node-role.kubernetes.io/control-plane","operator":"Exists","effect":"NoSchedule"}]}}}}'
+          register: patch_metallb_controller
+          changed_when: "'patched' in patch_metallb_controller.stdout"
+          failed_when: false
+
+        - name: Wait for MetalLB Controller rollout
+          ansible.builtin.command: >
+            kubectl --kubeconfig={{ kubeconfig }} -n metallb-system rollout status deployment/controller --timeout=60s
+          changed_when: false
+          failed_when: false
+
         - name: Create MetalLB configuration for CoreDNS
           ansible.builtin.copy:
             dest: "/tmp/coredns-metallb-config.yaml"
