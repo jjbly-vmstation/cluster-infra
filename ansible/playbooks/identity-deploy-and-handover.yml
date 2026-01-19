@@ -358,7 +358,7 @@
 
     - name: Create cert-manager CA secret from exported FreeIPA CA
       ansible.builtin.shell: >-
-        kubectl -n cert-manager create secret generic freeipa-ca --from-file=ca.crt=/tmp/freeipa-ca.crt --dry-run=client -o yaml | kubectl apply -f -
+        kubectl -n cert-manager create secret generic freeipa-ca --from-file=tls.crt=/tmp/freeipa-ca.crt --dry-run=client -o yaml | kubectl apply -f -
       args:
         executable: /bin/bash
       register: create_ca_secret
