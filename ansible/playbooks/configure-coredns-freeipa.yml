@@ -547,11 +547,45 @@
               register: metallb_config_apply
               changed_when: "'created' in metallb_config_apply.stdout or 'configured' in metallb_config_apply.stdout"
 
-        - name: Patch kube-dns service for LoadBalancer
+        - name: Revert kube-dns service to ClusterIP (ensure internal service is not exposed)
           ansible.builtin.command: >
-            kubectl --kubeconfig={{ kubeconfig }} -n {{ coredns_namespace }} patch service kube-dns -p '{"spec":{"type":"LoadBalancer","loadBalancerIP":"192.168.4.53"}}'
-          register: patch_service
-          changed_when: "'patched' in patch_service.stdout"
+            kubectl --kubeconfig={{ kubeconfig }} -n {{ coredns_namespace }} patch service kube-dns -p '{"spec":{"type":"ClusterIP", "loadBalancerIP": null}}'
+          register: revert_service
+          changed_when: "'patched' in revert_service.stdout"
+          failed_when: false
+
+        - name: Create dedicated LoadBalancer Service for CoreDNS (coredns-external)
+          ansible.builtin.copy:
+            dest: "/tmp/coredns-external-service.yaml"
+            content: |
+              apiVersion: v1
+              kind: Service
+              metadata:
+                name: coredns-external
+                namespace: {{ coredns_namespace }}
+                labels:
+                  k8s-app: kube-dns
+                  app.kubernetes.io/name: coredns-external
+              spec:
+                type: LoadBalancer
+                loadBalancerIP: 192.168.4.53
+                selector:
+                  k8s-app: kube-dns
+                ports:
+                - name: dns
+                  port: 53
+                  protocol: UDP
+                  targetPort: 53
+                - name: dns-tcp
+                  port: 53
+                  protocol: TCP
+                  targetPort: 53
+
+        - name: Apply CoreDNS External Service
+          ansible.builtin.command: >
+            kubectl --kubeconfig={{ kubeconfig }} apply -f /tmp/coredns-external-service.yaml
+          register: apply_service
+          changed_when: "'created' in apply_service.stdout or 'configured' in apply_service.stdout"
 
         - name: Display MetalLB configuration status
           ansible.builtin.debug:
@@ -560,7 +594,7 @@
               - "CoreDNS MetalLB Exposure"
               - "============================================"
               - "MetalLB config applied: {{ 'yes' if metallb_config_apply.changed else 'no' }}"
-              - "kube-dns service patched: {{ 'yes' if patch_service.changed else 'no' }}"
+              - "External Service created: {{ 'yes' if apply_service.changed else 'no' }}"
               - "CoreDNS is now exposed at 192.168.4.53"
               - "============================================"
 
@@ -641,6 +675,7 @@
               - "============================================"
               - "FreeIPA Hostname: {{ freeipa_hostname }}"
               - "FreeIPA IP: {{ freeipa_ip }}"
+              - "FreeIPA IP: {{ freeipa_ip | default('Not gathered') }}"
               - "FreeIPA Domain: {{ freeipa_domain }}"
               - ""
               - "CoreDNS Configuration:"
@@ -656,6 +691,8 @@
               - "Verification:"
               - "  DNS resolution test: PASSED"
               - "  {{ freeipa_hostname }} resolves to {{ freeipa_ip }}"
+              - "  DNS resolution test: {{ 'PASSED' if (dns_test_result is defined and dns_test_result.rc | default(1) == 0) else 'Skipped' }}"
+              - "  {{ freeipa_hostname }} resolves to {{ freeipa_ip | default('Not gathered') }}"
               - ""
               - "Access Points:"
               - "  FreeIPA Web UI: https://{{ freeipa_hostname }}:30445/ipa/ui"
