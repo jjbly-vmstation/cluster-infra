@@ -14,9 +14,9 @@
 #     ansible/playbooks/configure-coredns-freeipa.yml
 
 - name: Prepare Control Plane Nodes for CoreDNS HostNetwork
-  hosts: kube_control_plane
   become: true
   gather_facts: false
+  hosts: masternode:kube-master
   tags: [hostnetwork]
   tasks:
     - name: Check if systemd-resolved is active
