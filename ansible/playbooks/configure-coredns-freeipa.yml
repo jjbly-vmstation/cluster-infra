@@ -489,9 +489,39 @@
 
     # =========================================================================
     # Phase 3.5: Expose CoreDNS via MetalLB
+    # Phase 3.5: Expose CoreDNS (MetalLB or HostNetwork)
     # =========================================================================
+    - name: Phase 3.5a - Expose CoreDNS via HostNetwork (Alternative)
+      block:
+        - name: Patch CoreDNS for HostNetwork on Control Plane
+          ansible.builtin.command: >
+            kubectl --kubeconfig={{ kubeconfig }} -n {{ coredns_namespace }} patch deployment coredns --type=merge -p '{"spec":{"template":{"spec":{"hostNetwork":true,"dnsPolicy":"ClusterFirstWithHostNet","nodeSelector":{"node-role.kubernetes.io/control-plane":""},"tolerations":[{"key":"node-role.kubernetes.io/control-plane","operator":"Exists","effect":"NoSchedule"},{"key":"node-role.kubernetes.io/master","operator":"Exists","effect":"NoSchedule"}]}}}}'
+          register: patch_hostnetwork
+          changed_when: "'patched' in patch_hostnetwork.stdout"
+
+        - name: Wait for CoreDNS rollout
+          ansible.builtin.command: >
+            kubectl --kubeconfig={{ kubeconfig }} -n {{ coredns_namespace }} rollout status deployment/coredns --timeout=60s
+          changed_when: false
+
+        - name: Display HostNetwork status
+          ansible.builtin.debug:
+            msg:
+              - "============================================"
+              - "CoreDNS HostNetwork Configuration"
+              - "============================================"
+              - "CoreDNS is now running on the Control Plane host network."
+              - "It is accessible at: {{ freeipa_default_ip }}:53"
+              - "NOTE: Ensure port 53 is free on the node (disable systemd-resolved if needed)."
+              - "============================================"
+      tags: [hostnetwork]
+      when: "'hostnetwork' in ansible_run_tags"
+
     - name: Phase 3.5 - Expose CoreDNS via MetalLB
       block:
+        - name: Ensure MetalLB certificate via cert-manager
+          ansible.builtin.include_tasks: tasks/ensure-metallb-cert.yml
+
         - name: Patch MetalLB Controller to run on Control Plane
           ansible.builtin.command: >
             kubectl --kubeconfig={{ kubeconfig }} -n metallb-system patch deployment controller --type=merge -p '{"spec":{"template":{"spec":{"nodeSelector":{"node-role.kubernetes.io/control-plane":""},"tolerations":[{"key":"node-role.kubernetes.io/control-plane","operator":"Exists","effect":"NoSchedule"},{"key":"node-role.kubernetes.io/master","operator":"Exists","effect":"NoSchedule"}]}}}}'
@@ -599,6 +629,7 @@
               - "============================================"
 
       tags: [metallb, coredns]
+      when: "'hostnetwork' not in ansible_run_tags"
 
     # =========================================================================
     # Phase 4: Validate DNS Resolution from Cluster
