@@ -13,6 +13,43 @@
 #   ansible-playbook -i inventory/mycluster/hosts.yaml \
 #     ansible/playbooks/configure-coredns-freeipa.yml
 
+- name: Prepare Control Plane Nodes for CoreDNS HostNetwork
+  hosts: kube_control_plane
+  become: true
+  gather_facts: false
+  tags: [hostnetwork]
+  tasks:
+    - name: Check if systemd-resolved is active
+      ansible.builtin.shell: systemctl is-active systemd-resolved
+      register: resolved_active
+      failed_when: false
+      changed_when: false
+
+    - name: Configure systemd-resolved to free port 53
+      when: resolved_active.rc == 0
+      block:
+        - name: Disable DNSStubListener in /etc/systemd/resolved.conf
+          ansible.builtin.lineinfile:
+            path: /etc/systemd/resolved.conf
+            regexp: '^#?DNSStubListener='
+            line: 'DNSStubListener=no'
+            state: present
+          register: stub_listener_config
+
+        - name: Update /etc/resolv.conf to use upstream DNS directly
+          ansible.builtin.file:
+            src: /run/systemd/resolve/resolv.conf
+            dest: /etc/resolv.conf
+            state: link
+            force: true
+          when: stub_listener_config.changed
+
+        - name: Restart systemd-resolved
+          ansible.builtin.systemd:
+            name: systemd-resolved
+            state: restarted
+          when: stub_listener_config.changed
+
 - name: Configure CoreDNS with FreeIPA DNS Records
   hosts: localhost
   connection: local
@@ -421,9 +458,10 @@
                   reload
                   loadbalance
                   hosts {
-                    {{ freeipa_ip }} {{ freeipa_hostname }} ipa
-                    {{ freeipa_ip }} {{ freeipa_domain }}
+                    {{ freeipa_ip | default(freeipa_default_ip) }} {{ freeipa_hostname }} ipa
+                    {{ freeipa_ip | default(freeipa_default_ip) }} {{ freeipa_domain }}
                     {{ keycloak_ip }} {{ keycloak_hostname }}
+                    {{ parsed_a_records.stdout | default('') }}
                     fallthrough
                   }
                 }
@@ -488,10 +526,9 @@
       tags: [coredns, configure]
 
     # =========================================================================
-    # Phase 3.5: Expose CoreDNS via MetalLB
-    # Phase 3.5: Expose CoreDNS (MetalLB or HostNetwork)
+    # Phase 3.5: Expose CoreDNS via HostNetwork
     # =========================================================================
-    - name: Phase 3.5a - Expose CoreDNS via HostNetwork (Alternative)
+    - name: Phase 3.5 - Expose CoreDNS via HostNetwork
       block:
         - name: Patch CoreDNS for HostNetwork on Control Plane
           ansible.builtin.command: >
@@ -512,124 +549,9 @@
               - "============================================"
               - "CoreDNS is now running on the Control Plane host network."
               - "It is accessible at: {{ freeipa_default_ip }}:53"
-              - "NOTE: Ensure port 53 is free on the node (disable systemd-resolved if needed)."
+              - "Port 53 conflict resolution (systemd-resolved) has been applied to control plane nodes."
               - "============================================"
-      tags: [hostnetwork]
-      when: "'hostnetwork' in ansible_run_tags"
-
-    - name: Phase 3.5 - Expose CoreDNS via MetalLB
-      block:
-        - name: Ensure MetalLB certificate via cert-manager
-          ansible.builtin.include_tasks: tasks/ensure-metallb-cert.yml
-
-        - name: Patch MetalLB Controller to run on Control Plane
-          ansible.builtin.command: >
-            kubectl --kubeconfig={{ kubeconfig }} -n metallb-system patch deployment controller --type=merge -p '{"spec":{"template":{"spec":{"nodeSelector":{"node-role.kubernetes.io/control-plane":""},"tolerations":[{"key":"node-role.kubernetes.io/control-plane","operator":"Exists","effect":"NoSchedule"},{"key":"node-role.kubernetes.io/master","operator":"Exists","effect":"NoSchedule"}]}}}}'
-          register: patch_metallb_controller
-          changed_when: "'patched' in patch_metallb_controller.stdout"
-          failed_when: false
-
-        - name: Wait for MetalLB Controller rollout
-          ansible.builtin.command: >
-            kubectl --kubeconfig={{ kubeconfig }} -n metallb-system rollout status deployment/controller --timeout=120s
-          changed_when: false
-          failed_when: false
-
-        - name: Create MetalLB configuration for CoreDNS
-          ansible.builtin.copy:
-            dest: "/tmp/coredns-metallb-config.yaml"
-            content: |
-              ---
-              apiVersion: metallb.io/v1beta1
-              kind: IPAddressPool
-              metadata:
-                name: coredns-external-pool
-                namespace: metallb-system
-              spec:
-                addresses:
-                - 192.168.4.53/32
-              ---
-              apiVersion: metallb.io/v1beta1
-              kind: L2Advertisement
-              metadata:
-                name: coredns-l2-advertisement
-                namespace: metallb-system
-              spec:
-                ipAddressPools:
-                - coredns-external-pool
-
-        - name: Apply MetalLB configuration
-          block:
-            - name: Apply MetalLB configuration (attempt 1)
-              ansible.builtin.command: >
-                kubectl --kubeconfig={{ kubeconfig }} apply -f /tmp/coredns-metallb-config.yaml
-              register: metallb_config_apply
-              changed_when: "'created' in metallb_config_apply.stdout or 'configured' in metallb_config_apply.stdout"
-          rescue:
-            - name: Delete MetalLB ValidatingWebhookConfiguration (workaround for webhook timeout)
-              ansible.builtin.command: >
-                kubectl --kubeconfig={{ kubeconfig }} delete validatingwebhookconfiguration metallb-webhook-configuration --ignore-not-found
-              changed_when: true
-
-            - name: Apply MetalLB configuration (attempt 2)
-              ansible.builtin.command: >
-                kubectl --kubeconfig={{ kubeconfig }} apply -f /tmp/coredns-metallb-config.yaml
-              register: metallb_config_apply
-              changed_when: "'created' in metallb_config_apply.stdout or 'configured' in metallb_config_apply.stdout"
-
-        - name: Revert kube-dns service to ClusterIP (ensure internal service is not exposed)
-          ansible.builtin.command: >
-            kubectl --kubeconfig={{ kubeconfig }} -n {{ coredns_namespace }} patch service kube-dns -p '{"spec":{"type":"ClusterIP", "loadBalancerIP": null}}'
-          register: revert_service
-          changed_when: "'patched' in revert_service.stdout"
-          failed_when: false
-
-        - name: Create dedicated LoadBalancer Service for CoreDNS (coredns-external)
-          ansible.builtin.copy:
-            dest: "/tmp/coredns-external-service.yaml"
-            content: |
-              apiVersion: v1
-              kind: Service
-              metadata:
-                name: coredns-external
-                namespace: {{ coredns_namespace }}
-                labels:
-                  k8s-app: kube-dns
-                  app.kubernetes.io/name: coredns-external
-              spec:
-                type: LoadBalancer
-                loadBalancerIP: 192.168.4.53
-                selector:
-                  k8s-app: kube-dns
-                ports:
-                - name: dns
-                  port: 53
-                  protocol: UDP
-                  targetPort: 53
-                - name: dns-tcp
-                  port: 53
-                  protocol: TCP
-                  targetPort: 53
-
-        - name: Apply CoreDNS External Service
-          ansible.builtin.command: >
-            kubectl --kubeconfig={{ kubeconfig }} apply -f /tmp/coredns-external-service.yaml
-          register: apply_service
-          changed_when: "'created' in apply_service.stdout or 'configured' in apply_service.stdout"
-
-        - name: Display MetalLB configuration status
-          ansible.builtin.debug:
-            msg:
-              - "============================================"
-              - "CoreDNS MetalLB Exposure"
-              - "============================================"
-              - "MetalLB config applied: {{ 'yes' if metallb_config_apply.changed else 'no' }}"
-              - "External Service created: {{ 'yes' if apply_service.changed else 'no' }}"
-              - "CoreDNS is now exposed at 192.168.4.53"
-              - "============================================"
-
-      tags: [metallb, coredns]
-      when: "'hostnetwork' not in ansible_run_tags"
+      tags: [hostnetwork, coredns]
 
     # =========================================================================
     # Phase 4: Validate DNS Resolution from Cluster
@@ -705,7 +627,6 @@
               - "CoreDNS FreeIPA Configuration Complete!"
               - "============================================"
               - "FreeIPA Hostname: {{ freeipa_hostname }}"
-              - "FreeIPA IP: {{ freeipa_ip }}"
               - "FreeIPA IP: {{ freeipa_ip | default('Not gathered') }}"
               - "FreeIPA Domain: {{ freeipa_domain }}"
               - ""
