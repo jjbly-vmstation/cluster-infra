@@ -335,15 +335,16 @@
       tags: [certmanager, ca]
 
     - name: Wait for cert-manager pods to be ready
-      community.kubernetes.k8s_info:
+      kubernetes.core.k8s_info:
         kind: Pod
         namespace: cert-manager
         label_selectors:
           - 'app.kubernetes.io/name=cert-manager'
+        kubeconfig: "{{ kubeconfig }}"
       register: cm_pods
       retries: 12
       delay: 10
-      until: cm_pods.resources | length > 0 and (cm_pods.resources | map(attribute='status.phase') | list).0 == 'Running'
+      until: cm_pods.resources is defined and cm_pods.resources | length > 0 and (cm_pods.resources | map(attribute='status.phase') | list).0 == 'Running'
       tags: [certmanager]
 
     - name: Export FreeIPA CA certificate from FreeIPA pod
