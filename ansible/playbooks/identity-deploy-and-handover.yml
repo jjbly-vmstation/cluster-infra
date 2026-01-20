@@ -394,7 +394,6 @@
           ============================================================
           Identity Deployment Complete!
           ============================================================
-          Infra Node: {{ infra_node }}
           
           Components Deployed:
             - PostgreSQL: Running
